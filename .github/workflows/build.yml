@@ -1,0 +1,65 @@
+name: Construire Platine
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Ranger les fichiers
+        run: |
+          mkdir -p Platine/Assets.xcassets/AppIcon.appiconset
+          for f in *.swift; do [ -e "$f" ] && mv "$f" Platine/; done
+          [ -f icon.png ] && mv icon.png Platine/Assets.xcassets/AppIcon.appiconset/icon.png
+          rm -f Contents.json "Contents (1).json"
+          echo '{ "info" : { "author" : "xcode", "version" : 1 } }' > Platine/Assets.xcassets/Contents.json
+          echo '{ "images" : [ { "filename" : "icon.png", "idiom" : "universal", "platform" : "ios", "size" : "1024x1024" } ], "info" : { "author" : "xcode", "version" : 1 } }' > Platine/Assets.xcassets/AppIcon.appiconset/Contents.json
+          find Platine -type f
+
+      - name: Choisir Xcode
+        run: |
+          XC=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | grep -vi beta | sort -V | tail -1)
+          if [ -z "$XC" ]; then XC=$(ls -d /Applications/Xcode_*.app | grep -vi beta | sort -V | tail -1); fi
+          sudo xcode-select -s "$XC"
+          xcodebuild -version
+
+      - name: Installer XcodeGen
+        run: brew install xcodegen
+
+      - name: Générer le projet Xcode
+        run: xcodegen generate
+
+      - name: Compiler
+        run: |
+          set -o pipefail
+          xcodebuild -project Platine.xcodeproj -target Platine -configuration Release -sdk iphoneos \
+            SYMROOT="$PWD/build" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build 2>&1 | tee build.log | grep -E "error:|BUILD (SUCCEEDED|FAILED)" || true
+          test -d build/Release-iphoneos/Platine.app
+
+      - name: Emballer le .ipa
+        run: |
+          mkdir -p Payload
+          cp -R build/Release-iphoneos/Platine.app Payload/
+          zip -qry Platine.ipa Payload
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Platine-ipa
+          path: Platine.ipa
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: journal-compilation
+          path: build.log
+          if-no-files-found: ignore
