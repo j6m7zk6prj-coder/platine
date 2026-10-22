@@ -1,0 +1,68 @@
+# Compile Platine sur un Mac de GitHub et produit Platine.ipa (non signé).
+# Sideloadly le signe ensuite avec ton identifiant Apple au moment de l'installer.
+name: Construire Platine
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Choisir la version d’Xcode la plus récente
+        run: |
+          XC=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | grep -vi beta | sort -V | tail -1)
+          if [ -z "$XC" ]; then XC=$(ls -d /Applications/Xcode_*.app | grep -vi beta | sort -V | tail -1); fi
+          echo "Xcode utilisé : $XC"
+          sudo xcode-select -s "$XC"
+          xcodebuild -version
+
+      - name: Installer XcodeGen
+        run: brew install xcodegen
+
+      - name: Générer le projet Xcode
+        run: xcodegen generate
+
+      - name: Compiler
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project Platine.xcodeproj \
+            -target Platine \
+            -configuration Release \
+            -sdk iphoneos \
+            SYMROOT="$PWD/build" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build | tee build.log | grep -E "error:|warning: .*deprecated|BUILD (SUCCEEDED|FAILED)" || true
+          test -d build/Release-iphoneos/Platine.app
+
+      - name: Emballer le .ipa
+        run: |
+          mkdir -p Payload
+          cp -R build/Release-iphoneos/Platine.app Payload/
+          zip -qry Platine.ipa Payload
+
+      - name: Publier le .ipa
+        uses: actions/upload-artifact@v4
+        with:
+          name: Platine-ipa
+          path: Platine.ipa
+          retention-days: 30
+
+      - name: Journal de compilation (en cas d’erreur)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: journal-compilation
+          path: build.log
+          if-no-files-found: ignore
