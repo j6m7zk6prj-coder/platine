@@ -15,6 +15,12 @@ final class Library {
     private(set) var artistImages: [String: String] = [:]
     /// Format choisi pour chaque album dans la Collection : identifiant de l'album → « cd » ou « cassette ».
     private(set) var albumFormats: [String: String] = [:]
+    /// Stickers holographiques posés sur chaque album : identifiant de l'album → stickers.
+    private(set) var albumStickers: [String: [String]] = [:]
+    /// Ajoute aussi les stickers gagnés automatiquement (or, platine, favori, nouveau).
+    var autoStickers: Bool = UserDefaults.standard.bool(forKey: "autoStickers") {
+        didSet { UserDefaults.standard.set(autoStickers, forKey: "autoStickers") }
+    }
     var isImporting = false
     var message: String?
     /// Change à chaque modification de pochette (sert à rafraîchir l'écran verrouillé).
@@ -33,6 +39,7 @@ final class Library {
     static let playlistsURL = base.appendingPathComponent("playlists.json")
     static let artistsURL = base.appendingPathComponent("artists.json")
     static let formatsURL = base.appendingPathComponent("formats.json")
+    static let stickersURL = base.appendingPathComponent("stickers.json")
     /// Dossier visible dans Fichiers et dans iTunes sur PC : tout ce qu'on y dépose est importé.
     static let inbox = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
 
@@ -449,6 +456,10 @@ final class Library {
             albumFormats[newID] = f
             saveFormats()
         }
+        if newID != albumID, let st = albumStickers.removeValue(forKey: albumID) {
+            albumStickers[newID] = st
+            saveStickers()
+        }
         save()
         message = "Album modifié"
         return newID
@@ -465,8 +476,43 @@ final class Library {
         saveFormats()
     }
 
-    /// Badges gagnés : or et platine selon les écoutes de l'album, favori, nouveauté.
+    /// Stickers d'un album : ceux posés à la main, puis (si l'option est activée) ceux gagnés.
     func badges(for album: AlbumInfo) -> [AlbumBadge] {
+        var result = stickers(for: album.id)
+        guard autoStickers else { return result }
+        for b in earnedBadges(for: album) where !result.contains(b) { result.append(b) }
+        return Array(result.prefix(4))
+    }
+
+    func stickers(for albumID: String) -> [AlbumBadge] {
+        (albumStickers[albumID] ?? []).compactMap(AlbumBadge.init(rawValue:))
+    }
+
+    /// Pose ou retire un sticker (3 au maximum par album).
+    func toggleSticker(_ badge: AlbumBadge, for albumID: String) {
+        var list = albumStickers[albumID] ?? []
+        if let i = list.firstIndex(of: badge.rawValue) {
+            list.remove(at: i)
+        } else {
+            if list.count >= 3 { list.removeFirst() }
+            list.append(badge.rawValue)
+        }
+        albumStickers[albumID] = list.isEmpty ? nil : list
+        saveStickers()
+    }
+
+    func clearStickers(for albumID: String) {
+        albumStickers[albumID] = nil
+        saveStickers()
+    }
+
+    private func saveStickers() {
+        guard let data = try? JSONEncoder().encode(albumStickers) else { return }
+        try? data.write(to: Self.stickersURL, options: .atomic)
+    }
+
+    /// Badges gagnés : or et platine selon les écoutes de l'album, favori, nouveauté.
+    func earnedBadges(for album: AlbumInfo) -> [AlbumBadge] {
         var result: [AlbumBadge] = []
         let plays = album.tracks.reduce(0) { $0 + $1.playCount }
         if plays >= 100 { result.append(.platinum) } else if plays >= 50 { result.append(.gold) }
@@ -678,6 +724,8 @@ final class Library {
         artistImages = [:]
         albumFormats = [:]
         saveFormats()
+        albumStickers = [:]
+        saveStickers()
         images.removeAllObjects()
         palettes = [:]
         save()
@@ -752,6 +800,10 @@ final class Library {
         if let data = try? Data(contentsOf: Self.formatsURL),
            let map = try? JSONDecoder().decode([String: String].self, from: data) {
             albumFormats = map
+        }
+        if let data = try? Data(contentsOf: Self.stickersURL),
+           let map = try? JSONDecoder().decode([String: [String]].self, from: data) {
+            albumStickers = map
         }
         if let data = try? Data(contentsOf: Self.artistsURL),
            let map = try? JSONDecoder().decode([String: String].self, from: data) {

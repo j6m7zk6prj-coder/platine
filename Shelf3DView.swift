@@ -21,6 +21,7 @@ struct ShelfView: View {
     @State private var isBack = false
     @State private var flipToken = 0
     @State private var resetToken = 0
+    @State private var stickerAlbum: AlbumInfo?
 
     private static let quick = Animation.smooth(duration: 0.22)
 
@@ -39,7 +40,8 @@ struct ShelfView: View {
             } else {
                 ShelfSceneView(albums: albums, startIndex: startIndex ?? initialIndex(albums), motion: motion, paused: isOpen || !visible,
                                onFocus: { focusedIndex = $0 },
-                               onOpen: { i in open(albums[i]) })
+                               onOpen: { i in open(albums[i]) },
+                               onLongPress: { i in stickerAlbum = albums[i] })
                     .ignoresSafeArea()
                     .opacity(isOpen ? 0 : 1)
                     .allowsHitTesting(!isOpen)
@@ -86,6 +88,7 @@ struct ShelfView: View {
                                            c.node?.setDiscOut(out)
                                        }
                                    },
+                                   onStickers: { stickerAlbum = inspected },
                                    onFormat: { newValue in
                                        discOut = false
                                        resetToken += 1
@@ -98,6 +101,11 @@ struct ShelfView: View {
             }
         }
         .foregroundStyle(.white)
+        .sheet(item: $stickerAlbum) { album in
+            StickerPicker(album: album)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+        }
         .animation(Self.quick, value: isOpen)
         .sensoryFeedback(trigger: discOut) { _, _ in settings.haptics ? .impact(weight: .medium) : nil }
         .sensoryFeedback(trigger: isBack) { _, _ in settings.haptics && isOpen ? .impact(weight: .light) : nil }
@@ -224,6 +232,7 @@ struct ShelfSceneView: UIViewRepresentable {
     var paused = false
     var onFocus: (Int) -> Void
     var onOpen: (Int) -> Void
+    var onLongPress: (Int) -> Void = { _ in }
     @Environment(Library.self) private var library
     @Environment(AppSettings.self) private var settings
 
@@ -236,6 +245,7 @@ struct ShelfSceneView: UIViewRepresentable {
         c.motion = motion
         c.onFocus = onFocus
         c.onOpen = onOpen
+        c.onLongPress = onLongPress
         c.update(albums: albums, library: library, settings: settings)
         c.start()
         c.setPaused(paused)
@@ -246,6 +256,7 @@ struct ShelfSceneView: UIViewRepresentable {
         let c = context.coordinator
         c.onFocus = onFocus
         c.onOpen = onOpen
+        c.onLongPress = onLongPress
         c.update(albums: albums, library: library, settings: settings)
         c.setPaused(paused)
     }
@@ -254,6 +265,7 @@ struct ShelfSceneView: UIViewRepresentable {
         coordinator.stop()
         coordinator.onFocus = { _ in }
         coordinator.onOpen = { _ in }
+        coordinator.onLongPress = { _ in }
     }
 }
 
@@ -303,6 +315,8 @@ final class ShelfSceneController: NSObject, UIGestureRecognizerDelegate {
     var motion: MotionTilt?
     var onFocus: (Int) -> Void = { _ in }
     var onOpen: (Int) -> Void = { _ in }
+    var onLongPress: (Int) -> Void = { _ in }
+    private var lastTime: CFTimeInterval = 0
 
     private var albums: [AlbumInfo] = []
     private var formats: [AlbumFormat] = []
@@ -349,7 +363,9 @@ final class ShelfSceneController: NSObject, UIGestureRecognizerDelegate {
 
         let pan = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
         let tap = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
-        for g in [pan, tap] as [UIGestureRecognizer] {
+        let long = UILongPressGestureRecognizer(target: self, action: #selector(handleLongPress(_:)))
+        long.minimumPressDuration = 0.45
+        for g in [pan, tap, long] as [UIGestureRecognizer] {
             g.delegate = self
             g.cancelsTouchesInView = false
             view.addGestureRecognizer(g)
@@ -363,7 +379,7 @@ final class ShelfSceneController: NSObject, UIGestureRecognizerDelegate {
             let p = touch.location(in: view)
             let h = view.bounds.height
             if p.y < 120 || p.y > h - 200 { return false }
-            if g is UITapGestureRecognizer {
+            if g is UITapGestureRecognizer || g is UILongPressGestureRecognizer {
                 return !view.hitTest(p, options: nil).isEmpty
             }
             return true
@@ -372,7 +388,7 @@ final class ShelfSceneController: NSObject, UIGestureRecognizerDelegate {
 
     func start() {
         guard link == nil else { return }
-        let l = CADisplayLink(target: self, selector: #selector(tick))
+        let l = CADisplayLink(target: self, selector: #selector(tick(_:)))
         l.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 120, preferred: 120)
         l.add(to: .main, forMode: .common)
         l.isPaused = pausedState
@@ -390,6 +406,7 @@ final class ShelfSceneController: NSObject, UIGestureRecognizerDelegate {
         view.isUserInteractionEnabled = !paused
         guard paused != pausedState else { return }
         pausedState = paused
+        lastTime = 0
         link?.isPaused = paused
         view.rendersContinuously = !paused
         view.isPlaying = !paused
@@ -449,13 +466,20 @@ final class ShelfSceneController: NSObject, UIGestureRecognizerDelegate {
         return n
     }
 
-    @objc private func tick() {
+    @objc private func tick(_ link: CADisplayLink) {
         builtThisFrame = false
+        // Physique basée sur le temps réel : même vitesse et même douceur à 60 ou 120 images/s,
+        // et aucune saccade si une image est un peu en retard.
+        let now = link.targetTimestamp
+        let dt = lastTime == 0 ? 1.0 / 120 : min(max(now - lastTime, 1.0 / 240), 1.0 / 30)
+        lastTime = now
         if !dragging {
-            // Ressort façon iOS : rapide, sans rebond exagéré.
-            vel = (vel + (target - pos) * 0.11) * 0.74
-            pos += vel
-            if abs(vel) < 0.0002 && abs(target - pos) < 0.0002 { pos = target; vel = 0 }
+            // Ressort amorti façon UIKit : le CD glisse puis se pose, sans rebond.
+            let k = 190.0
+            let damping = 2 * k.squareRoot() * 0.95
+            vel += (k * (target - pos) - damping * vel) * dt
+            pos += vel * dt
+            if abs(vel) < 0.003 && abs(target - pos) < 0.0005 { pos = target; vel = 0 }
         }
         layout()
     }
@@ -523,24 +547,38 @@ final class ShelfSceneController: NSObject, UIGestureRecognizerDelegate {
             else { pos = raw }
         default:
             dragging = false
+            // L'élan du doigt est conservé : le carrousel continue puis se pose en douceur.
             let v = -Double(g.velocity(in: view).x) / unit
-            let projected = pos + v * 0.25
+            let projected = pos + v * 0.2
             target = projected.rounded().clamped(0, Double(albums.count - 1))
+            vel = max(-14, min(14, v))
         }
     }
 
-    @objc private func handleTap(_ g: UITapGestureRecognizer) {
-        let hits = view.hitTest(g.location(in: view), options: [.searchMode: SCNHitTestSearchMode.closest.rawValue])
-        guard let hit = hits.first?.node else { return }
+    /// L'album sous le doigt.
+    private func albumIndex(at point: CGPoint) -> Int? {
+        let hits = view.hitTest(point, options: [.searchMode: SCNHitTestSearchMode.closest.rawValue])
+        guard let hit = hits.first?.node else { return nil }
         for (i, album) in albums.enumerated() {
             guard let n = nodes[album.id] else { continue }
             var cur: SCNNode? = hit
             while let c = cur, c !== n.root { cur = c.parent }
-            if cur != nil {
-                if i == Int(target.rounded()) { onOpen(i) } else { target = Double(i) }
-                return
-            }
+            if cur != nil { return i }
         }
+        return nil
+    }
+
+    @objc private func handleTap(_ g: UITapGestureRecognizer) {
+        guard let i = albumIndex(at: g.location(in: view)) else { return }
+        if i == Int(target.rounded()) { onOpen(i) } else { target = Double(i) }
+    }
+
+    /// Appui long : choisir les stickers holographiques de cet album.
+    @objc private func handleLongPress(_ g: UILongPressGestureRecognizer) {
+        guard g.state == .began, let i = albumIndex(at: g.location(in: view)) else { return }
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        target = Double(i)
+        onLongPress(i)
     }
 }
 
@@ -558,6 +596,7 @@ struct ShelfInspector: View {
     let playingThisAlbum: Bool
     var onFlip: () -> Void
     var onDisc: (Bool) -> Void
+    var onStickers: () -> Void
     var onFormat: (AlbumFormat) -> Void
     var onClose: () -> Void
     @Environment(Player.self) private var player
@@ -588,7 +627,7 @@ struct ShelfInspector: View {
             }
             .allowsHitTesting(false)
 
-            Text("Glisse pour tourner · touche pour retourner · pince pour zoomer · touche deux fois pour remettre droit")
+            Text("Glisse pour tourner · touche pour retourner · pince pour zoomer · touche deux fois pour remettre droit · appui long sur un album pour ses stickers")
                 .font(.caption)
                 .foregroundStyle(.white.opacity(0.45))
                 .multilineTextAlignment(.center)
@@ -609,6 +648,7 @@ struct ShelfInspector: View {
                 inspectorButton(spinning ? "Pause" : "Lire", symbol: spinning ? "pause.fill" : "play.fill") {
                     if playingThisAlbum { player.togglePlay() } else { playAlbum() }
                 }
+                inspectorButton("Stickers", symbol: "seal.fill", action: onStickers)
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 26)
@@ -931,4 +971,96 @@ final class InspectorSceneController: NSObject, UIGestureRecognizerDelegate {
     }
 
     @objc private func handleDoubleTap() { reset() }
+}
+
+
+// MARK: - Stickers holographiques
+
+/// Choix des stickers posés sur un album (3 au maximum).
+struct StickerPicker: View {
+    let album: AlbumInfo
+    @Environment(Library.self) private var library
+    @Environment(AppSettings.self) private var settings
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        let chosen = library.stickers(for: album.id)
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    Text("Touche un sticker pour le coller sur « \(album.title) » ou le retirer. Trois au maximum.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    TimelineView(.animation(minimumInterval: 1.0 / 30)) { context in
+                        // Le reflet holographique ondule doucement.
+                        let light = sin(context.date.timeIntervalSinceReferenceDate * 0.9)
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 104), spacing: 12)], spacing: 12) {
+                            ForEach(AlbumBadge.stickers) { badge in
+                                let on = chosen.contains(badge)
+                                Button {
+                                    withAnimation(.spring(response: 0.35, dampingFraction: 0.7)) {
+                                        library.toggleSticker(badge, for: album.id)
+                                    }
+                                } label: {
+                                    StickerTile(badge: badge, on: on, light: light)
+                                }
+                                .buttonStyle(PressStyle(circle: false))
+                                .sensoryFeedback(.selection, trigger: on)
+                            }
+                        }
+                    }
+                    if !chosen.isEmpty {
+                        Button(role: .destructive) {
+                            withAnimation { library.clearStickers(for: album.id) }
+                        } label: {
+                            Label("Retirer tous les stickers", systemImage: "xmark.seal")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
+                        .padding(.top, 4)
+                    }
+                }
+                .padding(20)
+            }
+            .navigationTitle("Stickers")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("OK") { dismiss() }.fontWeight(.semibold)
+                }
+            }
+        }
+        .environment(\.colorScheme, .dark)
+    }
+}
+
+private struct StickerTile: View {
+    let badge: AlbumBadge
+    let on: Bool
+    let light: Double
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: 16, style: .continuous)
+        let border: Color = on ? .white.opacity(0.8) : .white.opacity(0.08)
+        VStack(spacing: 10) {
+            HoloBadge(badge: badge, light: light, scale: 1.6)
+                .frame(height: 46)
+            Text(badge.short)
+                .font(.caption.weight(.semibold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 14)
+        .background(shape.fill(Color.white.opacity(on ? 0.16 : 0.05)))
+        .overlay(shape.strokeBorder(border, lineWidth: on ? 1.5 : 1))
+        .overlay(alignment: .topTrailing) {
+            if on {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.body)
+                    .padding(6)
+                    .transition(.scale.combined(with: .opacity))
+            }
+        }
+    }
 }

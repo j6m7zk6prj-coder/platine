@@ -35,7 +35,11 @@ final class AlbumNode {
         self.discPivot = discPivot
         self.reels = reels
         root.addChildNode(body)
-        for p in parts { body.addChildNode(p) }
+        for p in parts {
+            body.addChildNode(p)
+            // Les pièces transparentes ne sont pas recalculées dans le reflet du sol (plus fluide).
+            if p.renderingOrder >= 9 { p.categoryBitMask = 2 }
+        }
         if let discPivot { root.addChildNode(discPivot) }
         for r in reels { body.addChildNode(r) }
     }
@@ -145,32 +149,49 @@ struct AlbumNodeBuilder {
         coverNode.position = SCNVector3(Float(W / 2 - 0.62), 0, Float(D / 2 - 0.0135))
         parts.append(coverNode)
 
-        // Charnière : la bande noire striée à gauche, et ses deux axes arrondis.
-        let hingeBand = SCNBox(width: 0.16, height: H - 0.02, length: 0.006, chamferRadius: 0.002)
-        hingeBand.materials = [Self.plastic(Self.ridges, roughness: 0.4, coat: 0.15)]
-        let bandNode = SCNNode(geometry: hingeBand)
-        bandNode.position = SCNVector3(Float(-W / 2 + 0.1), 0, Float(D / 2 - 0.015))
-        parts.append(bandNode)
-        for y in [-1.0, 1.0] {
-            let pin = SCNCylinder(radius: 0.022, height: 0.18)
-            pin.materials = [Self.plastic(UIColor(white: 0.08, alpha: 1), roughness: 0.3, coat: 0.3)]
-            let pinNode = SCNNode(geometry: pin)
-            pinNode.position = SCNVector3(Float(-W / 2 + 0.018), Float(y * Double(H / 2 - 0.12)), Float(D / 2 - 0.02))
-            parts.append(pinNode)
-        }
+        // Charnière : bande en plastique bleuté translucide, avec ses trois pastilles, comme un vrai boîtier.
+        let hinge = SCNPlane(width: 0.19, height: H - 0.03)
+        let hingeMat = SCNMaterial()
+        hingeMat.lightingModel = .constant
+        hingeMat.diffuse.contents = Self.hingeStrip
+        hingeMat.blendMode = .alpha
+        hingeMat.writesToDepthBuffer = false
+        hinge.materials = [hingeMat]
+        let hingeNode = SCNNode(geometry: hinge)
+        hingeNode.position = SCNVector3(Float(-W / 2 + 0.012 + 0.095), 0, Float(D / 2 - 0.0125))
+        hingeNode.renderingOrder = 9
+        parts.append(hingeNode)
 
-        // Couvercle : plastique cristal parfaitement transparent, qui n'ajoute que les reflets.
-        let lid = SCNBox(width: W, height: H, length: 0.012, chamferRadius: 0.006)
-        let clear = Self.glassy(strength: 0.55)
-        if badges.contains(.platinum) { clear.shaderModifiers = [.fragment: Self.iridescence] }
-        // Les bords du cristal se voient un peu, comme sur un vrai boîtier.
+        // Couvercle en cristal : bords bien visibles (blancs translucides), face transparente
+        // avec le cadre fin et la séparation de la charnière dessinés dessus.
+        let lid = SCNBox(width: W, height: H, length: 0.012, chamferRadius: 0.004)
+        let face = SCNMaterial()
+        face.lightingModel = .constant
+        face.diffuse.contents = Self.lidFace
+        face.blendMode = .alpha
+        face.writesToDepthBuffer = false
         let lidEdge = SCNMaterial()
         lidEdge.lightingModel = .physicallyBased
-        lidEdge.diffuse.contents = UIColor(white: 0.85, alpha: 0.22)
-        lidEdge.roughness.contents = 0.15
+        lidEdge.diffuse.contents = UIColor(white: 0.93, alpha: 0.6)
+        lidEdge.roughness.contents = 0.18
         lidEdge.blendMode = .alpha
         lidEdge.writesToDepthBuffer = false
-        lid.materials = [clear, lidEdge, clear, lidEdge, lidEdge, lidEdge]
+        let inner = Self.glassy(strength: 0.3)
+        lid.materials = [face, lidEdge, inner, lidEdge, lidEdge, lidEdge]
+        let lidNode = SCNNode(geometry: lid)
+        lidNode.position.z = Float(D / 2 - 0.006)
+        lidNode.renderingOrder = 10
+        parts.append(lidNode)
+
+        // Reflets du cristal, posés juste devant (additifs : ils ne voilent jamais la pochette).
+        let gloss = SCNPlane(width: W - 0.01, height: H - 0.01)
+        let glossMat = Self.glassy(strength: 0.6)
+        if badges.contains(.platinum) { glossMat.shaderModifiers = [.fragment: Self.iridescence] }
+        gloss.materials = [glossMat]
+        let glossNode = SCNNode(geometry: gloss)
+        glossNode.position.z = Float(D / 2) + 0.0008
+        glossNode.renderingOrder = 11
+        parts.append(glossNode)
 
         // Petits rebords du couvercle, en haut et en bas, qui viennent s'emboîter sur le plateau.
         for y in [-1.0, 1.0] {
@@ -183,17 +204,13 @@ struct AlbumNodeBuilder {
         }
         // Les deux charnières arrondies qui tiennent le couvercle.
         for y in [-1.0, 1.0] {
-            let knuckle = SCNCylinder(radius: 0.03, height: 0.1)
+            let knuckle = SCNCylinder(radius: 0.028, height: 0.1)
             knuckle.materials = [lidEdge]
             let k = SCNNode(geometry: knuckle)
             k.position = SCNVector3(Float(-W / 2 + 0.018), Float(y * Double(H / 2 - 0.12)), Float(D / 2 - 0.02))
             k.renderingOrder = 10
             parts.append(k)
         }
-        let lidNode = SCNNode(geometry: lid)
-        lidNode.position.z = Float(D / 2 - 0.006)
-        lidNode.renderingOrder = 10
-        parts.append(lidNode)
 
         return AlbumNode(albumID: album.id, format: .cd, signature: signature, parts: parts,
                          discPivot: extras ? makeDisc(album) : nil, reels: [])
@@ -368,6 +385,88 @@ struct AlbumNodeBuilder {
             ring(0.135, 0.125, UIColor(white: 1, alpha: 0.35))
         }
     }
+
+    /// Face du couvercle : transparente, avec le cadre en cristal tout autour,
+    /// la séparation de la charnière et le liseré qui entoure la pochette.
+    static let lidFace: UIImage = {
+        let w: CGFloat = 1136, h: CGFloat = 1000
+        let format = UIGraphicsImageRendererFormat()
+        format.opaque = false
+        format.scale = 1
+        return UIGraphicsImageRenderer(size: CGSize(width: w, height: h), format: format).image { ctx in
+            let c = ctx.cgContext
+            // Cadre extérieur : bande de cristal blanc translucide.
+            let outer = CGRect(x: 0, y: 0, width: w, height: h)
+            let frame = UIBezierPath(rect: outer)
+            frame.append(UIBezierPath(rect: outer.insetBy(dx: 14, dy: 14)).reversing())
+            c.addPath(frame.cgPath)
+            c.setFillColor(UIColor(white: 1, alpha: 0.16).cgColor)
+            c.fillPath()
+            c.setStrokeColor(UIColor(white: 1, alpha: 0.9).cgColor)
+            c.setLineWidth(4)
+            c.stroke(outer.insetBy(dx: 2, dy: 2))
+            c.setStrokeColor(UIColor(white: 1, alpha: 0.45).cgColor)
+            c.setLineWidth(2.5)
+            c.stroke(outer.insetBy(dx: 13, dy: 13))
+            // Fines stries le long des bords haut et bas.
+            c.setFillColor(UIColor(white: 1, alpha: 0.22).cgColor)
+            var x: CGFloat = 170
+            while x < w - 20 {
+                c.fill(CGRect(x: x, y: 5, width: 1.5, height: 6))
+                c.fill(CGRect(x: x, y: h - 11, width: 1.5, height: 6))
+                x += 7
+            }
+            // Séparation entre la charnière et la pochette.
+            c.setStrokeColor(UIColor(white: 1, alpha: 0.7).cgColor)
+            c.setLineWidth(3)
+            c.strokeLineSegments(between: [CGPoint(x: 150, y: 14), CGPoint(x: 150, y: h - 14)])
+            c.setStrokeColor(UIColor(white: 1, alpha: 0.35).cgColor)
+            c.setLineWidth(2)
+            c.strokeLineSegments(between: [CGPoint(x: 158, y: 14), CGPoint(x: 158, y: h - 14),
+                                           CGPoint(x: 26, y: 14), CGPoint(x: 26, y: h - 14)])
+            // Liseré autour de la pochette.
+            c.setStrokeColor(UIColor(white: 1, alpha: 0.28).cgColor)
+            c.setLineWidth(2)
+            c.stroke(CGRect(x: 160, y: 20, width: w - 176, height: h - 40))
+        }
+    }()
+
+    /// Bande de charnière : plastique bleu-gris translucide, trois pastilles rondes.
+    static let hingeStrip: UIImage = {
+        let w: CGFloat = 190, h: CGFloat = 1220
+        let format = UIGraphicsImageRendererFormat()
+        format.opaque = false
+        format.scale = 1
+        return UIGraphicsImageRenderer(size: CGSize(width: w, height: h), format: format).image { ctx in
+            let c = ctx.cgContext
+            let colors = [UIColor(red: 0.42, green: 0.48, blue: 0.62, alpha: 0.8).cgColor,
+                          UIColor(red: 0.3, green: 0.35, blue: 0.47, alpha: 0.8).cgColor,
+                          UIColor(red: 0.4, green: 0.46, blue: 0.6, alpha: 0.8).cgColor] as CFArray
+            if let grad = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors, locations: [0, 0.5, 1]) {
+                c.drawLinearGradient(grad, start: .zero, end: CGPoint(x: w, y: 0), options: [])
+            }
+            // Arêtes verticales qui accrochent la lumière.
+            c.setFillColor(UIColor(white: 1, alpha: 0.35).cgColor)
+            c.fill(CGRect(x: 8, y: 0, width: 3, height: h))
+            c.fill(CGRect(x: w - 14, y: 0, width: 3, height: h))
+            c.setFillColor(UIColor(white: 0, alpha: 0.18).cgColor)
+            c.fill(CGRect(x: 14, y: 0, width: 4, height: h))
+            // Les trois pastilles moulées.
+            for f in [0.16, 0.5, 0.84] {
+                let center = CGPoint(x: w / 2, y: h * CGFloat(f))
+                let r: CGFloat = 26
+                let circle = CGRect(x: center.x - r, y: center.y - r, width: 2 * r, height: 2 * r)
+                c.setFillColor(UIColor(white: 0, alpha: 0.12).cgColor)
+                c.fillEllipse(in: circle)
+                c.setStrokeColor(UIColor(white: 1, alpha: 0.4).cgColor)
+                c.setLineWidth(3)
+                c.strokeEllipse(in: circle)
+                c.setStrokeColor(UIColor(white: 0, alpha: 0.2).cgColor)
+                c.setLineWidth(2)
+                c.strokeEllipse(in: circle.insetBy(dx: 4, dy: 4))
+            }
+        }
+    }()
 
     /// Numéro de série gravé autour du centre (toujours le même pour un album).
     static func matrixCode(_ album: AlbumInfo) -> String {
@@ -789,7 +888,8 @@ enum Studio {
             let floor = SCNFloor()
             floor.reflectivity = 0.1
             floor.reflectionFalloffEnd = 0.9
-            floor.reflectionResolutionScaleFactor = 0.35
+            floor.reflectionResolutionScaleFactor = 0.3
+            floor.reflectionCategoryBitMask = 1
             let m = SCNMaterial()
             m.lightingModel = .physicallyBased
             m.diffuse.contents = UIColor(white: 0.025, alpha: 1)

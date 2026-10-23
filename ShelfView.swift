@@ -43,7 +43,7 @@ struct HoloBadge: View {
     var showsText = false
 
     private var colors: [Color] {
-        badge == .gold
+        badge.isGolden
             ? [Color(red: 1, green: 0.88, blue: 0.54), Color(red: 1, green: 0.97, blue: 0.81), Color(red: 0.83, green: 0.65, blue: 0.23),
                Color(red: 1, green: 0.91, blue: 0.66), Color(red: 0.73, green: 0.54, blue: 0.13), Color(red: 1, green: 0.88, blue: 0.54)]
             : [Color(red: 1, green: 0.6, blue: 0.84), Color(red: 0.6, green: 0.9, blue: 1), Color(red: 1, green: 0.97, blue: 0.66),
@@ -62,7 +62,7 @@ struct HoloBadge: View {
                     .tracking(0.6)
             }
         }
-        .foregroundStyle(badge == .gold ? Color(red: 0.24, green: 0.15, blue: 0.02) : Color(red: 0.11, green: 0.06, blue: 0.19))
+        .foregroundStyle(badge.isGolden ? Color(red: 0.24, green: 0.15, blue: 0.02) : Color(red: 0.11, green: 0.06, blue: 0.19))
         .padding(.horizontal, medal ? 0 : 6 * scale)
         .padding(.vertical, medal ? 0 : 3.5 * scale)
         .frame(width: medal ? 28 * scale : nil, height: medal ? 28 * scale : nil)

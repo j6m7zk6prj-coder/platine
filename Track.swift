@@ -106,34 +106,63 @@ enum AlbumFormat: String, CaseIterable, Identifiable {
 }
 
 /// Badges holographiques gagnés par un album.
-enum AlbumBadge: String, Identifiable {
+enum AlbumBadge: String, Identifiable, CaseIterable {
+    // Gagnés automatiquement (si l'option est activée)
     case platinum, gold, favorite, new
+    // Stickers à poser soi-même (appui long sur un album dans la Collection)
+    case limited, collector, signed, remastered, explicit, star, deluxe, vinylFeel, heart, fire
+
     var id: String { rawValue }
+
+    /// Les stickers proposés quand on appuie longtemps sur un album.
+    static let stickers: [AlbumBadge] = [.limited, .collector, .deluxe, .signed, .remastered, .explicit,
+                                         .star, .heart, .fire, .new, .gold, .platinum]
+
     var short: String {
         switch self {
         case .platinum: return "Platine"
         case .gold: return "Or"
         case .favorite: return "Favori"
         case .new: return "Nouveau"
+        case .limited: return "Édition limitée"
+        case .collector: return "Collector"
+        case .signed: return "Signé"
+        case .remastered: return "Remasterisé"
+        case .explicit: return "Explicite"
+        case .star: return "Étoile"
+        case .deluxe: return "Deluxe"
+        case .vinylFeel: return "Analogique"
+        case .heart: return "Coup de cœur"
+        case .fire: return "Classique"
         }
     }
     var label: String {
         switch self {
-        case .platinum: return "Disque de platine · 100 écoutes"
-        case .gold: return "Disque d’or · 50 écoutes"
-        case .favorite: return "Favori"
-        case .new: return "Nouveau"
+        case .platinum: return "Disque de platine"
+        case .gold: return "Disque d’or"
+        default: return short
         }
     }
     var symbol: String {
         switch self {
         case .platinum, .gold: return "opticaldisc.fill"
-        case .favorite: return "heart.fill"
+        case .favorite, .heart: return "heart.fill"
         case .new: return "sparkles"
+        case .limited: return "seal.fill"
+        case .collector: return "crown.fill"
+        case .signed: return "signature"
+        case .remastered: return "waveform"
+        case .explicit: return "e.square.fill"
+        case .star: return "star.fill"
+        case .deluxe: return "diamond.fill"
+        case .vinylFeel: return "record.circle"
+        case .fire: return "flame.fill"
         }
     }
-    /// Médaille ronde pour les disques d'or et de platine, étiquette pour les autres.
-    var isMedal: Bool { self == .platinum || self == .gold }
+    /// Médaille ronde (disques, étoile, cœur), étiquette pour les autres.
+    var isMedal: Bool { [.platinum, .gold, .star, .heart, .fire].contains(self) }
+    /// Teinte du sticker : or, argent ou holographique arc-en-ciel.
+    var isGolden: Bool { self == .gold || self == .collector || self == .deluxe }
 }
 
 /// Sert à ouvrir l'éditeur de pochette pour un morceau précis.

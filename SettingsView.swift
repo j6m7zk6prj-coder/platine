@@ -114,7 +114,7 @@ struct SettingsView: View {
             }
 
             Section {
-                LabeledContent("Version", value: "2.8")
+                LabeledContent("Version", value: "2.9")
             } footer: {
                 Text("Platine lit ta propre musique. Seule la recherche de paroles contacte internet (LRCLIB), et uniquement quand tu ouvres des paroles absentes ou lances la recherche.")
             }
@@ -149,6 +149,7 @@ struct SettingsView: View {
 /// Thème, couleur d'accent, pochettes, paroles et Collection.
 struct AppearanceSettingsView: View {
     @Environment(AppSettings.self) private var settings
+    @Environment(Library.self) private var library
     @Environment(Player.self) private var player
 
     private var lockFooter: String {
@@ -238,6 +239,15 @@ struct AppearanceSettingsView: View {
                     .animation(.smooth(duration: 0.25), value: settings.lyricsSize)
             } header: {
                 Text("Paroles")
+            }
+
+            Section {
+                Toggle("Stickers automatiques", isOn: Binding(get: { library.autoStickers },
+                                                              set: { library.autoStickers = $0 }))
+            } header: {
+                Text("Collection")
+            } footer: {
+                Text("Ajoute tout seul les stickers Or, Platine, Favori et Nouveau. Pour choisir tes propres stickers holographiques, appuie longtemps sur un album dans la Collection.")
             }
 
             Section("Bibliothèque") {
