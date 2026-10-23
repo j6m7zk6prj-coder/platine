@@ -57,46 +57,26 @@ struct SettingsView: View {
             }
 
             Section("Apparence") {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("Couleur d’accent")
-                    HStack(spacing: 12) {
-                        ForEach(AccentChoice.allCases) { choice in
-                            Button { settings.accent = choice } label: {
-                                Circle()
-                                    .fill(choice.color)
-                                    .frame(width: 34, height: 34)
-                                    .overlay {
-                                        if settings.accent == choice {
-                                            Image(systemName: "checkmark")
-                                                .font(.footnote.weight(.bold))
-                                                .foregroundStyle(.black)
-                                        }
-                                    }
-                                    .overlay { Circle().strokeBorder(.white.opacity(0.25), lineWidth: 1) }
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel(choice.label)
-                            .accessibilityAddTraits(settings.accent == choice ? AccessibilityTraits.isSelected : AccessibilityTraits())
-                        }
+                NavigationLink {
+                    AppearanceSettingsView()
+                } label: {
+                    HStack {
+                        Label("Thème et affichage", systemImage: "paintpalette")
+                        Spacer()
+                        Text(settings.theme.label).foregroundStyle(.secondary)
                     }
                 }
-                .padding(.vertical, 4)
-                Toggle("Fond aux couleurs de la pochette", isOn: $settings.dynamicBackground)
-                Toggle("Pochettes animées", isOn: $settings.animatedArtwork)
                 NavigationLink {
                     AppIconPicker()
                 } label: {
                     HStack {
-                        Text("Icône de l’app")
+                        Label("Icône de l’app", systemImage: "app.badge")
                         Spacer()
                         Text(AppIconChoice.all.first { $0.iconName == UIApplication.shared.alternateIconName }?.title ?? "Platine")
                             .foregroundStyle(.secondary)
                     }
                 }
                 Toggle("Retours haptiques", isOn: $settings.haptics)
-                Picker("Format dans la Collection", selection: $settings.shelfFormat) {
-                    ForEach(AlbumFormat.allCases) { Text($0.label).tag($0) }
-                }
             }
 
             Section {
@@ -125,7 +105,7 @@ struct SettingsView: View {
             }
 
             Section {
-                LabeledContent("Version", value: "2.0")
+                LabeledContent("Version", value: "2.4")
             } footer: {
                 Text("Platine lit ta propre musique. Seule la recherche de paroles contacte internet (LRCLIB), et uniquement quand tu ouvres des paroles absentes ou lances la recherche.")
             }
@@ -148,5 +128,133 @@ struct SettingsView: View {
         if player.sleepAtTrackEnd { return "Arrêt à la fin du morceau" }
         guard let end = player.sleepEndDate else { return "Désactivée" }
         return "Arrêt dans " + formatTime(max(0, end.timeIntervalSince(date)))
+    }
+}
+
+
+// MARK: - Apparence
+
+/// Thème, couleur d'accent, pochettes, paroles et Collection.
+struct AppearanceSettingsView: View {
+    @Environment(AppSettings.self) private var settings
+
+    var body: some View {
+        @Bindable var settings = settings
+        Form {
+            Section {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 96), spacing: 12)], spacing: 14) {
+                    ForEach(AppTheme.allCases) { theme in
+                        ThemeTile(theme: theme, selected: settings.theme == theme) {
+                            withAnimation(.smooth(duration: 0.35)) { settings.theme = theme }
+                        }
+                    }
+                }
+                .padding(.vertical, 6)
+            } header: {
+                Text("Thème")
+            } footer: {
+                Text(settings.theme.detail + ". L’écran « En lecture » et la Collection restent toujours sombres, comme dans Musique.")
+            }
+
+            Section("Couleur d’accent") {
+                HStack(spacing: 12) {
+                    ForEach(AccentChoice.allCases) { choice in
+                        Button { settings.accent = choice } label: {
+                            Circle()
+                                .fill(choice.color)
+                                .frame(width: 34, height: 34)
+                                .overlay {
+                                    if settings.accent == choice {
+                                        Image(systemName: "checkmark")
+                                            .font(.footnote.weight(.bold))
+                                            .foregroundStyle(choice == .white ? Color.black : Color.white)
+                                    }
+                                }
+                                .overlay { Circle().strokeBorder(.primary.opacity(0.2), lineWidth: 1) }
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(choice.label)
+                        .accessibilityAddTraits(settings.accent == choice ? AccessibilityTraits.isSelected : AccessibilityTraits())
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+
+            Section("Fond") {
+                Toggle("Couleurs de la pochette en lecture", isOn: $settings.dynamicBackground)
+                Toggle("Fond en mouvement", isOn: $settings.backgroundMotion)
+            }
+
+            Section("Pochettes") {
+                Picker("Forme", selection: $settings.artworkStyle) {
+                    ForEach(ArtworkStyle.allCases) { Text($0.label).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                Toggle("Pochettes animées", isOn: $settings.animatedArtwork)
+            }
+
+            Section {
+                Picker("Taille", selection: $settings.lyricsSize) {
+                    ForEach(LyricsSize.allCases) { Text($0.label).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                Text("Les paroles brillent doucement")
+                    .font(.system(size: settings.lyricsSize.points * 0.8, weight: .bold))
+                    .foregroundStyle(.white)
+                    .shadow(color: .white.opacity(0.55), radius: 2.5)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(14)
+                    .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color(white: 0.1)))
+                    .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 12, trailing: 16))
+                    .animation(.smooth(duration: 0.25), value: settings.lyricsSize)
+            } header: {
+                Text("Paroles")
+            }
+
+            Section("Bibliothèque") {
+                Toggle("Afficher « Ajoutés récemment »", isOn: $settings.showRecent)
+                Picker("Format dans la Collection", selection: $settings.shelfFormat) {
+                    ForEach(AlbumFormat.allCases) { Text($0.label).tag($0) }
+                }
+            }
+        }
+        .navigationTitle("Apparence")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+private struct ThemeTile: View {
+    let theme: AppTheme
+    let selected: Bool
+    var action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 8) {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(LinearGradient(colors: theme.swatch, startPoint: .topLeading, endPoint: .bottomTrailing))
+                    .frame(height: 64)
+                    .overlay(alignment: .bottomLeading) {
+                        // Mini aperçu : deux lignes de texte dans la couleur du thème.
+                        VStack(alignment: .leading, spacing: 4) {
+                            Capsule().frame(width: 38, height: 6)
+                            Capsule().frame(width: 24, height: 6).opacity(0.5)
+                        }
+                        .foregroundStyle(theme.isLight ? Color.black.opacity(0.75) : Color.white.opacity(0.85))
+                        .padding(10)
+                    }
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .strokeBorder(selected ? AnyShapeStyle(.tint) : AnyShapeStyle(.primary.opacity(0.15)),
+                                          lineWidth: selected ? 2.5 : 1)
+                    }
+                Text(theme.label)
+                    .font(.footnote.weight(selected ? .semibold : .regular))
+                    .foregroundStyle(selected ? AnyShapeStyle(.tint) : AnyShapeStyle(.primary))
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Thème " + theme.label)
+        .accessibilityAddTraits(selected ? AccessibilityTraits.isSelected : AccessibilityTraits())
     }
 }

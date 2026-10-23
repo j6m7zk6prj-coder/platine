@@ -4,6 +4,7 @@ import SwiftUI
 struct LyricsPane: View {
     let track: Track
     @Environment(Library.self) private var library
+    @Environment(AppSettings.self) private var settings
     @State private var lines: [LyricLine]?
     @State private var searching = false
     @State private var notFound = false
@@ -37,7 +38,7 @@ struct LyricsPane: View {
     private func staticLyrics(_ text: String) -> some View {
         ScrollView {
             Text(text)
-                .font(.system(size: 26, weight: .bold))
+                .font(.system(size: settings.lyricsSize.points - 5, weight: .bold))
                 .foregroundStyle(.white.opacity(0.88))
                 .lineSpacing(8)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -87,6 +88,7 @@ struct LyricsPane: View {
 struct SyncedLyricsView: View {
     let lines: [LyricLine]
     @Environment(Player.self) private var player
+    @Environment(AppSettings.self) private var settings
     @State private var lastUserScroll = Date.distantPast
 
     var body: some View {
@@ -104,7 +106,8 @@ struct SyncedLyricsView: View {
                         LyricLineView(line: line,
                                       distance: distance,
                                       interludeProgress: interludeProgress(line, now: now),
-                                      browsing: userBrowsing)
+                                      browsing: userBrowsing,
+                                      fontSize: settings.lyricsSize.points)
                             .id(line.id)
                             .contentShape(Rectangle())
                             .onTapGesture {
@@ -155,6 +158,7 @@ struct LyricLineView: View {
     let distance: Int
     let interludeProgress: Double?
     let browsing: Bool
+    var fontSize: CGFloat = 31
 
     private var isActive: Bool { distance == 0 }
 
@@ -169,10 +173,11 @@ struct LyricLineView: View {
                 }
             } else {
                 Text(line.text)
-                    .font(.system(size: 31, weight: .bold))
+                    .font(.system(size: fontSize, weight: .bold))
                     .lineSpacing(4)
                     .foregroundStyle(.white.opacity(isActive ? 1 : (browsing ? 0.55 : 0.3)))
-                    .shadow(color: .white.opacity(isActive ? 0.45 : 0), radius: isActive ? 14 : 0)
+                    // Lueur serrée autour des lettres, sans voile autour de la ligne.
+                    .shadow(color: .white.opacity(isActive ? 0.55 : 0), radius: isActive ? 2.5 : 0)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .scaleEffect(isActive ? 1 : 0.96, anchor: .leading)

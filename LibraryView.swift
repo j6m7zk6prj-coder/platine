@@ -3,6 +3,7 @@ import SwiftUI
 // MARK: - Accueil de la bibliothèque
 
 struct LibraryHomeView: View {
+    @Environment(AppSettings.self) private var settings
     @Environment(Library.self) private var library
     @Environment(Player.self) private var player
     @Environment(UIState.self) private var ui
@@ -66,7 +67,7 @@ struct LibraryHomeView: View {
                 }
                 .glass(22)
 
-                if !library.recentlyAdded.isEmpty {
+                if settings.showRecent && !library.recentlyAdded.isEmpty {
                     VStack(alignment: .leading, spacing: 14) {
                         Text("Ajouts récents").font(.title2.bold())
                         LazyVGrid(columns: [GridItem(.flexible(), spacing: 16), GridItem(.flexible(), spacing: 16)], spacing: 22) {
@@ -86,7 +87,7 @@ struct LibraryHomeView: View {
     }
 
     private var rowDivider: some View {
-        Divider().overlay(Color.white.opacity(0.08)).padding(.leading, 60)
+        Divider().overlay(Color.primary.opacity(0.08)).padding(.leading, 60)
     }
 }
 
@@ -210,8 +211,8 @@ struct TrackRows: View {
                 .onTapGesture {
                     if isCurrent { ui.showPlayer = true } else { player.play(ids: tracks.map(\.id), startAt: t.id) }
                 }
-                .listRowBackground(isCurrent ? Color.white.opacity(0.08) : Color.clear)
-                .listRowSeparatorTint(.white.opacity(0.1))
+                .listRowBackground(isCurrent ? Color.primary.opacity(0.07) : Color.clear)
+                .listRowSeparatorTint(.primary.opacity(0.1))
                 .swipeActions(edge: .leading, allowsFullSwipe: true) {
                     Button { player.playNext([t.id]) } label: {
                         Label("Lire ensuite", systemImage: "text.line.first.and.arrowtriangle.forward")
@@ -362,7 +363,7 @@ struct MiniPlayer: View {
                     .transition(.opacity)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(t.title).font(.subheadline.weight(.semibold)).lineLimit(1)
-                    Text(t.displayArtist).font(.footnote).foregroundStyle(.white.opacity(0.6)).lineLimit(1)
+                    Text(t.displayArtist).font(.footnote).foregroundStyle(.secondary).lineLimit(1)
                 }
                 .id(t.id)
                 .transition(.opacity)
@@ -383,7 +384,7 @@ struct MiniPlayer: View {
                 .accessibilityLabel("Suivant")
             }
             .buttonStyle(PressStyle())
-            .foregroundStyle(.white)
+            .foregroundStyle(.primary)
             .padding(.leading, 8)
             .padding(.trailing, 6)
             .padding(.vertical, 8)
@@ -391,7 +392,7 @@ struct MiniPlayer: View {
                 // Fine barre de progression, comme dans Musique.
                 GeometryReader { geo in
                     Capsule()
-                        .fill(.white.opacity(0.7))
+                        .fill(.primary.opacity(0.7))
                         .frame(width: geo.size.width * min(1, player.currentTime / max(player.duration, 0.01)), height: 2)
                 }
                 .frame(height: 2)

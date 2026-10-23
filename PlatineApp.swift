@@ -23,8 +23,8 @@ struct PlatineApp: App {
                 .environment(player)
                 .environment(settings)
                 .environment(ui)
-                .preferredColorScheme(.dark)
-                .tint(settings.accent.color)
+                .preferredColorScheme(settings.theme.isLight ? .light : .dark)
+                .tint(settings.tint)
         }
     }
 }

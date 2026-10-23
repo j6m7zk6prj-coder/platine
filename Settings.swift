@@ -40,6 +40,57 @@ enum AccentChoice: String, CaseIterable, Identifiable {
     }
 }
 
+/// Thème de l'app.
+enum AppTheme: String, CaseIterable, Identifiable {
+    case dynamic, black, graphite, midnight, light, white
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .dynamic: return "Pochette"
+        case .black: return "Noir"
+        case .graphite: return "Graphite"
+        case .midnight: return "Minuit"
+        case .light: return "Clair"
+        case .white: return "Blanc"
+        }
+    }
+    var detail: String {
+        switch self {
+        case .dynamic: return "Le fond prend les couleurs de la pochette"
+        case .black: return "Noir pur, idéal pour l’écran OLED"
+        case .graphite: return "Gris sombre et neutre"
+        case .midnight: return "Bleu nuit"
+        case .light: return "Clair, teinté par la pochette"
+        case .white: return "Blanc pur"
+        }
+    }
+    var isLight: Bool { self == .light || self == .white }
+    /// Aperçu pour le sélecteur.
+    var swatch: [Color] {
+        switch self {
+        case .dynamic: return [Color(red: 0.55, green: 0.2, blue: 0.35), Color(red: 0.2, green: 0.25, blue: 0.5)]
+        case .black: return [.black, .black]
+        case .graphite: return [Color(white: 0.16), Color(white: 0.08)]
+        case .midnight: return [Color(red: 0.07, green: 0.1, blue: 0.24), Color(red: 0.02, green: 0.03, blue: 0.09)]
+        case .light: return [Color(red: 0.98, green: 0.92, blue: 0.94), Color(red: 0.9, green: 0.93, blue: 0.99)]
+        case .white: return [.white, .white]
+        }
+    }
+}
+
+enum LyricsSize: String, CaseIterable, Identifiable {
+    case small, medium, large
+    var id: String { rawValue }
+    var label: String { self == .small ? "Petite" : (self == .medium ? "Moyenne" : "Grande") }
+    var points: CGFloat { self == .small ? 25 : (self == .medium ? 31 : 37) }
+}
+
+enum ArtworkStyle: String, CaseIterable, Identifiable {
+    case rounded, square
+    var id: String { rawValue }
+    var label: String { self == .rounded ? "Arrondies" : "Carrées" }
+}
+
 /// Réglages de l'app, enregistrés sur l'iPhone.
 @MainActor
 @Observable
@@ -61,6 +112,14 @@ final class AppSettings {
     var accent: AccentChoice { didSet { UserDefaults.standard.set(accent.rawValue, forKey: "accent") } }
     var songSort: SongSort { didSet { UserDefaults.standard.set(songSort.rawValue, forKey: "songSort") } }
     var shelfFormat: AlbumFormat { didSet { UserDefaults.standard.set(shelfFormat.rawValue, forKey: "shelfFormat") } }
+    var theme: AppTheme { didSet { UserDefaults.standard.set(theme.rawValue, forKey: "theme") } }
+    var lyricsSize: LyricsSize { didSet { UserDefaults.standard.set(lyricsSize.rawValue, forKey: "lyricsSize") } }
+    var artworkStyle: ArtworkStyle { didSet { UserDefaults.standard.set(artworkStyle.rawValue, forKey: "artworkStyle") } }
+    var backgroundMotion: Bool { didSet { UserDefaults.standard.set(backgroundMotion, forKey: "backgroundMotion") } }
+    var showRecent: Bool { didSet { UserDefaults.standard.set(showRecent, forKey: "showRecent") } }
+
+    /// Couleur d'accent lisible sur le thème choisi (le blanc devient noir sur un thème clair).
+    var tint: Color { theme.isLight && accent == .white ? .black : accent.color }
 
     init() {
         let d = UserDefaults.standard
@@ -75,6 +134,11 @@ final class AppSettings {
         accent = AccentChoice(rawValue: d.string(forKey: "accent") ?? "") ?? .pink
         songSort = SongSort(rawValue: d.string(forKey: "songSort") ?? "") ?? .title
         shelfFormat = AlbumFormat(rawValue: d.string(forKey: "shelfFormat") ?? "") ?? .cd
+        theme = AppTheme(rawValue: d.string(forKey: "theme") ?? "") ?? .dynamic
+        lyricsSize = LyricsSize(rawValue: d.string(forKey: "lyricsSize") ?? "") ?? .medium
+        artworkStyle = ArtworkStyle(rawValue: d.string(forKey: "artworkStyle") ?? "") ?? .rounded
+        backgroundMotion = d.object(forKey: "backgroundMotion") as? Bool ?? true
+        showRecent = d.object(forKey: "showRecent") as? Bool ?? true
     }
 }
 

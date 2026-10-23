@@ -195,7 +195,7 @@ struct ArtistsView: View {
                     }
                 }
                 .listRowBackground(Color.clear)
-                .listRowSeparatorTint(.white.opacity(0.1))
+                .listRowSeparatorTint(.primary.opacity(0.1))
             }
         }
         .plainList()
@@ -301,14 +301,14 @@ struct ArtistDetailView: View {
                         .listRowBackground(Color.clear)
                         .listRowSeparator(.hidden)
                     } header: {
-                        Text("Albums").font(.title3.bold()).foregroundStyle(.white).textCase(nil)
+                        Text("Albums").font(.title3.bold()).foregroundStyle(.primary).textCase(nil)
                     }
                 }
 
                 Section {
                     TrackRows(tracks: artist.tracks)
                 } header: {
-                    Text("Morceaux").font(.title3.bold()).foregroundStyle(.white).textCase(nil)
+                    Text("Morceaux").font(.title3.bold()).foregroundStyle(.primary).textCase(nil)
                 }
             }
             .plainList()
@@ -334,13 +334,13 @@ struct PlaylistsView: View {
                     Image(systemName: "plus")
                         .font(.title3.weight(.semibold))
                         .frame(width: 56, height: 56)
-                        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(.white.opacity(0.1)))
+                        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(.primary.opacity(0.08)))
                     Text("Nouvelle playlist").font(.body.weight(.medium))
                 }
                 .foregroundStyle(.tint)
             }
             .listRowBackground(Color.clear)
-            .listRowSeparatorTint(.white.opacity(0.1))
+            .listRowSeparatorTint(.primary.opacity(0.1))
 
             ForEach(library.sortedPlaylists) { p in
                 NavigationLink { PlaylistDetailView(playlistID: p.id) } label: {
@@ -358,7 +358,7 @@ struct PlaylistsView: View {
                     }
                 }
                 .listRowBackground(Color.clear)
-                .listRowSeparatorTint(.white.opacity(0.1))
+                .listRowSeparatorTint(.primary.opacity(0.1))
                 .swipeActions {
                     Button(role: .destructive) { library.deletePlaylist(p.id) } label: { Label("Supprimer", systemImage: "trash") }
                 }
@@ -466,7 +466,7 @@ struct PlaylistDetailView: View {
                 }
                 .foregroundStyle(.tint)
                 .listRowBackground(Color.clear)
-                .listRowSeparatorTint(.white.opacity(0.1))
+                .listRowSeparatorTint(.primary.opacity(0.1))
 
                 TrackRows(tracks: tracks,
                           onDelete: { library.removeFromPlaylist(p.id, offsets: $0) },

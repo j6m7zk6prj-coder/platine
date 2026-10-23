@@ -79,6 +79,6 @@ struct QueueView: View {
     }
 
     private func header(_ text: String) -> some View {
-        Text(text).font(.headline).foregroundStyle(.white).textCase(nil)
+        Text(text).font(.headline).foregroundStyle(.primary).textCase(nil)
     }
 }

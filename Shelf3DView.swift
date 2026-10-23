@@ -14,10 +14,20 @@ struct ShelfView: View {
     @State private var focusedIndex = 0
     @State private var inspected: AlbumInfo?
     @State private var startIndex: Int?
+    // État de l'album en main (gardé ici pour que la vue 3D reste chargée en permanence).
+    @State private var discOut = false
+    @State private var isBack = false
+    @State private var flipToken = 0
+    @State private var resetToken = 0
+
+    private static let quick = Animation.smooth(duration: 0.22)
 
     var body: some View {
         let albums = library.albums
         let focused = albums.indices.contains(focusedIndex) ? albums[focusedIndex] : albums.first
+        // La vue « en main » est déjà prête avec l'album au centre : l'ouverture est instantanée.
+        let handAlbum = inspected ?? focused
+        let isOpen = inspected != nil
         ZStack {
             Color(red: 0.03, green: 0.03, blue: 0.04).ignoresSafeArea()
 
@@ -25,10 +35,12 @@ struct ShelfView: View {
                 ContentUnavailableView("Aucun album", systemImage: "opticaldisc",
                                        description: Text("Importe de la musique pour remplir ta collection."))
             } else if let startIndex {
-                ShelfSceneView(albums: albums, startIndex: startIndex, motion: motion,
+                ShelfSceneView(albums: albums, startIndex: startIndex, motion: motion, paused: isOpen,
                                onFocus: { focusedIndex = $0 },
-                               onOpen: { i in withAnimation(.smooth(duration: 0.45)) { inspected = albums[i] } })
+                               onOpen: { i in open(albums[i]) })
                     .ignoresSafeArea()
+                    .opacity(isOpen ? 0 : 1)
+                    .allowsHitTesting(!isOpen)
             }
 
             VStack(spacing: 0) {
@@ -37,16 +49,46 @@ struct ShelfView: View {
                 if let focused { caption(focused) }
             }
             .padding(.bottom, 30)
+            .opacity(isOpen ? 0 : 1)
+            .allowsHitTesting(!isOpen)
 
-            if let inspected {
-                ShelfInspector(album: inspected, motion: motion) {
-                    withAnimation(.smooth(duration: 0.45)) { self.inspected = nil }
+            if let handAlbum {
+                let format = library.format(of: handAlbum.id, default: settings.shelfFormat)
+                let playing = isPlaying(handAlbum)
+                RadialGradient(colors: [library.palette(for: handAlbum.first)[1].opacity(0.35), .clear],
+                               center: UnitPoint(x: 0.5, y: 0.42), startRadius: 10, endRadius: 380)
+                    .ignoresSafeArea()
+                    .opacity(isOpen ? 1 : 0)
+                    .allowsHitTesting(false)
+
+                InspectorSceneView(album: handAlbum, format: format, badges: library.badges(for: handAlbum),
+                                   motion: motion, active: isOpen, discOut: discOut,
+                                   spinning: playing && player.isPlaying,
+                                   flipToken: flipToken, resetToken: resetToken,
+                                   onBackChange: { isBack = $0 })
+                    .ignoresSafeArea()
+                    .opacity(isOpen ? 1 : 0)
+                    .allowsHitTesting(isOpen)
+
+                if let inspected {
+                    ShelfInspector(album: inspected, format: format, isBack: isBack, discOut: $discOut,
+                                   playingThisAlbum: playing,
+                                   onFlip: { flipToken += 1 },
+                                   onFormat: { newValue in
+                                       discOut = false
+                                       resetToken += 1
+                                       library.setFormat(newValue, for: inspected.id)
+                                   },
+                                   onClose: close)
+                        .transition(.opacity)
+                        .zIndex(2)
                 }
-                .transition(.opacity)
-                .zIndex(2)
             }
         }
         .foregroundStyle(.white)
+        .animation(Self.quick, value: isOpen)
+        .sensoryFeedback(trigger: discOut) { _, _ in settings.haptics ? .impact(weight: .medium) : nil }
+        .sensoryFeedback(trigger: isBack) { _, _ in settings.haptics && isOpen ? .impact(weight: .light) : nil }
         .onAppear {
             motion.start()
             if startIndex == nil {
@@ -58,6 +100,22 @@ struct ShelfView: View {
         }
         .onDisappear { motion.stop() }
         .statusBarHidden()
+    }
+
+    private func isPlaying(_ album: AlbumInfo) -> Bool {
+        guard let id = player.currentID else { return false }
+        return album.tracks.contains { $0.id == id }
+    }
+
+    private func open(_ album: AlbumInfo) {
+        discOut = false
+        isBack = false
+        inspected = album
+    }
+
+    private func close() {
+        discOut = false
+        inspected = nil
     }
 
     private var topBar: some View {
@@ -109,7 +167,7 @@ struct ShelfView: View {
                         .padding(.vertical, 12)
                         .glassCapsule(interactive: true)
                 }
-                Button { withAnimation(.smooth(duration: 0.45)) { inspected = album } } label: {
+                Button { open(album) } label: {
                     Label("Prendre en main", systemImage: "hand.point.up.left.fill")
                         .padding(.horizontal, 22)
                         .padding(.vertical, 12)
@@ -130,6 +188,7 @@ struct ShelfSceneView: UIViewRepresentable {
     let albums: [AlbumInfo]
     let startIndex: Int
     let motion: MotionTilt
+    var paused = false
     var onFocus: (Int) -> Void
     var onOpen: (Int) -> Void
     @Environment(Library.self) private var library
@@ -146,6 +205,7 @@ struct ShelfSceneView: UIViewRepresentable {
         c.onOpen = onOpen
         c.update(albums: albums, library: library, settings: settings)
         c.start()
+        c.setPaused(paused)
         return c.view
     }
 
@@ -154,6 +214,7 @@ struct ShelfSceneView: UIViewRepresentable {
         c.onFocus = onFocus
         c.onOpen = onOpen
         c.update(albums: albums, library: library, settings: settings)
+        c.setPaused(paused)
     }
 
     static func dismantleUIView(_ uiView: SCNView, coordinator: ShelfSceneController) {
@@ -221,6 +282,14 @@ final class ShelfSceneController: NSObject {
     func stop() {
         link?.invalidate()
         link = nil
+    }
+
+    /// Caché derrière l'album en main : le carrousel arrête de se redessiner.
+    func setPaused(_ paused: Bool) {
+        guard paused != (link?.isPaused ?? false) else { return }
+        link?.isPaused = paused
+        view.rendersContinuously = !paused
+        view.isPlaying = !paused
     }
 
     func update(albums newAlbums: [AlbumInfo], library: Library, settings: AppSettings) {
@@ -380,93 +449,64 @@ extension Comparable {
 
 struct ShelfInspector: View {
     let album: AlbumInfo
-    let motion: MotionTilt
+    let format: AlbumFormat
+    let isBack: Bool
+    @Binding var discOut: Bool
+    let playingThisAlbum: Bool
+    var onFlip: () -> Void
+    var onFormat: (AlbumFormat) -> Void
     var onClose: () -> Void
     @Environment(Player.self) private var player
-    @Environment(Library.self) private var library
-    @Environment(AppSettings.self) private var settings
-    @State private var discOut = false
-    @State private var isBack = false
-    @State private var flipToken = 0
-    @State private var resetToken = 0
-
-    private var format: AlbumFormat { library.format(of: album.id, default: settings.shelfFormat) }
-
-    private var playingThisAlbum: Bool {
-        guard let id = player.currentID else { return false }
-        return album.tracks.contains { $0.id == id }
-    }
 
     var body: some View {
-        let format = self.format
-        let badges = library.badges(for: album)
         let spinning = playingThisAlbum && player.isPlaying
-        ZStack {
-            ZStack {
-                Color(red: 0.03, green: 0.03, blue: 0.04)
-                RadialGradient(colors: [library.palette(for: album.first)[1].opacity(0.35), .clear],
-                               center: UnitPoint(x: 0.5, y: 0.42), startRadius: 10, endRadius: 380)
+        VStack(spacing: 16) {
+            HStack {
+                FormatSwitch(format: format, onChange: onFormat)
+                Spacer()
+                Button(action: onClose) {
+                    Image(systemName: "xmark")
+                        .font(.body.weight(.bold))
+                        .frame(width: 40, height: 40)
+                        .glassCircle()
+                }
+                .accessibilityLabel("Reposer")
             }
-            .ignoresSafeArea()
+            .padding(.horizontal, 22)
+            .padding(.top, 16)
 
-            InspectorSceneView(album: album, format: format, badges: badges, motion: motion,
-                               discOut: discOut, spinning: spinning, flipToken: flipToken, resetToken: resetToken,
-                               onBackChange: { isBack = $0 })
-                .ignoresSafeArea()
+            Spacer(minLength: 0)
+                .allowsHitTesting(false)
 
-            VStack(spacing: 16) {
-                HStack {
-                    FormatSwitch(format: format) { newValue in
-                        discOut = false
-                        resetToken += 1
-                        library.setFormat(newValue, for: album.id)
-                    }
-                    Spacer()
-                    Button(action: onClose) {
-                        Image(systemName: "xmark")
-                            .font(.body.weight(.bold))
-                            .frame(width: 40, height: 40)
-                            .glassCircle()
-                    }
-                    .accessibilityLabel("Reposer")
-                }
-                .padding(.horizontal, 22)
-                .padding(.top, 16)
-
-                Spacer(minLength: 0)
-
-                VStack(spacing: 4) {
-                    Text(album.title).font(.title2.bold()).lineLimit(1)
-                    Text(album.artist).font(.headline).foregroundStyle(.white.opacity(0.6)).lineLimit(1)
-                }
-
-                Text("Glisse pour tourner · touche pour retourner · pince pour zoomer · touche deux fois pour remettre droit")
-                    .font(.caption)
-                    .foregroundStyle(.white.opacity(0.45))
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 30)
-
-                HStack(spacing: 10) {
-                    inspectorButton(format == .cassette ? (isBack ? "Face A" : "Face B") : (isBack ? "Face" : "Dos"),
-                                    symbol: "arrow.left.and.right.righttriangle.left.righttriangle.right") {
-                        flipToken += 1
-                    }
-                    if format == .cd {
-                        inspectorButton(discOut ? "Ranger le CD" : "Sortir le CD", symbol: "opticaldisc") {
-                            if !discOut && !playingThisAlbum { playAlbum() }
-                            discOut.toggle()
-                        }
-                    }
-                    inspectorButton(spinning ? "Pause" : "Lire", symbol: spinning ? "pause.fill" : "play.fill") {
-                        if playingThisAlbum { player.togglePlay() } else { playAlbum() }
-                    }
-                }
-                .padding(.horizontal, 16)
-                .padding(.bottom, 26)
+            VStack(spacing: 4) {
+                Text(album.title).font(.title2.bold()).lineLimit(1)
+                Text(album.artist).font(.headline).foregroundStyle(.white.opacity(0.6)).lineLimit(1)
             }
+            .allowsHitTesting(false)
+
+            Text("Glisse pour tourner · touche pour retourner · pince pour zoomer · touche deux fois pour remettre droit")
+                .font(.caption)
+                .foregroundStyle(.white.opacity(0.45))
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 30)
+                .allowsHitTesting(false)
+
+            HStack(spacing: 10) {
+                inspectorButton(format == .cassette ? (isBack ? "Face A" : "Face B") : (isBack ? "Face" : "Dos"),
+                                symbol: "arrow.left.and.right.righttriangle.left.righttriangle.right", action: onFlip)
+                if format == .cd {
+                    inspectorButton(discOut ? "Ranger le CD" : "Sortir le CD", symbol: "opticaldisc") {
+                        if !discOut && !playingThisAlbum { playAlbum() }
+                        discOut.toggle()
+                    }
+                }
+                inspectorButton(spinning ? "Pause" : "Lire", symbol: spinning ? "pause.fill" : "play.fill") {
+                    if playingThisAlbum { player.togglePlay() } else { playAlbum() }
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 26)
         }
-        .sensoryFeedback(trigger: discOut) { _, _ in settings.haptics ? .impact(weight: .medium) : nil }
-        .sensoryFeedback(trigger: isBack) { _, _ in settings.haptics ? .impact(weight: .light) : nil }
     }
 
     private func inspectorButton(_ title: String, symbol: String, action: @escaping () -> Void) -> some View {
@@ -494,6 +534,7 @@ struct InspectorSceneView: UIViewRepresentable {
     let format: AlbumFormat
     let badges: [AlbumBadge]
     let motion: MotionTilt
+    let active: Bool
     let discOut: Bool
     let spinning: Bool
     let flipToken: Int
@@ -511,7 +552,6 @@ struct InspectorSceneView: UIViewRepresentable {
         c.flipToken = flipToken
         c.resetToken = resetToken
         apply(c)
-        c.start()
         return c.view
     }
 
@@ -525,9 +565,11 @@ struct InspectorSceneView: UIViewRepresentable {
 
     private func apply(_ c: InspectorSceneController) {
         let builder = AlbumNodeBuilder(library: library, settings: settings)
-        c.show(album: album, format: format, badges: badges, builder: builder)
-        c.node?.setDiscOut(discOut)
-        c.node?.setSpinning(spinning && (format == .cassette || discOut))
+        c.show(album: album, format: format, badges: badges, builder: builder, animated: active)
+        c.setActive(active)
+        if discOut { c.ensureDisc() }
+        c.node?.setDiscOut(discOut && active)
+        c.node?.setSpinning(active && spinning && (format == .cassette || discOut))
     }
 
     static func dismantleUIView(_ uiView: SCNView, coordinator: InspectorSceneController) {
@@ -560,6 +602,9 @@ final class InspectorSceneController: NSObject {
     private var dragging = false
     private var zoom = 1.0, zoomTarget = 1.0, pinchStart = 1.0
     private var lastBack = false
+    private var active = false
+    private var builder: AlbumNodeBuilder?
+    private var album: AlbumInfo?
 
     override init() {
         super.init()
@@ -571,10 +616,14 @@ final class InspectorSceneController: NSObject {
         scene.rootNode.addChildNode(cameraNode)
         scene.rootNode.addChildNode(holder)
         holder.position = SCNVector3(0, 0.3, 0)
+        holder.eulerAngles = SCNVector3(Float(restX), Float(restY), 0)
 
         view.scene = scene
         view.pointOfView = cameraNode
         view.configureForShelf()
+        // En veille au départ : la vue se dessine une fois (shaders prêts) puis attend.
+        view.rendersContinuously = false
+        view.isPlaying = false
 
         let pan = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
         pan.maximumNumberOfTouches = 1
@@ -602,17 +651,68 @@ final class InspectorSceneController: NSObject {
         link = nil
     }
 
-    func show(album: AlbumInfo, format: AlbumFormat, badges: [AlbumBadge], builder: AlbumNodeBuilder) {
+    /// Allume ou met en veille la vue « en main ». En veille elle ne consomme rien,
+    /// mais reste prête : l'ouvrir est instantané.
+    func setActive(_ on: Bool) {
+        guard on != active else { return }
+        active = on
+        if on {
+            // L'objet arrive en pivotant légèrement, comme quand on le prend en main.
+            rx = restX; tx = restX
+            ry = restY + 0.55; ty = restY
+            vx = 0; vy = 0
+            zoom = 0.9; zoomTarget = 1
+            start()
+            view.rendersContinuously = true
+            view.isPlaying = true
+            // Le disque est préparé juste après l'ouverture, sans la ralentir.
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .milliseconds(300))
+                guard let self, self.active else { return }
+                self.ensureDisc()
+            }
+        } else {
+            stop()
+            view.rendersContinuously = false
+            view.isPlaying = false
+            node?.setSpinning(false)
+            node?.settle()
+            rx = restX; tx = restX; ry = restY; ty = restY
+            vx = 0; vy = 0; zoom = 1; zoomTarget = 1
+            holder.eulerAngles = SCNVector3(Float(restX), Float(restY), 0)
+            cameraNode.position = SCNVector3(0, 0, 6.6)
+            if lastBack {
+                lastBack = false
+                let report = onBackChange
+                Task { @MainActor in report(false) }
+            }
+        }
+    }
+
+    func ensureDisc() {
+        guard let node, node.format == .cd, !node.hasDisc, let builder, let album else { return }
+        node.attachDisc(builder.makeDisc(album))
+    }
+
+    func show(album: AlbumInfo, format: AlbumFormat, badges: [AlbumBadge], builder: AlbumNodeBuilder, animated: Bool) {
+        self.builder = builder
+        self.album = album
         let sig = builder.signature(album, format, badges)
         guard node?.signature != sig else { return }
         let old = node
-        let fresh = builder.make(album, format: format, badges: badges, extras: true)
+        let fresh = builder.make(album, format: format, badges: badges, extras: false)
+        guard animated else {
+            old?.root.removeFromParentNode()
+            holder.addChildNode(fresh.root)
+            node = fresh
+            return
+        }
         fresh.root.opacity = 0
         fresh.root.scale = SCNVector3(0.92, 0.92, 0.92)
         holder.addChildNode(fresh.root)
         node = fresh
         SCNTransaction.begin()
-        SCNTransaction.animationDuration = 0.4
+        SCNTransaction.animationDuration = 0.3
         SCNTransaction.animationTimingFunction = CAMediaTimingFunction(name: .easeOut)
         fresh.root.opacity = 1
         fresh.root.scale = SCNVector3(1, 1, 1)

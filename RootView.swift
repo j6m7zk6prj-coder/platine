@@ -27,6 +27,7 @@ struct RootView: View {
         .overlay(alignment: .top) { Banner() }
         .sheet(isPresented: $ui.showPlayer) {
             NowPlayingView()
+                .environment(\.colorScheme, .dark)
                 .presentationDragIndicator(.visible)
                 .presentationCornerRadius(40)
                 .presentationBackground(.black)
@@ -36,6 +37,7 @@ struct RootView: View {
         }
         .fullScreenCover(isPresented: $ui.showShelf) {
             ShelfView()
+                .environment(\.colorScheme, .dark)
         }
         .sheet(item: $ui.editingInfo) { target in
             TrackInfoEditor(trackID: target.id)

@@ -94,6 +94,6 @@ struct SearchView: View {
     }
 
     private func sectionTitle(_ text: String) -> some View {
-        Text(text).font(.title3.bold()).foregroundStyle(.white).textCase(nil)
+        Text(text).font(.title3.bold()).foregroundStyle(.primary).textCase(nil)
     }
 }

@@ -98,7 +98,9 @@ struct ArtworkView: View {
     @Environment(AppSettings.self) private var settings
 
     var body: some View {
-        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        // Réglage « Pochettes carrées » : coins presque droits.
+        let radius = settings.artworkStyle == .square ? min(cornerRadius, cornerRadius >= 25 ? cornerRadius : 2) : cornerRadius
+        let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
         shape
             .fill(LinearGradient(colors: [.white.opacity(0.16), .white.opacity(0.05)],
                                  startPoint: .topLeading, endPoint: .bottomTrailing))
@@ -271,16 +273,46 @@ struct AnimatedImageView: UIViewRepresentable {
 struct AmbientBackground: View {
     let track: Track?
     var dim: Double = 0.3
+    /// Écran « En lecture » : reste sombre même avec un thème clair.
+    var forceDark = false
     @Environment(Library.self) private var library
     @Environment(AppSettings.self) private var settings
     @State private var drift = false
 
+    private var theme: AppTheme {
+        let t = settings.theme
+        if forceDark && t.isLight { return .dynamic }
+        return t
+    }
+
     var body: some View {
+        Group {
+            switch theme {
+            case .dynamic: dynamicBackground(light: false)
+            case .light: dynamicBackground(light: true)
+            case .black: Color.black
+            case .white: Color.white
+            case .graphite:
+                LinearGradient(colors: [Color(white: 0.15), Color(white: 0.07)], startPoint: .top, endPoint: .bottom)
+            case .midnight:
+                ZStack {
+                    LinearGradient(colors: [Color(red: 0.07, green: 0.1, blue: 0.24), Color(red: 0.02, green: 0.03, blue: 0.09)],
+                                   startPoint: .top, endPoint: .bottom)
+                    RadialGradient(colors: [Color(red: 0.25, green: 0.3, blue: 0.7).opacity(0.35), .clear],
+                                   center: .topTrailing, startRadius: 0, endRadius: 500)
+                }
+            }
+        }
+        .ignoresSafeArea()
+        .animation(.easeInOut(duration: 0.5), value: settings.theme)
+    }
+
+    private func dynamicBackground(light: Bool) -> some View {
         let colors = settings.dynamicBackground ? (track.map { library.palette(for: $0) } ?? Palette.defaults) : Palette.defaults
-        GeometryReader { geo in
+        return GeometryReader { geo in
             let side = max(geo.size.width, geo.size.height)
             ZStack {
-                colors[0]
+                if light { Color(white: 0.97) } else { colors[0] }
                 if settings.dynamicBackground, let t = track, let img = library.thumbnail(for: t) {
                     Image(uiImage: img)
                         .resizable()
@@ -288,7 +320,7 @@ struct AmbientBackground: View {
                         .frame(width: geo.size.width, height: geo.size.height)
                         .scaleEffect(1.4)
                         .blur(radius: 60)
-                        .opacity(0.55)
+                        .opacity(light ? 0.22 : 0.55)
                         .id(library.artworkURL(t))
                         .transition(.opacity)
                 }
@@ -296,22 +328,25 @@ struct AmbientBackground: View {
                     .fill(RadialGradient(colors: [colors[1], .clear], center: .center, startRadius: 0, endRadius: side * 0.45))
                     .frame(width: side * 0.9, height: side * 0.9)
                     .offset(x: drift ? side * 0.18 : -side * 0.22, y: drift ? -side * 0.3 : -side * 0.12)
-                    .opacity(0.75)
+                    .opacity(light ? 0.25 : 0.75)
                 Circle()
                     .fill(RadialGradient(colors: [colors[2], .clear], center: .center, startRadius: 0, endRadius: side * 0.42))
                     .frame(width: side * 0.85, height: side * 0.85)
                     .offset(x: drift ? -side * 0.2 : side * 0.2, y: drift ? side * 0.32 : side * 0.14)
-                    .opacity(0.65)
-                Color.black.opacity(dim)
+                    .opacity(light ? 0.2 : 0.65)
+                if light { Color.white.opacity(0.55) } else { Color.black.opacity(dim) }
             }
             .frame(width: geo.size.width, height: geo.size.height)
             .clipped()
         }
-        .ignoresSafeArea()
         .animation(.easeInOut(duration: 1.3), value: colors)
         .animation(.easeInOut(duration: 1.0), value: track.flatMap { library.artworkURL($0) })
         .onAppear {
+            guard settings.backgroundMotion else { return }
             withAnimation(.easeInOut(duration: 17).repeatForever(autoreverses: true)) { drift = true }
+        }
+        .onChange(of: settings.backgroundMotion) { _, on in
+            withAnimation(on ? .easeInOut(duration: 17).repeatForever(autoreverses: true) : .easeInOut(duration: 1)) { drift = on }
         }
     }
 }

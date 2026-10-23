@@ -41,7 +41,7 @@ struct NowPlayingView: View {
         .padding(.horizontal, 28)
         .padding(.bottom, 10)
         .foregroundStyle(.white)
-        .background { AmbientBackground(track: track, dim: 0.26) }
+        .background { AmbientBackground(track: track, dim: 0.26, forceDark: true) }
         .animation(.smooth(duration: 0.45), value: player.currentID)
         .animation(.smooth(duration: 0.4), value: showLyrics)
         .sheet(item: $editing) { target in

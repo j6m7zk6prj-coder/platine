@@ -21,7 +21,7 @@ final class AlbumNode {
     let root = SCNNode()
     /// L'objet lui-même (boîtier ou cassette), qui peut glisser quand le CD sort.
     let body = SCNNode()
-    let discPivot: SCNNode?
+    private(set) var discPivot: SCNNode?
     let reels: [SCNNode]
     private(set) var spinning = false
     private(set) var discOut = false
@@ -38,6 +38,27 @@ final class AlbumNode {
         for p in parts { body.addChildNode(p) }
         if let discPivot { root.addChildNode(discPivot) }
         for r in reels { body.addChildNode(r) }
+    }
+
+    /// Le disque n'est fabriqué qu'au besoin (ouverture plus rapide).
+    var hasDisc: Bool { discPivot != nil }
+
+    func attachDisc(_ pivot: SCNNode) {
+        guard discPivot == nil else { return }
+        discPivot = pivot
+        root.addChildNode(pivot)
+        if spinning {
+            pivot.runAction(.repeatForever(.rotateBy(x: 0, y: 0, z: -2 * .pi, duration: 1.8)), forKey: "spin")
+        }
+    }
+
+    /// Remet l'objet au repos sans animation.
+    func settle() {
+        guard let discPivot else { return }
+        discOut = false
+        discPivot.position = SCNVector3(0.05, 0, 0)
+        discPivot.opacity = 0
+        body.position = SCNVector3(0, 0, 0)
     }
 
     func setSpinning(_ on: Bool) {
@@ -97,21 +118,20 @@ struct AlbumNodeBuilder {
         var parts: [SCNNode] = []
 
         // Plateau : noir fumé, le dos porte la jaquette arrière.
-        let backImage = render(CDBackInsert(album: album, lightX: 0), CGSize(width: 568, height: 500))
+        let backImage = cached("back|" + signature) { render(CDBackInsert(album: album, lightX: 0), CGSize(width: 568, height: 500)) }
         let tray = SCNBox(width: W, height: H, length: D - 0.014, chamferRadius: 0.01)
         let smoke = Self.plastic(UIColor(white: 0.1, alpha: 1), roughness: 0.45, coat: 0.2)
         let black = Self.plastic(UIColor(white: 0.03, alpha: 1), roughness: 0.5, coat: 0.1)
-        tray.materials = [black, smoke, Self.plastic(backImage ?? UIColor.darkGray, roughness: 0.5, coat: 0.25), smoke, smoke, smoke]
+        tray.materials = [black, smoke, Self.printed(backImage ?? UIColor.darkGray), smoke, smoke, smoke]
         let trayNode = SCNNode(geometry: tray)
         trayNode.position.z = -0.007
         parts.append(trayNode)
 
         // Pochette : un carré de 120 mm glissé sous le couvercle, décalé vers la droite.
         let cover = SCNPlane(width: 1.2, height: 1.2)
-        let coverImage = render(CoverFace(album: album, badges: badges), CGSize(width: 600, height: 600))
-        let coverMat = Self.plastic(coverImage ?? UIColor.darkGray, roughness: 0.55, coat: 0.0)
-        if badges.contains(.platinum) { coverMat.shaderModifiers = [.fragment: Self.iridescence] }
-        cover.materials = [coverMat]
+        let coverImage = cached("cover|" + signature) { render(CoverFace(album: album, badges: badges), CGSize(width: 600, height: 600)) }
+        // Couleurs exactes de la pochette : elle n'est pas « brûlée » par les lumières.
+        cover.materials = [Self.printed(coverImage ?? UIColor.darkGray)]
         let coverNode = SCNNode(geometry: cover)
         coverNode.position = SCNVector3(Float(W / 2 - 0.62), 0, Float(D / 2 - 0.0135))
         parts.append(coverNode)
@@ -130,47 +150,40 @@ struct AlbumNodeBuilder {
             parts.append(pinNode)
         }
 
-        // Couvercle : plastique cristal très légèrement visible, qui ne fait que capter les reflets.
+        // Couvercle : plastique cristal parfaitement transparent, qui n'ajoute que les reflets.
         let lid = SCNBox(width: W, height: H, length: 0.012, chamferRadius: 0.006)
-        let clear = SCNMaterial()
-        clear.lightingModel = .physicallyBased
-        clear.diffuse.contents = UIColor.white
-        clear.roughness.contents = 0.12
-        clear.metalness.contents = 0.0
-        clear.transparency = 0.07
-        clear.writesToDepthBuffer = false
-        let lidEdge = SCNMaterial()
-        lidEdge.lightingModel = .physicallyBased
-        lidEdge.diffuse.contents = UIColor(white: 0.85, alpha: 1)
-        lidEdge.roughness.contents = 0.2
-        lidEdge.transparency = 0.35
-        lidEdge.writesToDepthBuffer = false
+        let clear = Self.glassy(strength: 0.55)
+        if badges.contains(.platinum) { clear.shaderModifiers = [.fragment: Self.iridescence] }
+        let lidEdge = Self.glassy(strength: 0.9)
         lid.materials = [clear, lidEdge, clear, lidEdge, lidEdge, lidEdge]
         let lidNode = SCNNode(geometry: lid)
         lidNode.position.z = Float(D / 2 - 0.006)
         lidNode.renderingOrder = 10
         parts.append(lidNode)
 
-        var discPivot: SCNNode?
-        if extras {
-            let disc = SCNCylinder(radius: 0.58, height: 0.012)
-            let silver = Self.plastic(UIColor(white: 0.82, alpha: 1), roughness: 0.25, coat: 0.3)
-            silver.metalness.contents = 0.8
-            let print = Self.plastic(render(CDDisc(album: album, spinning: false), CGSize(width: 512, height: 512)) ?? UIColor.lightGray,
-                                     roughness: 0.3, coat: 0.3)
-            print.metalness.contents = 0.25
-            // Ordre des faces d'un cylindre : côté, dessus, dessous.
-            disc.materials = [silver, print, silver]
-            let discNode = SCNNode(geometry: disc)
-            discNode.eulerAngles.x = .pi / 2
-            let pivot = SCNNode()
-            pivot.addChildNode(discNode)
-            pivot.position = SCNVector3(0.05, 0, 0)
-            pivot.opacity = 0
-            discPivot = pivot
-        }
+        return AlbumNode(albumID: album.id, format: .cd, signature: signature, parts: parts,
+                         discPivot: extras ? makeDisc(album) : nil, reels: [])
+    }
 
-        return AlbumNode(albumID: album.id, format: .cd, signature: signature, parts: parts, discPivot: discPivot, reels: [])
+    /// Le CD lui-même, rangé (invisible) dans le boîtier.
+    func makeDisc(_ album: AlbumInfo) -> SCNNode {
+        let disc = SCNCylinder(radius: 0.58, height: 0.012)
+        let silver = Self.plastic(UIColor(white: 0.82, alpha: 1), roughness: 0.25, coat: 0.3)
+        silver.metalness.contents = 0.8
+        let image = cached("disc|" + album.id + "|" + album.title) {
+            render(CDDisc(album: album, spinning: false), CGSize(width: 512, height: 512), scale: 1.2)
+        }
+        let print = Self.plastic(image ?? UIColor.lightGray, roughness: 0.3, coat: 0.3)
+        print.metalness.contents = 0.25
+        // Ordre des faces d'un cylindre : côté, dessus, dessous.
+        disc.materials = [silver, print, silver]
+        let discNode = SCNNode(geometry: disc)
+        discNode.eulerAngles.x = .pi / 2
+        let pivot = SCNNode()
+        pivot.addChildNode(discNode)
+        pivot.position = SCNVector3(0.05, 0, 0)
+        pivot.opacity = 0
+        return pivot
     }
 
     // MARK: Cassette : coque fumée arrondie, vis, fenêtre vitrée et bobines.
@@ -180,16 +193,32 @@ struct AlbumNodeBuilder {
         let W = CGFloat(size.x), H = CGFloat(size.y), D = CGFloat(size.z)
         var parts: [SCNNode] = []
 
-        let front = render(CassetteView(album: album, sideB: false, spinning: false, progress: 0, lightX: 0, badges: badges),
-                           CGSize(width: 632, height: 400))
-        let back = render(CassetteView(album: album, sideB: true, spinning: false, progress: 0, lightX: 0, badges: []),
-                          CGSize(width: 632, height: 400))
+        let front = cached("front|" + signature) {
+            render(CassetteView(album: album, sideB: false, spinning: false, progress: 0, lightX: 0, badges: badges),
+                   CGSize(width: 632, height: 400))
+        }
+        let back = cached("sideb|" + signature) {
+            render(CassetteView(album: album, sideB: true, spinning: false, progress: 0, lightX: 0, badges: []),
+                   CGSize(width: 632, height: 400))
+        }
         let shell = SCNBox(width: W, height: H, length: D, chamferRadius: 0.035)
         let side = Self.plastic(UIColor(white: 0.11, alpha: 1), roughness: 0.55, coat: 0.15)
-        let frontMat = Self.plastic(front ?? UIColor.darkGray, roughness: 0.5, coat: 0.2)
-        if badges.contains(.platinum) { frontMat.shaderModifiers = [.fragment: Self.iridescence] }
-        shell.materials = [frontMat, side, Self.plastic(back ?? UIColor.darkGray, roughness: 0.5, coat: 0.2), side, side, side]
+        shell.materials = [Self.printed(front ?? UIColor.darkGray), side, Self.printed(back ?? UIColor.darkGray), side, side, side]
         parts.append(SCNNode(geometry: shell))
+
+        // Vernis : uniquement des reflets, posés par-dessus les deux faces.
+        for face in [1.0, -1.0] {
+            let gloss = SCNPlane(width: W - 0.04, height: H - 0.04)
+            gloss.cornerRadius = 0.03
+            let m = Self.glassy(strength: 0.35)
+            if face > 0 && badges.contains(.platinum) { m.shaderModifiers = [.fragment: Self.iridescence] }
+            gloss.materials = [m]
+            let n = SCNNode(geometry: gloss)
+            n.position.z = Float(face * Double(D / 2 + 0.001))
+            if face < 0 { n.eulerAngles.y = .pi }
+            n.renderingOrder = 9
+            parts.append(n)
+        }
 
         // Vis en métal, en relief sur les deux faces.
         let screwMat = Self.plastic(UIColor(white: 0.6, alpha: 1), roughness: 0.3, coat: 0)
@@ -209,13 +238,7 @@ struct AlbumNodeBuilder {
         // Vitre de la fenêtre, légèrement en relief.
         let glass = SCNPlane(width: W * 0.5, height: H * 0.21)
         glass.cornerRadius = H * 0.05
-        let glassMat = SCNMaterial()
-        glassMat.lightingModel = .physicallyBased
-        glassMat.diffuse.contents = UIColor.white
-        glassMat.roughness.contents = 0.1
-        glassMat.transparency = 0.08
-        glassMat.writesToDepthBuffer = false
-        glass.materials = [glassMat]
+        glass.materials = [Self.glassy(strength: 0.8)]
         let glassNode = SCNNode(geometry: glass)
         glassNode.position = SCNVector3(0, Float(0.055 * Double(H)), Float(D / 2) + 0.006)
         glassNode.renderingOrder = 10
@@ -240,14 +263,52 @@ struct AlbumNodeBuilder {
 
     // MARK: Outils
 
-    private func render<V: View>(_ view: V, _ size: CGSize) -> UIImage? {
+    private func render<V: View>(_ view: V, _ size: CGSize, scale: CGFloat = 1.6) -> UIImage? {
         let content = view
             .frame(width: size.width, height: size.height)
             .environment(library)
             .environment(settings)
+            .environment(\.colorScheme, .dark)
         let renderer = ImageRenderer(content: content)
-        renderer.scale = 1.6
+        renderer.scale = scale
+        renderer.isOpaque = true
         return renderer.uiImage
+    }
+
+    /// Les faces dessinées sont gardées en mémoire : rouvrir un album ne les redessine pas.
+    static let textures: NSCache<NSString, UIImage> = {
+        let c = NSCache<NSString, UIImage>()
+        c.countLimit = 80
+        return c
+    }()
+
+    private func cached(_ key: String, _ make: () -> UIImage?) -> UIImage? {
+        if let img = Self.textures.object(forKey: key as NSString) { return img }
+        guard let img = make() else { return nil }
+        Self.textures.setObject(img, forKey: key as NSString)
+        return img
+    }
+
+    /// Impression (pochette, jaquette) : couleurs fidèles, sans être éclaircies par les projecteurs.
+    static func printed(_ contents: Any) -> SCNMaterial {
+        let m = SCNMaterial()
+        m.lightingModel = .constant
+        m.diffuse.contents = contents
+        m.multiply.contents = UIColor(white: 0.94, alpha: 1)
+        return m
+    }
+
+    /// Plastique transparent : noir en mode « addition », il ne laisse voir que ses reflets.
+    static func glassy(strength: CGFloat) -> SCNMaterial {
+        let m = SCNMaterial()
+        m.lightingModel = .physicallyBased
+        m.diffuse.contents = UIColor.black
+        m.roughness.contents = 0.14
+        m.metalness.contents = 0.0
+        m.blendMode = .add
+        m.transparency = strength
+        m.writesToDepthBuffer = false
+        return m
     }
 
     /// Plastique physique, avec un vernis discret.
@@ -272,7 +333,7 @@ struct AlbumNodeBuilder {
     float facing = saturate(dot(v, n));
     float phase = facing * 2.2 + _surface.diffuseTexcoord.x * 1.6 + _surface.diffuseTexcoord.y * 0.8;
     float3 rainbow = 0.5 + 0.5 * cos(6.28318 * (phase + float3(0.0, 0.33, 0.67)));
-    _output.color.rgb += rainbow * 0.09 * (1.1 - facing);
+    _output.color.rgb += rainbow * 0.12 * (1.1 - facing);
     """
 
     /// Stries de la charnière.
@@ -354,11 +415,11 @@ enum Studio {
 
     static func addLights(to scene: SCNScene, withFloor: Bool) {
         scene.lightingEnvironment.contents = environment
-        scene.lightingEnvironment.intensity = 0.9
+        scene.lightingEnvironment.intensity = 0.75
 
         let key = SCNLight()
         key.type = .directional
-        key.intensity = 650
+        key.intensity = 520
         let keyNode = SCNNode()
         keyNode.light = key
         keyNode.eulerAngles = SCNVector3(-0.7, 0.5, 0)
