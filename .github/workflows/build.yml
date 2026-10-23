@@ -19,11 +19,29 @@ jobs:
         run: |
           mkdir -p Platine/Assets.xcassets/AppIcon.appiconset
           for f in *.swift; do [ -e "$f" ] && mv "$f" Platine/; done
-          [ -f icon.png ] && mv icon.png Platine/Assets.xcassets/AppIcon.appiconset/icon.png
           rm -f Contents.json "Contents (1).json"
           echo '{ "info" : { "author" : "xcode", "version" : 1 } }' > Platine/Assets.xcassets/Contents.json
-          echo '{ "images" : [ { "filename" : "icon.png", "idiom" : "universal", "platform" : "ios", "size" : "1024x1024" } ], "info" : { "author" : "xcode", "version" : 1 } }' > Platine/Assets.xcassets/AppIcon.appiconset/Contents.json
-          find Platine -type f
+          icon_set () {
+            mkdir -p "Platine/Assets.xcassets/$2.appiconset" "Platine/Assets.xcassets/Preview-$3.imageset"
+            cp "$1" "Platine/Assets.xcassets/$2.appiconset/icon.png"
+            cp "$1" "Platine/Assets.xcassets/Preview-$3.imageset/icon.png"
+            echo '{ "images" : [ { "filename" : "icon.png", "idiom" : "universal", "platform" : "ios", "size" : "1024x1024" } ], "info" : { "author" : "xcode", "version" : 1 } }' > "Platine/Assets.xcassets/$2.appiconset/Contents.json"
+            echo '{ "images" : [ { "filename" : "icon.png", "idiom" : "universal" } ], "info" : { "author" : "xcode", "version" : 1 } }' > "Platine/Assets.xcassets/Preview-$3.imageset/Contents.json"
+          }
+          # Icône principale
+          if [ -f icon.png ]; then icon_set icon.png AppIcon Platine; fi
+          # Icônes au choix : chaque fichier icon-Nom.png devient une icône « Nom »
+          ALT=""
+          for f in icon-*.png; do
+            [ -e "$f" ] || continue
+            n="${f#icon-}"; n="${n%.png}"; n="$(echo "$n" | tr -cd 'A-Za-z0-9_-')"
+            [ -n "$n" ] || continue
+            icon_set "$f" "AppIcon-$n" "$n"
+            ALT="$ALT AppIcon-$n"
+          done
+          echo "ALT_ICONS=${ALT# }" >> "$GITHUB_ENV"
+          echo "Icônes au choix :$ALT"
+          find Platine -type f | sort
 
       - name: Choisir Xcode
         run: |
@@ -43,6 +61,8 @@ jobs:
           set -o pipefail
           xcodebuild -project Platine.xcodeproj -target Platine -configuration Release -sdk iphoneos \
             SYMROOT="$PWD/build" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES="$ALT_ICONS" \
+            ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS=YES \
             build 2>&1 | tee build.log | grep -E "error:|BUILD (SUCCEEDED|FAILED)" || true
           test -d build/Release-iphoneos/Platine.app
 
