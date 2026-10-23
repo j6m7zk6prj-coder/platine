@@ -1197,83 +1197,95 @@ struct CoverCropper: View {
     let image: UIImage
     /// Largeur ÷ hauteur du cadre (jaquette PS5 : 135 ÷ 170).
     let aspect: CGFloat
+    var title = "Jaquette"
+    /// Cadre rond (pour un sticker rond).
+    var round = false
     var onDone: (UIImage) -> Void
     @Environment(\.dismiss) private var dismiss
+    @State private var lastFrame: CGSize = CGSize(width: 300, height: 300)
     @State private var scale: CGFloat = 1
     @State private var lastScale: CGFloat = 1
     @State private var offset: CGSize = .zero
     @State private var lastOffset: CGSize = .zero
 
     var body: some View {
-        GeometryReader { geo in
-            let frame = frameSize(in: geo.size)
-            let shown = shownSize(frame)
-            ZStack {
-                Color.black.ignoresSafeArea()
-                Image(uiImage: image)
-                    .resizable()
-                    .frame(width: shown.width, height: shown.height)
-                    .offset(offset)
-                // Tout ce qui dépasse du cadre est assombri.
-                Rectangle()
-                    .fill(Color.black.opacity(0.65))
-                    .reverseMask {
-                        RoundedRectangle(cornerRadius: 6).frame(width: frame.width, height: frame.height)
-                    }
-                    .ignoresSafeArea()
-                    .allowsHitTesting(false)
-                RoundedRectangle(cornerRadius: 6)
-                    .strokeBorder(Color.white, lineWidth: 2)
-                    .frame(width: frame.width, height: frame.height)
-                    .allowsHitTesting(false)
-                VStack {
-                    HStack {
-                        Button("Annuler") { dismiss() }
-                        Spacer()
-                        Text("Jaquette").font(.headline)
-                        Spacer()
-                        Button("Utiliser") {
-                            onDone(crop(frame: frame))
-                            dismiss()
-                        }
-                        .fontWeight(.semibold)
-                    }
-                    .padding(.horizontal, 20)
-                    .padding(.top, 12)
-                    Spacer()
-                    Text("Glisse pour placer l’image · pince pour zoomer")
-                        .font(.footnote)
-                        .foregroundStyle(.white.opacity(0.7))
-                        .padding(.bottom, 24)
+        VStack(spacing: 0) {
+            HStack {
+                Button("Annuler") { dismiss() }
+                Spacer()
+                Text(title).font(.headline)
+                Spacer()
+                Button("Utiliser") {
+                    onDone(crop(frame: lastFrame))
+                    dismiss()
                 }
-                .foregroundStyle(.white)
+                .fontWeight(.semibold)
             }
-            .contentShape(Rectangle())
-            .gesture(
-                DragGesture()
-                    .onChanged { g in
-                        offset = clamp(CGSize(width: lastOffset.width + g.translation.width,
-                                              height: lastOffset.height + g.translation.height), frame: frame, scale: scale)
-                    }
-                    .onEnded { _ in lastOffset = offset }
-                    .simultaneously(with:
-                        MagnifyGesture()
-                            .onChanged { g in
-                                scale = min(6, max(1, lastScale * g.magnification))
-                                offset = clamp(offset, frame: frame, scale: scale)
-                            }
-                            .onEnded { _ in
-                                lastScale = scale
-                                lastOffset = offset
-                            }
-                    )
-            )
+            .padding(.horizontal, 20)
+            .frame(height: 52)
+
+            // Zone de recadrage : sa taille ne dépend jamais de l'image (rien ne saute quand on zoome).
+            GeometryReader { geo in
+                let frame = frameSize(in: geo.size)
+                let shown = shownSize(frame)
+                ZStack {
+                    Color.clear
+                        .overlay {
+                            Image(uiImage: image)
+                                .resizable()
+                                .frame(width: shown.width, height: shown.height)
+                                .offset(offset)
+                        }
+                        .clipped()
+                    // Tout ce qui dépasse du cadre est assombri.
+                    Rectangle()
+                        .fill(Color.black.opacity(0.65))
+                        .reverseMask {
+                            RoundedRectangle(cornerRadius: round ? frame.width / 2 : 8)
+                                .frame(width: frame.width, height: frame.height)
+                        }
+                        .allowsHitTesting(false)
+                    RoundedRectangle(cornerRadius: round ? frame.width / 2 : 8)
+                        .strokeBorder(Color.white, lineWidth: 2)
+                        .frame(width: frame.width, height: frame.height)
+                        .allowsHitTesting(false)
+                }
+                .frame(width: geo.size.width, height: geo.size.height)
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture()
+                        .onChanged { g in
+                            offset = clamp(CGSize(width: lastOffset.width + g.translation.width,
+                                                  height: lastOffset.height + g.translation.height), frame: frame, scale: scale)
+                        }
+                        .onEnded { _ in lastOffset = offset }
+                        .simultaneously(with:
+                            MagnifyGesture()
+                                .onChanged { g in
+                                    scale = min(6, max(1, lastScale * g.magnification))
+                                    offset = clamp(lastOffset, frame: frame, scale: scale)
+                                }
+                                .onEnded { _ in
+                                    lastScale = scale
+                                    lastOffset = offset
+                                }
+                        )
+                )
+                .onAppear { lastFrame = frame }
+                .onChange(of: geo.size) { _, newSize in lastFrame = frameSize(in: newSize) }
+            }
+
+            Text("Glisse pour placer l’image · pince pour zoomer")
+                .font(.footnote)
+                .foregroundStyle(.white.opacity(0.7))
+                .frame(height: 50)
         }
-        .sensoryFeedback(.selection, trigger: scale == 1)
+        .foregroundStyle(.white)
+        .background(Color.black.ignoresSafeArea())
     }
 
     private func frameSize(in size: CGSize) -> CGSize {
-        let w = min(size.width - 48, (size.height - 200) * aspect)
+        let w = max(100, min(size.width - 48, (size.height - 40) * aspect))
         return CGSize(width: w, height: w / aspect)
     }
 

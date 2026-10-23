@@ -252,7 +252,7 @@ struct MyStickersSection: View {
             }
         }
         .fullScreenCover(item: $cropping) { source in
-            CoverCropper(image: source.image, aspect: 1) { cropped in
+            CoverCropper(image: source.image, aspect: 1, title: "Sticker") { cropped in
                 // On laisse le recadrage se fermer avant d'ouvrir le choix de la finition.
                 Task {
                     try? await Task.sleep(for: .milliseconds(450))

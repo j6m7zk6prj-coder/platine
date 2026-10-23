@@ -747,15 +747,16 @@ struct AlbumNodeBuilder {
         let W = CGFloat(size.x), H = CGFloat(size.y)
         let game = library.gameName(album.id) ?? album.title
         var parts: [SCNNode] = []
+        let corner: CGFloat = 0.06   // coins bien arrondis, comme les vrais boîtiers
 
         // Plastique bleu translucide des boîtiers PS5.
         let blue = SCNMaterial()
         blue.lightingModel = .physicallyBased
-        blue.diffuse.contents = UIColor(red: 0.13, green: 0.38, blue: 0.93, alpha: 0.9)
-        blue.roughness.contents = 0.3
+        blue.diffuse.contents = UIColor(red: 0.12, green: 0.36, blue: 0.92, alpha: 0.92)
+        blue.roughness.contents = 0.28
         blue.metalness.contents = 0.0
-        blue.clearCoat.contents = 0.5
-        blue.clearCoatRoughness.contents = 0.2
+        blue.clearCoat.contents = 0.6
+        blue.clearCoatRoughness.contents = 0.15
         blue.blendMode = .alpha
 
         let cover = gameCover(album, game: game)
@@ -766,35 +767,50 @@ struct AlbumNodeBuilder {
         let booklet = cached("gamebook|" + signature) {
             Self.gameBooklet(title: game, tracks: album.tracks.map { ($0.title, $0.displayArtist) })
         }
-        let spine = cached("gamespine2|" + game) {
-            Self.gameSpine(title: game)
-        }
+        let spine = cached("gamespine2|" + game) { Self.gameSpine(title: game) }
 
-        // Partie arrière : le plateau bleu clair où le disque est clipsé, le dos imprimé.
-        let shell = SCNBox(width: W, height: H, length: 0.04, chamferRadius: 0.02)
-        shell.materials = [Self.printed(Self.gameTray), blue, Self.printed(back ?? UIColor.darkGray), blue, blue, blue]
-        let shellNode = SCNNode(geometry: shell)
-        shellNode.position.z = -0.05
-        parts.append(shellNode)
-        // Parois du plateau sur toute l'épaisseur : boîtier fermé, on voit un seul bloc avec sa fine jointure.
-        let rims: [(CGFloat, CGFloat, Float, Float)] = [
-            (W, 0.035, 0, Float(H / 2 - 0.0175)), (W, 0.035, 0, Float(-H / 2 + 0.0175)),
-            (0.035, H, Float(W / 2 - 0.0175), 0), (0.035, H, Float(-W / 2 + 0.0175), 0)
-        ]
-        for (w, h, x, y) in rims {
-            let rim = SCNBox(width: w, height: h, length: 0.066, chamferRadius: 0.004)
-            rim.materials = [blue]
-            let n = SCNNode(geometry: rim)
-            n.position = SCNVector3(x, y, -0.038)
-            parts.append(n)
-        }
+        // Coque arrière : plaque aux coins arrondis + cadre (parois) tout autour.
+        let backPlate = Self.roundedSlab(width: W, height: H, corner: corner, depth: 0.04, chamfer: 0.012)
+        backPlate.materials = [blue]
+        let backNode = SCNNode(geometry: backPlate)
+        backNode.position.z = -0.051
+        parts.append(backNode)
+        let frame = Self.roundedFrame(width: W, height: H, corner: corner, wall: 0.035, depth: 0.028, chamfer: 0.004)
+        frame.materials = [blue]
+        let frameNode = SCNNode(geometry: frame)
+        frameNode.position.z = -0.018
+        parts.append(frameNode)
+        // Plateau intérieur (vu quand le boîtier est ouvert).
+        let tray = SCNPlane(width: W - 0.07, height: H - 0.07)
+        tray.cornerRadius = corner - 0.03
+        tray.materials = [Self.printed(Self.gameTray)]
+        let trayNode = SCNNode(geometry: tray)
+        trayNode.position.z = -0.0305
+        parts.append(trayNode)
+        // Dos imprimé, sous le film arrière.
+        let backPrint = SCNPlane(width: W - 0.05, height: H - 0.05)
+        backPrint.cornerRadius = 0.02
+        backPrint.materials = [Self.printed(back ?? UIColor.darkGray)]
+        let backPrintNode = SCNNode(geometry: backPrint)
+        backPrintNode.eulerAngles.y = .pi
+        backPrintNode.position.z = -0.0715
+        parts.append(backPrintNode)
+        let backFilm = SCNPlane(width: W - 0.03, height: H - 0.03)
+        backFilm.cornerRadius = 0.03
+        backFilm.materials = [Self.glassy(strength: 0.5)]
+        let backFilmNode = SCNNode(geometry: backFilm)
+        backFilmNode.eulerAngles.y = .pi
+        backFilmNode.position.z = -0.0722
+        backFilmNode.renderingOrder = 11
+        parts.append(backFilmNode)
+
         // Tranche droite (côté ouverture) : l'encoche pour le pouce et les deux petits ergots.
-        let slot = SCNPlane(width: 0.05, height: 0.42)
-        slot.cornerRadius = 0.025
         let slotMat = SCNMaterial()
         slotMat.lightingModel = .physicallyBased
-        slotMat.diffuse.contents = UIColor(red: 0.05, green: 0.16, blue: 0.55, alpha: 0.95)
+        slotMat.diffuse.contents = UIColor(red: 0.05, green: 0.17, blue: 0.58, alpha: 0.95)
         slotMat.roughness.contents = 0.25
+        let slot = SCNPlane(width: 0.05, height: 0.42)
+        slot.cornerRadius = 0.025
         slot.materials = [slotMat]
         let slotNode = SCNNode(geometry: slot)
         slotNode.eulerAngles.y = .pi / 2
@@ -807,8 +823,8 @@ struct AlbumNodeBuilder {
             t.position = SCNVector3(Float(W / 2) + 0.002, Float(y), -0.005)
             parts.append(t)
         }
-        // Tranche gauche (dos) : la jaquette en papier s'enroule autour, visible sous le plastique.
-        let spinePlane = SCNPlane(width: 0.136, height: H - 0.05)
+        // Dos (tranche gauche) : la jaquette en papier, visible sous le plastique.
+        let spinePlane = SCNPlane(width: 0.115, height: H - 2 * corner - 0.02)
         spinePlane.materials = [Self.printed(spine ?? UIColor.white)]
         let spineNode = SCNNode(geometry: spinePlane)
         spineNode.eulerAngles.y = -.pi / 2
@@ -817,36 +833,70 @@ struct AlbumNodeBuilder {
 
         // Couvercle : il tourne autour de la charnière, à gauche, comme un livre.
         let lidPivot = SCNNode()
-        lidPivot.position = SCNVector3(Float(-W / 2), 0, -0.005)
-        let lid = SCNBox(width: W, height: H, length: 0.075, chamferRadius: 0.025)
-        lid.materials = [blue, blue, Self.printed(booklet ?? UIColor.darkGray), blue, blue, blue]
+        lidPivot.position = SCNVector3(Float(-W / 2), 0, -0.004)
+        let lid = Self.roundedSlab(width: W, height: H, corner: corner, depth: 0.074, chamfer: 0.014)
+        lid.materials = [blue]
         let lidNode = SCNNode(geometry: lid)
-        lidNode.position = SCNVector3(Float(W / 2), 0, 0.0375)
+        lidNode.position = SCNVector3(Float(W / 2), 0, 0.037)
         lidPivot.addChildNode(lidNode)
-        // La jaquette glissée sous le film transparent.
-        let coverPlane = SCNPlane(width: W - 0.05, height: H - 0.05)
+        // La jaquette glissée sous le film transparent, avec le liseré bleu tout autour.
+        let coverPlane = SCNPlane(width: W - 0.06, height: H - 0.06)
+        coverPlane.cornerRadius = 0.018
         coverPlane.materials = [Self.printed(cover)]
         let coverNode = SCNNode(geometry: coverPlane)
-        coverNode.position = SCNVector3(Float(W / 2), 0, 0.0758)
+        coverNode.position = SCNVector3(Float(W / 2), 0, 0.0745)
         lidPivot.addChildNode(coverNode)
         // Le film plastique : uniquement des reflets.
         let film = SCNPlane(width: W - 0.03, height: H - 0.03)
+        film.cornerRadius = 0.03
         let filmMat = Self.glassy(strength: 0.6)
         if badges.contains(.platinum) { filmMat.shaderModifiers = [.fragment: Self.iridescence] }
         film.materials = [filmMat]
         let filmNode = SCNNode(geometry: film)
-        filmNode.position = SCNVector3(Float(W / 2), 0, 0.0768)
+        filmNode.position = SCNVector3(Float(W / 2), 0, 0.0755)
         filmNode.renderingOrder = 11
         filmNode.categoryBitMask = 2
         lidPivot.addChildNode(filmNode)
         if let stickers = stickerLayer(album, badges: badges, signature: signature) {
-            stickers.position = SCNVector3(Float(W / 2), 0, 0.0763)
+            stickers.position = SCNVector3(Float(W / 2), 0, 0.0751)
             lidPivot.addChildNode(stickers)
         }
+        // Intérieur du couvercle : la notice (visible boîtier ouvert).
+        let inner = SCNPlane(width: W - 0.07, height: H - 0.07)
+        inner.cornerRadius = 0.03
+        inner.materials = [Self.printed(booklet ?? UIColor.darkGray)]
+        let innerNode = SCNNode(geometry: inner)
+        innerNode.eulerAngles.y = .pi
+        innerNode.position = SCNVector3(Float(W / 2), 0, -0.0008)
+        lidPivot.addChildNode(innerNode)
         parts.append(lidPivot)
 
         return AlbumNode(albumID: album.id, format: .game, signature: signature, parts: parts,
                          discPivot: extras ? makeDisc(album) : nil, reels: [], lidPivot: lidPivot)
+    }
+
+    /// Plaque aux coins arrondis et aux arêtes adoucies, centrée (épaisseur sur z).
+    static func roundedSlab(width: CGFloat, height: CGFloat, corner: CGFloat, depth: CGFloat, chamfer: CGFloat) -> SCNGeometry {
+        let path = UIBezierPath(roundedRect: CGRect(x: -width / 2, y: -height / 2, width: width, height: height),
+                                cornerRadius: corner)
+        path.flatness = 0.002
+        let shape = SCNShape(path: path, extrusionDepth: depth)
+        shape.chamferRadius = chamfer
+        shape.chamferMode = .both
+        return shape
+    }
+
+    /// Cadre aux coins arrondis (les parois du plateau), avec un trou au milieu.
+    static func roundedFrame(width: CGFloat, height: CGFloat, corner: CGFloat, wall: CGFloat, depth: CGFloat, chamfer: CGFloat) -> SCNGeometry {
+        let outer = CGRect(x: -width / 2, y: -height / 2, width: width, height: height)
+        let path = UIBezierPath(roundedRect: outer, cornerRadius: corner)
+        path.append(UIBezierPath(roundedRect: outer.insetBy(dx: wall, dy: wall), cornerRadius: max(0.005, corner - wall)))
+        path.usesEvenOddFillRule = true
+        path.flatness = 0.002
+        let shape = SCNShape(path: path, extrusionDepth: depth)
+        shape.chamferRadius = chamfer
+        shape.chamferMode = .both
+        return shape
     }
 
     /// Jaquette générée (en attendant ta photo) : bandeau blanc, stade de nuit, pelouse et nom du jeu.
