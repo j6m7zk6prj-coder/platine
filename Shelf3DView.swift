@@ -6,10 +6,12 @@ import UIKit
 
 /// Tous tes albums en CD ou en cassette, en vrai volume : fais-les défiler, touche-les, fais-les tourner.
 struct ShelfView: View {
+    /// La Collection reste chargée en permanence (cachée) : l'afficher est instantané.
+    var visible = true
+    var onClose: () -> Void = {}
     @Environment(Library.self) private var library
     @Environment(Player.self) private var player
     @Environment(AppSettings.self) private var settings
-    @Environment(\.dismiss) private var dismiss
     @State private var motion = MotionTilt()
     @State private var focusedIndex = 0
     @State private var inspected: AlbumInfo?
@@ -27,7 +29,7 @@ struct ShelfView: View {
         let focused = albums.indices.contains(focusedIndex) ? albums[focusedIndex] : albums.first
         // La vue « en main » est déjà prête avec l'album au centre : l'ouverture est instantanée.
         let handAlbum = inspected ?? focused
-        let isOpen = inspected != nil
+        let isOpen = inspected != nil && visible
         ZStack {
             Color(red: 0.03, green: 0.03, blue: 0.04).ignoresSafeArea()
 
@@ -35,7 +37,7 @@ struct ShelfView: View {
                 ContentUnavailableView("Aucun album", systemImage: "opticaldisc",
                                        description: Text("Importe de la musique pour remplir ta collection."))
             } else {
-                ShelfSceneView(albums: albums, startIndex: startIndex ?? initialIndex(albums), motion: motion, paused: isOpen,
+                ShelfSceneView(albums: albums, startIndex: startIndex ?? initialIndex(albums), motion: motion, paused: isOpen || !visible,
                                onFocus: { focusedIndex = $0 },
                                onOpen: { i in open(albums[i]) })
                     .ignoresSafeArea()
@@ -66,6 +68,7 @@ struct ShelfView: View {
                                    spinning: playing && player.isPlaying,
                                    flipToken: flipToken, resetToken: resetToken,
                                    onBackChange: { isBack = $0 })
+                    .id("inspector")
                     .ignoresSafeArea()
                     .opacity(isOpen ? 1 : 0)
                     .allowsHitTesting(isOpen)
@@ -73,7 +76,16 @@ struct ShelfView: View {
                 if let inspected {
                     ShelfInspector(album: inspected, format: format, isBack: isBack, discOut: $discOut,
                                    playingThisAlbum: playing,
-                                   onFlip: { flipToken += 1 },
+                                   onFlip: {
+                                       // Directement sur la scène : la réaction est immédiate.
+                                       InspectorSceneController.shared?.flip()
+                                   },
+                                   onDisc: { out in
+                                       if let c = InspectorSceneController.shared {
+                                           if out { c.ensureDisc() }
+                                           c.node?.setDiscOut(out)
+                                       }
+                                   },
                                    onFormat: { newValue in
                                        discOut = false
                                        resetToken += 1
@@ -90,15 +102,29 @@ struct ShelfView: View {
         .sensoryFeedback(trigger: discOut) { _, _ in settings.haptics ? .impact(weight: .medium) : nil }
         .sensoryFeedback(trigger: isBack) { _, _ in settings.haptics && isOpen ? .impact(weight: .light) : nil }
         .onAppear {
-            motion.start()
+            if visible { motion.start() }
             if startIndex == nil {
                 let i = initialIndex(albums)
                 focusedIndex = i
                 startIndex = i
             }
         }
+        .onChange(of: visible) { _, shown in
+            if shown {
+                motion.start()
+                // On se replace sur l'album en cours d'écoute.
+                let i = initialIndex(library.albums)
+                if i != focusedIndex {
+                    ShelfSceneController.shared?.jump(to: i)
+                    focusedIndex = i
+                }
+            } else {
+                motion.stop()
+                close()
+            }
+        }
         .onDisappear { motion.stop() }
-        .statusBarHidden()
+        .statusBarHidden(visible)
     }
 
     /// La Collection s'ouvre sur l'album en cours d'écoute.
@@ -132,7 +158,7 @@ struct ShelfView: View {
                     .foregroundStyle(.white.opacity(0.55))
             }
             Spacer()
-            Button { dismiss() } label: {
+            Button { onClose() } label: {
                 Image(systemName: "xmark")
                     .font(.body.weight(.bold))
                     .frame(width: 40, height: 40)
@@ -170,13 +196,15 @@ struct ShelfView: View {
                     Label("Lire", systemImage: "play.fill")
                         .padding(.horizontal, 22)
                         .padding(.vertical, 12)
-                        .glassCapsule(interactive: true)
+                        .contentShape(Capsule())
+                        .glassCapsule()
                 }
                 Button { open(album) } label: {
                     Label("Prendre en main", systemImage: "hand.point.up.left.fill")
                         .padding(.horizontal, 22)
                         .padding(.vertical, 12)
-                        .glassCapsule(interactive: true)
+                        .contentShape(Capsule())
+                        .glassCapsule()
                 }
             }
             .font(.subheadline.weight(.semibold))
@@ -293,6 +321,7 @@ final class ShelfSceneController: NSObject, UIGestureRecognizerDelegate {
     private var pausedState = false
 
     func jump(to i: Int) {
+        let i = albums.isEmpty ? i : min(max(0, i), albums.count - 1)
         pos = Double(i)
         target = Double(i)
         vel = 0
@@ -528,6 +557,7 @@ struct ShelfInspector: View {
     @Binding var discOut: Bool
     let playingThisAlbum: Bool
     var onFlip: () -> Void
+    var onDisc: (Bool) -> Void
     var onFormat: (AlbumFormat) -> Void
     var onClose: () -> Void
     @Environment(Player.self) private var player
@@ -570,8 +600,10 @@ struct ShelfInspector: View {
                                 symbol: "arrow.left.and.right.righttriangle.left.righttriangle.right", action: onFlip)
                 if format == .cd {
                     inspectorButton(discOut ? "Ranger le CD" : "Sortir le CD", symbol: "opticaldisc") {
-                        if !discOut && !playingThisAlbum { playAlbum() }
-                        discOut.toggle()
+                        let out = !discOut
+                        onDisc(out)
+                        discOut = out
+                        if out && !playingThisAlbum { playAlbum() }
                     }
                 }
                 inspectorButton(spinning ? "Pause" : "Lire", symbol: spinning ? "pause.fill" : "play.fill") {
@@ -593,7 +625,8 @@ struct ShelfInspector: View {
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 12)
-            .glass(18, interactive: true)
+            .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .glass(18)
         }
         .buttonStyle(PressStyle(circle: false))
     }
@@ -705,6 +738,8 @@ final class InspectorSceneController: NSObject, UIGestureRecognizerDelegate {
         view.scene = scene
         view.pointOfView = cameraNode
         view.configureForShelf()
+        // Un seul objet à l'écran : on peut lisser les bords davantage.
+        view.antialiasingMode = .multisampling4X
         // En veille au départ : la vue se dessine une fois (shaders prêts) puis attend.
         view.rendersContinuously = false
         view.isPlaying = false

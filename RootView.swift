@@ -8,6 +8,8 @@ struct RootView: View {
     @Environment(AppSettings.self) private var settings
     @Environment(UIState.self) private var ui
     @Environment(\.scenePhase) private var phase
+    /// La Collection est chargée (cachée) peu après le lancement, pour s'ouvrir sans attendre.
+    @State private var shelfMounted = false
 
     var body: some View {
         @Bindable var ui = ui
@@ -35,9 +37,19 @@ struct RootView: View {
         .sheet(item: $ui.editing) { target in
             ArtworkEditor(trackID: target.id)
         }
-        .fullScreenCover(isPresented: $ui.showShelf) {
-            ShelfView()
-                .environment(\.colorScheme, .dark)
+        .overlay {
+            if shelfMounted {
+                ShelfView(visible: ui.showShelf, onClose: { ui.showShelf = false })
+                    .environment(\.colorScheme, .dark)
+                    .opacity(ui.showShelf ? 1 : 0)
+                    .scaleEffect(ui.showShelf ? 1 : 1.06)
+                    .allowsHitTesting(ui.showShelf)
+                    .accessibilityHidden(!ui.showShelf)
+                    .animation(.smooth(duration: 0.32), value: ui.showShelf)
+            }
+        }
+        .onChange(of: ui.showShelf) { _, shown in
+            if shown { shelfMounted = true }
         }
         .sheet(item: $ui.editingInfo) { target in
             TrackInfoEditor(trackID: target.id)
@@ -57,6 +69,7 @@ struct RootView: View {
             let playing = player.currentID.flatMap { library.track($0) }?.albumKey
             let start = library.albums.firstIndex { $0.id == playing } ?? 0
             await ShelfSceneController.warmUp(library: library, settings: settings, start: start)
+            shelfMounted = true
         }
         .onChange(of: phase) { _, newPhase in
             if newPhase == .active, settings.autoImport { Task { await library.scanInbox() } }

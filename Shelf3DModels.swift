@@ -118,18 +118,27 @@ struct AlbumNodeBuilder {
         var parts: [SCNNode] = []
 
         // Plateau : noir fumé, le dos porte la jaquette arrière.
-        let backImage = cached("back|" + signature) { render(CDBackInsert(album: album, lightX: 0), CGSize(width: 568, height: 500)) }
-        let tray = SCNBox(width: W, height: H, length: D - 0.014, chamferRadius: 0.01)
+        let backImage = cached("back|" + signature) {
+            render(CDBackInsert(album: album, lightX: 0), CGSize(width: 568, height: 500), scale: 2.2)
+        }
+        let spine = cached("spine|" + signature) {
+            Self.spineImage(title: album.title, artist: album.artist, color: UIColor(library.palette(for: album.first)[0]))
+        }
+        let tray = SCNBox(width: W - 0.012, height: H - 0.008, length: D - 0.014, chamferRadius: 0.012)
         let smoke = Self.plastic(UIColor(white: 0.1, alpha: 1), roughness: 0.45, coat: 0.2)
         let black = Self.plastic(UIColor(white: 0.03, alpha: 1), roughness: 0.5, coat: 0.1)
-        tray.materials = [black, smoke, Self.printed(backImage ?? UIColor.darkGray), smoke, smoke, smoke]
+        // Les tranches gauche et droite portent le dos imprimé (titre et artiste), comme un vrai boîtier.
+        let spineMat = Self.printed(spine)
+        tray.materials = [black, spineMat, Self.printed(backImage ?? UIColor.darkGray), spineMat, smoke, smoke]
         let trayNode = SCNNode(geometry: tray)
         trayNode.position.z = -0.007
         parts.append(trayNode)
 
         // Pochette : un carré de 120 mm glissé sous le couvercle, décalé vers la droite.
         let cover = SCNPlane(width: 1.2, height: 1.2)
-        let coverImage = cached("cover|" + signature) { render(CoverFace(album: album, badges: badges), CGSize(width: 600, height: 600)) }
+        let coverImage = cached("cover|" + signature) {
+            render(CoverFace(album: album, badges: badges), CGSize(width: 600, height: 600), scale: 2.2)
+        }
         // Couleurs exactes de la pochette : elle n'est pas « brûlée » par les lumières.
         cover.materials = [Self.printed(coverImage ?? UIColor.darkGray)]
         let coverNode = SCNNode(geometry: cover)
@@ -154,8 +163,33 @@ struct AlbumNodeBuilder {
         let lid = SCNBox(width: W, height: H, length: 0.012, chamferRadius: 0.006)
         let clear = Self.glassy(strength: 0.55)
         if badges.contains(.platinum) { clear.shaderModifiers = [.fragment: Self.iridescence] }
-        let lidEdge = Self.glassy(strength: 0.9)
+        // Les bords du cristal se voient un peu, comme sur un vrai boîtier.
+        let lidEdge = SCNMaterial()
+        lidEdge.lightingModel = .physicallyBased
+        lidEdge.diffuse.contents = UIColor(white: 0.85, alpha: 0.22)
+        lidEdge.roughness.contents = 0.15
+        lidEdge.blendMode = .alpha
+        lidEdge.writesToDepthBuffer = false
         lid.materials = [clear, lidEdge, clear, lidEdge, lidEdge, lidEdge]
+
+        // Petits rebords du couvercle, en haut et en bas, qui viennent s'emboîter sur le plateau.
+        for y in [-1.0, 1.0] {
+            let lip = SCNBox(width: W - 0.2, height: 0.012, length: D - 0.01, chamferRadius: 0.004)
+            lip.materials = [lidEdge]
+            let lipNode = SCNNode(geometry: lip)
+            lipNode.position = SCNVector3(0.08, Float(y * Double(H / 2 - 0.006)), 0)
+            lipNode.renderingOrder = 10
+            parts.append(lipNode)
+        }
+        // Les deux charnières arrondies qui tiennent le couvercle.
+        for y in [-1.0, 1.0] {
+            let knuckle = SCNCylinder(radius: 0.03, height: 0.1)
+            knuckle.materials = [lidEdge]
+            let k = SCNNode(geometry: knuckle)
+            k.position = SCNVector3(Float(-W / 2 + 0.018), Float(y * Double(H / 2 - 0.12)), Float(D / 2 - 0.02))
+            k.renderingOrder = 10
+            parts.append(k)
+        }
         let lidNode = SCNNode(geometry: lid)
         lidNode.position.z = Float(D / 2 - 0.006)
         lidNode.renderingOrder = 10
@@ -179,12 +213,13 @@ struct AlbumNodeBuilder {
         front.blendMode = .alpha
         front.writesToDepthBuffer = true
 
-        // Face gravée : miroir argenté qui se teinte d'arc-en-ciel selon l'angle.
+        // Face gravée : miroir argenté, reflet en « nœud papillon » et arcs-en-ciel qui tournent avec l'angle.
+        let dataSide = cached("discback|" + album.id + "|" + album.title) {
+            Self.discDataSide(matrix: "PLATINE  ·  \(album.artist.uppercased()) — \(album.title.uppercased())  ·  PL-\(album.id.unicodeScalars.reduce(0) { ($0 &* 31 &+ Int($1.value)) & 0xffff } % 9000 + 1000)-2  ·  01  ")
+        }
         let back = SCNMaterial()
-        back.lightingModel = .physicallyBased
-        back.diffuse.contents = Self.discDataSide
-        back.metalness.contents = 1.0
-        back.roughness.contents = 0.16
+        back.lightingModel = .constant
+        back.diffuse.contents = dataSide
         back.blendMode = .alpha
         back.shaderModifiers = [.fragment: Self.diffraction]
 
@@ -333,8 +368,9 @@ struct AlbumNodeBuilder {
         }
     }
 
-    /// Face gravée (le dessous d'un vrai CD) : argentée, zone de données un peu plus sombre.
-    static let discDataSide: UIImage = {
+    /// Face gravée (le dessous d'un vrai CD) : miroir de l'anneau central, zone de données,
+    /// fines pistes, et le numéro de série gravé autour du centre.
+    static func discDataSide(matrix: String) -> UIImage {
         let size: CGFloat = 1024
         let R = size / 2
         let format = UIGraphicsImageRendererFormat()
@@ -352,40 +388,122 @@ struct AlbumNodeBuilder {
                 c.setFillColor(color.cgColor)
                 c.fillPath()
             }
-            ring(1.0, 0.985, UIColor(white: 0.85, alpha: 0.35))
-            // Partie non gravée, très brillante.
-            ring(0.985, 0.36, UIColor(white: 0.93, alpha: 1))
-            // Zone gravée (les données), plus sombre et légèrement violacée.
-            ring(0.86, 0.37, UIColor(red: 0.74, green: 0.72, blue: 0.8, alpha: 1))
-            // Fines pistes concentriques.
-            c.setStrokeColor(UIColor(white: 1, alpha: 0.05).cgColor)
+            // Bord en plastique transparent.
+            ring(1.0, 0.985, UIColor(white: 0.85, alpha: 0.4))
+            // Zone gravée : argent clair (le shader ajoute reflets et arcs-en-ciel).
+            ring(0.985, 0.37, UIColor(white: 0.92, alpha: 1))
+            // Fin des données : la partie gravée est un peu plus sombre que le bord vierge.
+            ring(0.9, 0.37, UIColor(red: 0.84, green: 0.83, blue: 0.88, alpha: 1))
             c.setLineWidth(1)
             var f: CGFloat = 0.38
-            while f < 0.86 {
+            var k = 0
+            while f < 0.9 {
+                c.setStrokeColor(UIColor(white: k % 3 == 0 ? 0 : 1, alpha: 0.05).cgColor)
                 c.strokeEllipse(in: circle(f))
-                f += 0.012
+                f += 0.006
+                k += 1
             }
-            ring(0.36, 0.30, UIColor(white: 0.85, alpha: 1))
-            ring(0.30, 0.265, UIColor(white: 0.6, alpha: 0.9))
+            ring(0.903, 0.897, UIColor(white: 0.6, alpha: 0.5))
+            // Anneau miroir puis anneau d'empilage.
+            ring(0.37, 0.30, UIColor(white: 0.97, alpha: 1))
+            ring(0.30, 0.285, UIColor(white: 0.55, alpha: 0.9))
+            ring(0.285, 0.265, UIColor(white: 0.82, alpha: 0.8))
+            // Centre transparent jusqu'au trou.
             ring(0.265, 0.125, UIColor(white: 0.92, alpha: 0.16))
-        }
-    }()
+            ring(0.135, 0.125, UIColor(white: 1, alpha: 0.35))
 
-    /// Arc-en-ciel de diffraction : il tourne autour du centre et glisse selon l'angle de vue.
+            // Numéro de série gravé en tout petit dans l'anneau miroir.
+            let font = UIFont.monospacedSystemFont(ofSize: 15, weight: .medium)
+            let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: UIColor(white: 0.45, alpha: 0.9)]
+            let radius = R * 0.325
+            var angle: CGFloat = -.pi / 2
+            for ch in matrix {
+                let str = String(ch) as NSString
+                let w = str.size(withAttributes: attrs).width
+                let step = (w + 1.5) / radius
+                angle += step / 2
+                c.saveGState()
+                c.translateBy(x: R, y: R)
+                c.rotate(by: angle + .pi / 2)
+                str.draw(at: CGPoint(x: -w / 2, y: -radius - 8), withAttributes: attrs)
+                c.restoreGState()
+                angle += step / 2
+                if angle > 1.5 * .pi - 0.05 { break }
+            }
+        }
+    }
+
+    /// Reflet de la face gravée : un « nœud papillon » de lumière qui tourne avec le disque,
+    /// bordé d'arcs-en-ciel, comme quand on penche un vrai CD sous une lampe.
     static let diffraction = """
     #pragma body
     float2 p = _surface.diffuseTexcoord - float2(0.5, 0.5);
     float r = length(p) * 2.0;
     float a = atan2(p.y, p.x);
-    float3 v = normalize(_surface.view);
     float3 n = normalize(_surface.normal);
-    float facing = saturate(dot(v, n));
-    float band = a * 2.0 / 6.28318 + facing * 1.4 + r * 0.6;
-    float3 rainbow = 0.5 + 0.5 * cos(6.28318 * (band + float3(0.0, 0.33, 0.67)));
-    float lobes = pow(abs(cos(a + facing * 3.0)), 3.0);
-    float zone = smoothstep(0.35, 0.4, r) * (1.0 - smoothstep(0.95, 0.985, r));
-    _output.color.rgb += rainbow * zone * (0.08 + 0.32 * lobes);
+    float tilt = n.x * 2.6 + n.y * 1.8;
+    float ang = a + tilt;
+    float zone = smoothstep(0.37, 0.39, r) * (1.0 - smoothstep(0.97, 0.985, r));
+    float bow = pow(abs(cos(ang)), 10.0);
+    float soft = pow(abs(cos(ang)), 2.0);
+    float3 silver = float3(0.5, 0.51, 0.55) + float3(0.42, 0.42, 0.42) * bow + float3(0.12, 0.12, 0.12) * soft;
+    float hue = ang / 3.14159 * 2.0 + r * 1.3 + tilt * 0.25;
+    float3 rainbow = 0.5 + 0.5 * cos(6.28318 * (hue + float3(0.0, 0.33, 0.67)));
+    float fan = pow(abs(sin(ang + 0.55)), 16.0) + pow(abs(sin(ang - 0.55)), 16.0);
+    float3 dataColor = silver + rainbow * (0.12 + 0.5 * fan) * smoothstep(0.4, 0.62, r);
+    float3 base = _output.color.rgb;
+    _output.color.rgb = mix(base, saturate(dataColor * base * 1.12), zone);
+    // L'anneau miroir central brille aussi selon l'angle.
+    float mirror = smoothstep(0.30, 0.31, r) * (1.0 - smoothstep(0.36, 0.37, r));
+    _output.color.rgb += float3(0.25, 0.25, 0.25) * mirror * bow;
     """
+
+    /// Tranche du boîtier : titre et artiste écrits dans la longueur.
+    static func spineImage(title: String, artist: String, color: UIColor) -> UIImage {
+        let w: CGFloat = 96, h: CGFloat = 1400
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        return UIGraphicsImageRenderer(size: CGSize(width: w, height: h), format: format).image { ctx in
+            let c = ctx.cgContext
+            // Couleur de la pochette, assombrie pour rester élégante.
+            var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+            color.getRed(&r, green: &g, blue: &b, alpha: &a)
+            c.setFillColor(UIColor(red: r * 0.45, green: g * 0.45, blue: b * 0.45, alpha: 1).cgColor)
+            c.fill(CGRect(x: 0, y: 0, width: w, height: h))
+            c.setFillColor(UIColor(white: 1, alpha: 0.08).cgColor)
+            c.fill(CGRect(x: 0, y: 0, width: w, height: 3))
+            c.fill(CGRect(x: 0, y: h - 3, width: w, height: 3))
+
+            let text = NSMutableAttributedString(string: artist.uppercased(), attributes: [
+                .font: UIFont.systemFont(ofSize: 40, weight: .heavy),
+                .foregroundColor: UIColor.white,
+                .kern: 2
+            ])
+            text.append(NSAttributedString(string: "   " + title, attributes: [
+                .font: UIFont.systemFont(ofSize: 40, weight: .medium),
+                .foregroundColor: UIColor(white: 1, alpha: 0.75)
+            ]))
+            let maxLength = h - 140
+            var bounds = text.boundingRect(with: CGSize(width: 10_000, height: 100), options: [], context: nil)
+            let shrink = min(1, maxLength / max(bounds.width, 1))
+            c.saveGState()
+            // Écrit de haut en bas, comme sur un vrai boîtier.
+            c.translateBy(x: w / 2, y: h / 2)
+            c.rotate(by: .pi / 2)
+            c.scaleBy(x: shrink, y: shrink)
+            bounds = text.boundingRect(with: CGSize(width: 10_000, height: 100), options: [], context: nil)
+            text.draw(at: CGPoint(x: -bounds.width / 2, y: -bounds.height / 2))
+            c.restoreGState()
+
+            // Petit logo Platine en bas de la tranche.
+            let mark = NSAttributedString(string: "◉", attributes: [
+                .font: UIFont.systemFont(ofSize: 34, weight: .bold),
+                .foregroundColor: UIColor(white: 1, alpha: 0.6)
+            ])
+            let mb = mark.size()
+            mark.draw(at: CGPoint(x: (w - mb.width) / 2, y: h - 70))
+        }
+    }
 
     // MARK: Cassette : coque fumée arrondie, vis, fenêtre vitrée et bobines.
 
