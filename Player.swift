@@ -499,8 +499,17 @@ final class Player {
             MPNowPlayingInfoPropertyPlaybackRate: isPlaying ? settings.playbackSpeed : 0.0,
             MPNowPlayingInfoPropertyDefaultPlaybackRate: settings.playbackSpeed
         ]
-        if let img = library.image(for: t) {
+        let still = library.image(for: t)
+        if let img = still {
             info[MPMediaItemPropertyArtwork] = Player.makeArtwork(img)
+        }
+        // Pochette animée (vidéo ou GIF) en plein écran sur l'écran verrouillé.
+        if settings.lockScreenAnimation, let url = library.artworkURL(t) {
+            let lock = LockScreenArtwork.shared
+            lock.onReady = { [weak self] in self?.updateNowPlaying() }
+            for (key, value) in lock.entries(source: url, kind: library.artworkKind(t), preview: still) {
+                info[key] = value
+            }
         }
         center.nowPlayingInfo = info
         center.playbackState = isPlaying ? .playing : .paused

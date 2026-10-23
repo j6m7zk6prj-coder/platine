@@ -8,6 +8,7 @@ struct SettingsView: View {
     @Environment(UIState.self) private var ui
     @State private var confirmDelete = false
     @State private var storage: Int64 = 0
+    @State private var lockBytes: Int64 = 0
 
     var body: some View {
         @Bindable var settings = settings
@@ -100,12 +101,20 @@ struct SettingsView: View {
                 LabeledContent("Playlists", value: "\(library.playlists.count)")
                 LabeledContent("Durée totale", value: formatDuration(library.totalDuration))
                 LabeledContent("Espace utilisé", value: ByteCountFormatter.string(fromByteCount: storage, countStyle: .file))
+                LabeledContent("Clips de l’écran verrouillé", value: ByteCountFormatter.string(fromByteCount: lockBytes, countStyle: .file))
+                if lockBytes > 0 {
+                    Button("Vider les clips (refaits au besoin)") {
+                        LockScreenArtwork.shared.clear()
+                        lockBytes = 0
+                        player.updateNowPlaying()
+                    }
+                }
                 Button("Supprimer toute la bibliothèque", role: .destructive) { confirmDelete = true }
                     .disabled(library.tracks.isEmpty && library.playlists.isEmpty)
             }
 
             Section {
-                LabeledContent("Version", value: "2.4")
+                LabeledContent("Version", value: "2.5")
             } footer: {
                 Text("Platine lit ta propre musique. Seule la recherche de paroles contacte internet (LRCLIB), et uniquement quand tu ouvres des paroles absentes ou lances la recherche.")
             }
@@ -113,7 +122,10 @@ struct SettingsView: View {
         .scrollContentBackground(.hidden)
         .navigationTitle("Réglages")
         .background { AmbientBackground(track: player.currentID.flatMap { library.track($0) }, dim: 0.65) }
-        .task(id: library.tracks.count) { storage = library.storageBytes() }
+        .task(id: library.tracks.count) {
+            storage = library.storageBytes()
+            lockBytes = LockScreenArtwork.cacheBytes()
+        }
         .confirmationDialog("Supprimer toute la bibliothèque ?", isPresented: $confirmDelete, titleVisibility: .visible) {
             Button("Tout supprimer", role: .destructive) {
                 player.stopAll()
@@ -137,6 +149,14 @@ struct SettingsView: View {
 /// Thème, couleur d'accent, pochettes, paroles et Collection.
 struct AppearanceSettingsView: View {
     @Environment(AppSettings.self) private var settings
+    @Environment(Player.self) private var player
+
+    private var lockFooter: String {
+        if #available(iOS 26.0, *) {
+            return "Les pochettes vidéo ou GIF s’animent en plein écran quand l’iPhone est verrouillé. La première fois, Platine prépare le clip en quelques secondes."
+        }
+        return "Nécessite iOS 26 ou plus récent."
+    }
 
     var body: some View {
         @Bindable var settings = settings
@@ -191,6 +211,15 @@ struct AppearanceSettingsView: View {
                 }
                 .pickerStyle(.segmented)
                 Toggle("Pochettes animées", isOn: $settings.animatedArtwork)
+            }
+
+            Section {
+                Toggle("Pochette animée sur l’écran verrouillé", isOn: $settings.lockScreenAnimation)
+                    .onChange(of: settings.lockScreenAnimation) { _, _ in player.updateNowPlaying() }
+            } header: {
+                Text("Écran verrouillé")
+            } footer: {
+                Text(lockFooter)
             }
 
             Section {

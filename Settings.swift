@@ -117,6 +117,7 @@ final class AppSettings {
     var artworkStyle: ArtworkStyle { didSet { UserDefaults.standard.set(artworkStyle.rawValue, forKey: "artworkStyle") } }
     var backgroundMotion: Bool { didSet { UserDefaults.standard.set(backgroundMotion, forKey: "backgroundMotion") } }
     var showRecent: Bool { didSet { UserDefaults.standard.set(showRecent, forKey: "showRecent") } }
+    var lockScreenAnimation: Bool { didSet { UserDefaults.standard.set(lockScreenAnimation, forKey: "lockScreenAnimation") } }
 
     /// Couleur d'accent lisible sur le thème choisi (le blanc devient noir sur un thème clair).
     var tint: Color { theme.isLight && accent == .white ? .black : accent.color }
@@ -139,6 +140,7 @@ final class AppSettings {
         artworkStyle = ArtworkStyle(rawValue: d.string(forKey: "artworkStyle") ?? "") ?? .rounded
         backgroundMotion = d.object(forKey: "backgroundMotion") as? Bool ?? true
         showRecent = d.object(forKey: "showRecent") as? Bool ?? true
+        lockScreenAnimation = d.object(forKey: "lockScreenAnimation") as? Bool ?? true
     }
 }
 
