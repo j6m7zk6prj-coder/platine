@@ -232,7 +232,7 @@ struct TrackRows: View {
                 .contextMenu {
                     TrackMenuItems(track: t)
                 } preview: {
-                    ArtworkView(track: t, cornerRadius: 0)
+                    ArtworkView(track: t, animated: false, cornerRadius: 0)
                         .frame(width: 300, height: 300)
                         .environment(library)
                         .environment(settings)
@@ -297,7 +297,7 @@ struct TrackRow: View {
                 .frame(width: 26)
             }
             if showArtwork {
-                ArtworkView(track: track, animated: isCurrent, small: !isCurrent, cornerRadius: 7)
+                ArtworkView(track: track, animated: false, small: true, cornerRadius: 7)
                     .frame(width: 50, height: 50)
             }
             VStack(alignment: .leading, spacing: 2) {
@@ -357,7 +357,7 @@ struct MiniPlayer: View {
     var body: some View {
         if let id = player.currentID, let t = library.track(id) {
             HStack(spacing: 12) {
-                ArtworkView(track: t, cornerRadius: 9)
+                ArtworkView(track: t, animated: false, small: true, cornerRadius: 9)
                     .frame(width: 46, height: 46)
                     .id(t.id)
                     .transition(.opacity)

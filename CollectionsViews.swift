@@ -107,7 +107,7 @@ struct AlbumDetailView: View {
         if let album = library.album(currentID) {
             List {
                 VStack(spacing: 16) {
-                    ArtworkView(track: album.first, cornerRadius: 14)
+                    ArtworkView(track: album.first, animated: false, cornerRadius: 14)
                         .frame(width: 250, height: 250)
                         .shadow(color: .black.opacity(0.45), radius: 24, y: 14)
                     VStack(spacing: 4) {

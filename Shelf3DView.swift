@@ -320,8 +320,8 @@ final class ShelfSceneController: NSObject, UIGestureRecognizerDelegate {
     private var lastSpotAlbum = ""
     private var pausedState = false
 
-    func jump(to i: Int) {
-        let i = albums.isEmpty ? i : min(max(0, i), albums.count - 1)
+    func jump(to index: Int) {
+        let i = albums.isEmpty ? index : min(max(0, index), albums.count - 1)
         pos = Double(i)
         target = Double(i)
         vel = 0

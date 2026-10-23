@@ -1,5 +1,6 @@
 import Foundation
 import AVFoundation
+import ImageIO
 import UIKit
 import SwiftUI
 import Observation
@@ -142,24 +143,60 @@ final class Library {
 
     // MARK: Images
 
-    /// Image fixe de la pochette (1re image d'un GIF, image extraite d'une vidéo).
+    /// Image fixe de la pochette. Pour une pochette animée (vidéo ou GIF), c'est la pochette
+    /// d'origine du morceau ; s'il n'y en a pas, l'image la plus lumineuse de l'animation
+    /// (jamais une image noire de début de vidéo).
     func image(for t: Track) -> UIImage? {
         guard let url = artworkURL(t) else { return nil }
         let key = url.lastPathComponent as NSString
         if let cached = images.object(forKey: key) { return cached }
         var img: UIImage?
-        if artworkKind(t) == .video {
-            let gen = AVAssetImageGenerator(asset: AVURLAsset(url: url))
-            gen.appliesPreferredTrackTransform = true
-            gen.maximumSize = CGSize(width: 1000, height: 1000)
-            if let cg = try? gen.copyCGImage(at: CMTime(seconds: 0.1, preferredTimescale: 600), actualTime: nil) {
-                img = UIImage(cgImage: cg)
+        let kind = artworkKind(t)
+        if kind == .video || kind == .gif {
+            if let e = t.embeddedArtwork {
+                img = UIImage(contentsOfFile: Self.artDir.appendingPathComponent(e).path)
+            }
+            if img == nil {
+                img = kind == .video ? Self.bestVideoFrame(url) : Self.bestGIFFrame(url)
             }
         } else {
             img = UIImage(contentsOfFile: url.path)
         }
         if let img { images.setObject(img, forKey: key) }
         return img
+    }
+
+    /// Plusieurs images de la vidéo sont comparées : on garde la plus lumineuse et colorée.
+    private static func bestVideoFrame(_ url: URL) -> UIImage? {
+        let asset = AVURLAsset(url: url)
+        let gen = AVAssetImageGenerator(asset: asset)
+        gen.appliesPreferredTrackTransform = true
+        gen.maximumSize = CGSize(width: 1000, height: 1000)
+        gen.requestedTimeToleranceBefore = CMTime(seconds: 0.5, preferredTimescale: 600)
+        gen.requestedTimeToleranceAfter = CMTime(seconds: 0.5, preferredTimescale: 600)
+        let total = max(0.2, asset.duration.seconds.isFinite ? asset.duration.seconds : 1)
+        var best: (UIImage, CGFloat)?
+        for f in [0.12, 0.3, 0.5, 0.7, 0.88] {
+            guard let cg = try? gen.copyCGImage(at: CMTime(seconds: total * f, preferredTimescale: 600), actualTime: nil) else { continue }
+            let img = UIImage(cgImage: cg)
+            let score = Palette.liveliness(of: img)
+            if best == nil || score > best!.1 { best = (img, score) }
+        }
+        return best?.0
+    }
+
+    private static func bestGIFFrame(_ url: URL) -> UIImage? {
+        guard let src = CGImageSourceCreateWithURL(url as CFURL, nil) else { return UIImage(contentsOfFile: url.path) }
+        let count = CGImageSourceGetCount(src)
+        guard count > 1 else { return UIImage(contentsOfFile: url.path) }
+        var best: (UIImage, CGFloat)?
+        for f in [0.0, 0.25, 0.5, 0.75] {
+            guard let cg = CGImageSourceCreateImageAtIndex(src, min(count - 1, Int(Double(count) * f)), nil) else { continue }
+            let img = UIImage(cgImage: cg)
+            let score = Palette.liveliness(of: img)
+            if best == nil || score > best!.1 { best = (img, score) }
+        }
+        return best?.0
     }
 
     func thumbnail(for t: Track) -> UIImage? {
