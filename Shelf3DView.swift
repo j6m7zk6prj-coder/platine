@@ -94,7 +94,7 @@ struct ShelfView: View {
                     .lineLimit(1)
                 if !badges.isEmpty {
                     HStack(spacing: 6) {
-                        ForEach(badges) { HoloBadge(badge: $0, light: motion.x, scale: 1.25, showsText: true) }
+                        ForEach(badges) { HoloBadge(badge: $0, light: -0.3, scale: 1.25, showsText: true) }
                     }
                     .padding(.top, 6)
                 }
@@ -193,14 +193,11 @@ final class ShelfSceneController: NSObject {
         Studio.addLights(to: scene, withFloor: true)
 
         let camera = SCNCamera()
-        camera.fieldOfView = 38
-        camera.wantsHDR = true
-        camera.bloomIntensity = 0.25
-        camera.bloomThreshold = 0.9
+        camera.fieldOfView = 30
         camera.zNear = 0.1
         cameraNode.camera = camera
-        cameraNode.position = SCNVector3(0, 1.05, 5.6)
-        cameraNode.look(at: SCNVector3(0, -0.15, 0))
+        cameraNode.position = SCNVector3(0, 1.45, 9.4)
+        cameraNode.look(at: SCNVector3(0, -0.05, 0))
         scene.rootNode.addChildNode(cameraNode)
 
         view.scene = scene
@@ -249,16 +246,39 @@ final class ShelfSceneController: NSObject {
         // La mise en page se fait à la prochaine image (jamais pendant la mise à jour de SwiftUI).
     }
 
-    private func node(at i: Int) -> AlbumNode {
+    private var builtThisFrame = false
+
+    /// Le modèle d'un album s'il existe déjà ; sinon il est fabriqué (au plus un par image).
+    private func node(at i: Int, force: Bool = false) -> AlbumNode? {
         let album = albums[i]
         if let n = nodes[album.id] { return n }
+        guard force || !builtThisFrame else { return nil }
+        builtThisFrame = true
         let n = builder.make(album, format: formats[i], badges: badges[i], extras: false)
+        // Ombre douce posée au sol.
+        let w = CGFloat(n.size.x)
+        let shadow = SCNPlane(width: w * 1.25, height: w * 0.45)
+        let m = SCNMaterial()
+        m.lightingModel = .constant
+        m.diffuse.contents = AlbumNodeBuilder.contactShadow
+        m.writesToDepthBuffer = false
+        shadow.materials = [m]
+        let shadowNode = SCNNode(geometry: shadow)
+        shadowNode.eulerAngles.x = -.pi / 2
+        shadowNode.position = SCNVector3(0, -n.size.y / 2 + 0.004, 0.05)
+        n.root.addChildNode(shadowNode)
+        n.root.opacity = 0
         scene.rootNode.addChildNode(n.root)
+        SCNTransaction.begin()
+        SCNTransaction.animationDuration = 0.35
+        n.root.opacity = 1
+        SCNTransaction.commit()
         nodes[album.id] = n
         return n
     }
 
     @objc private func tick() {
+        builtThisFrame = false
         if !dragging {
             // Ressort façon iOS : rapide, sans rebond exagéré.
             vel = (vel + (target - pos) * 0.11) * 0.74
@@ -281,19 +301,20 @@ final class ShelfSceneController: NSObject {
                 nodes[album.id]?.root.isHidden = true
                 continue
             }
-            let n = node(at: i)
+            guard let n = node(at: i, force: ad < 0.6) else { continue }
             n.root.isHidden = false
             let s = d < 0 ? -1.0 : 1.0
             let e = min(ad, 1)
-            let x = d * 0.6 + s * e * 0.95
-            let z = -e * 1.2 - max(0, ad - 1) * 0.3
-            let rotY = -s * e * 1.12
-            let scale = 1 - e * 0.06
+            let ease = e * e * (3 - 2 * e)
+            let x = d * 0.55 + s * ease * 1.0
+            let z = -ease * 1.1 - max(0, ad - 1) * 0.25
+            let rotY = -s * ease * 1.0
+            let scale = 1 - ease * 0.05
             let h = Double(n.size.y)
             n.root.position = SCNVector3(Float(x), Float(h / 2 + 0.001), Float(z))
             n.root.scale = SCNVector3(Float(scale), Float(scale), Float(scale))
             let isFocus = i == focus && ad < 0.5
-            n.root.eulerAngles = SCNVector3(Float(isFocus ? -tiltY * 0.08 : 0), Float(rotY + (isFocus ? tiltX * 0.14 : 0)), 0)
+            n.root.eulerAngles = SCNVector3(Float(isFocus ? -tiltY * 0.05 : 0), Float(rotY + (isFocus ? tiltX * 0.1 : 0)), 0)
         }
         if focus != lastFocus {
             lastFocus = focus
@@ -315,7 +336,7 @@ final class ShelfSceneController: NSObject {
 
     @objc private func handlePan(_ g: UIPanGestureRecognizer) {
         let width = max(view.bounds.width, 1)
-        let unit = Double(width) * 0.42
+        let unit = Double(width) * 0.5
         switch g.state {
         case .began:
             dragging = true
@@ -331,7 +352,7 @@ final class ShelfSceneController: NSObject {
         default:
             dragging = false
             let v = -Double(g.velocity(in: view).x) / unit
-            let projected = pos + v * 0.32
+            let projected = pos + v * 0.25
             target = projected.rounded().clamped(0, Double(albums.count - 1))
         }
     }
@@ -419,7 +440,7 @@ struct ShelfInspector: View {
                     Text(album.artist).font(.headline).foregroundStyle(.white.opacity(0.6)).lineLimit(1)
                 }
 
-                Text("Fais glisser pour tourner · pince pour zoomer · touche deux fois pour remettre droit")
+                Text("Glisse pour tourner · touche pour retourner · pince pour zoomer · touche deux fois pour remettre droit")
                     .font(.caption)
                     .foregroundStyle(.white.opacity(0.45))
                     .multilineTextAlignment(.center)
@@ -527,41 +548,45 @@ final class InspectorSceneController: NSObject {
     private let holder = SCNNode()
     private var link: CADisplayLink?
 
-    // Rotation : position actuelle, cible et vitesse (ressort).
-    private var rx: Double = -0.12, ry: Double = 0.35
-    private var tx: Double = -0.12, ty: Double = 0.35
-    private var vx: Double = 0, vy: Double = 0
-    private var startX: Double = 0, startY: Double = 0
+    /// Inclinaison de repos : l'objet est légèrement tourné vers toi, comme tenu en main.
+    private let restX = -0.1
+    private let restY = 0.28
+
+    // Rotation guidée : position, cible, vitesse (ressort).
+    private var rx = -0.1, ry = 0.28
+    private var tx = -0.1, ty = 0.28
+    private var vx = 0.0, vy = 0.0
+    private var startX = 0.0, startY = 0.0
     private var dragging = false
-    private var zoom: Double = 1, zoomTarget: Double = 1, pinchStart: Double = 1
+    private var zoom = 1.0, zoomTarget = 1.0, pinchStart = 1.0
     private var lastBack = false
 
     override init() {
         super.init()
         Studio.addLights(to: scene, withFloor: false)
         let camera = SCNCamera()
-        camera.fieldOfView = 34
-        camera.wantsHDR = true
-        camera.bloomIntensity = 0.2
-        camera.bloomThreshold = 0.9
+        camera.fieldOfView = 32
         cameraNode.camera = camera
-        cameraNode.position = SCNVector3(0, 0, 5.0)
+        cameraNode.position = SCNVector3(0, 0, 6.6)
         scene.rootNode.addChildNode(cameraNode)
         scene.rootNode.addChildNode(holder)
-        holder.position = SCNVector3(0, 0.35, 0)
+        holder.position = SCNVector3(0, 0.3, 0)
 
         view.scene = scene
         view.pointOfView = cameraNode
         view.configureForShelf()
 
         let pan = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
+        pan.maximumNumberOfTouches = 1
         let pinch = UIPinchGestureRecognizer(target: self, action: #selector(handlePinch(_:)))
         let double = UITapGestureRecognizer(target: self, action: #selector(handleDoubleTap))
         double.numberOfTapsRequired = 2
-        pan.maximumNumberOfTouches = 1
+        let single = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
+        single.require(toFail: double)
         view.addGestureRecognizer(pan)
         view.addGestureRecognizer(pinch)
         view.addGestureRecognizer(double)
+        view.addGestureRecognizer(single)
     }
 
     func start() {
@@ -583,45 +608,48 @@ final class InspectorSceneController: NSObject {
         let old = node
         let fresh = builder.make(album, format: format, badges: badges, extras: true)
         fresh.root.opacity = 0
-        fresh.root.scale = SCNVector3(0.9, 0.9, 0.9)
+        fresh.root.scale = SCNVector3(0.92, 0.92, 0.92)
         holder.addChildNode(fresh.root)
         node = fresh
         SCNTransaction.begin()
-        SCNTransaction.animationDuration = old == nil ? 0.35 : 0.45
+        SCNTransaction.animationDuration = 0.4
         SCNTransaction.animationTimingFunction = CAMediaTimingFunction(name: .easeOut)
         fresh.root.opacity = 1
         fresh.root.scale = SCNVector3(1, 1, 1)
         old?.root.opacity = 0
-        old?.root.scale = SCNVector3(1.06, 1.06, 1.06)
+        old?.root.scale = SCNVector3(1.05, 1.05, 1.05)
         SCNTransaction.completionBlock = { old?.root.removeFromParentNode() }
         SCNTransaction.commit()
     }
 
+    /// Demi-tour vers l'autre face.
     func flip() {
-        // Passe à l'autre face : demi-tour exact depuis la face la plus proche.
-        ty = (ty / .pi).rounded() * .pi + .pi
-        tx = 0
+        let face = ((ty - restY) / .pi).rounded()
+        ty = restY + (face + 1) * .pi
+        tx = restX
     }
 
     func reset() {
-        tx = -0.12
-        ty = (ty / (2 * .pi)).rounded() * 2 * .pi + 0.35
+        let face = ((ty - restY) / (2 * .pi)).rounded()
+        ty = restY + face * 2 * .pi
+        tx = restX
         zoomTarget = 1
     }
 
     @objc private func tick() {
         if !dragging {
-            vx = (vx + (tx - rx) * 0.085) * 0.8
-            vy = (vy + (ty - ry) * 0.085) * 0.8
+            // Ressort doux et amorti : l'objet se pose sans à-coup.
+            vx = (vx + (tx - rx) * 0.07) * 0.78
+            vy = (vy + (ty - ry) * 0.07) * 0.78
             rx += vx
             ry += vy
         }
-        zoom += (zoomTarget - zoom) * 0.2
+        zoom += (zoomTarget - zoom) * 0.18
         let mx = motion?.x ?? 0
         let my = motion?.y ?? 0
-        holder.eulerAngles = SCNVector3(Float(rx - my * 0.08), Float(ry + mx * 0.12), 0)
-        cameraNode.position = SCNVector3(0, 0, Float(5.0 / zoom))
-        let back = cos(ry) * cos(rx) < 0
+        holder.eulerAngles = SCNVector3(Float(rx - my * 0.05), Float(ry + mx * 0.08), 0)
+        cameraNode.position = SCNVector3(0, 0, Float(6.6 / zoom))
+        let back = cos(ry) < 0
         if back != lastBack {
             lastBack = back
             onBackChange(back)
@@ -636,27 +664,34 @@ final class InspectorSceneController: NSObject {
             startX = rx
             startY = ry
         case .changed:
-            // Suit le doigt sans aucun délai.
-            ry = startY + Double(t.x) * 0.0105
-            rx = (startX + Double(t.y) * 0.0085).clamped(-1.15, 1.15)
+            // Horizontal : tourne librement. Vertical : simple inclinaison limitée, l'objet ne se couche jamais.
+            ry = startY + Double(t.x) * 0.0095
+            let tilt = Double(t.y) * 0.004
+            rx = startX + tilt / (1 + abs(tilt) * 2.2)
             tx = rx
             ty = ry
         default:
             dragging = false
-            let v = g.velocity(in: view)
-            // Élan : la cible est projetée selon la vitesse réelle du geste.
-            ty = ry + Double(v.x) * 0.0105 * 0.28
-            tx = (rx + Double(v.y) * 0.0085 * 0.2).clamped(-1.15, 1.15)
+            // L'élan du geste choisit la face sur laquelle l'objet se pose (avant ou arrière).
+            let projected = ry + Double(g.velocity(in: view).x) * 0.0095 * 0.22
+            let face = ((projected - restY) / .pi).rounded()
+            ty = restY + face * .pi
+            tx = restX
             vx = 0
             vy = 0
         }
     }
 
+    @objc private func handleTap(_ g: UITapGestureRecognizer) {
+        // Toucher l'objet le retourne.
+        if !view.hitTest(g.location(in: view), options: nil).isEmpty { flip() }
+    }
+
     @objc private func handlePinch(_ g: UIPinchGestureRecognizer) {
         switch g.state {
         case .began: pinchStart = zoomTarget
-        case .changed: zoomTarget = (pinchStart * Double(g.scale)).clamped(0.7, 1.9)
-        default: zoomTarget = zoomTarget.clamped(0.8, 1.6)
+        case .changed: zoomTarget = (pinchStart * Double(g.scale)).clamped(0.75, 1.7)
+        default: zoomTarget = zoomTarget.clamped(0.85, 1.5)
         }
     }
 
