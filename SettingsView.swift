@@ -114,7 +114,7 @@ struct SettingsView: View {
             }
 
             Section {
-                LabeledContent("Version", value: "2.9")
+                LabeledContent("Version", value: "3.0")
             } footer: {
                 Text("Platine lit ta propre musique. Seule la recherche de paroles contacte internet (LRCLIB), et uniquement quand tu ouvres des paroles absentes ou lances la recherche.")
             }
@@ -253,7 +253,7 @@ struct AppearanceSettingsView: View {
             Section("Bibliothèque") {
                 Toggle("Afficher « Ajoutés récemment »", isOn: $settings.showRecent)
                 Picker("Format dans la Collection", selection: $settings.shelfFormat) {
-                    ForEach(AlbumFormat.allCases) { Text($0.label).tag($0) }
+                    ForEach(AlbumFormat.choosable) { Text($0.label).tag($0) }
                 }
             }
         }

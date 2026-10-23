@@ -17,6 +17,8 @@ final class Library {
     private(set) var albumFormats: [String: String] = [:]
     /// Stickers holographiques posés sur chaque album : identifiant de l'album → stickers.
     private(set) var albumStickers: [String: [String]] = [:]
+    /// Jaquette choisie pour chaque jeu : nom du jeu → fichier image.
+    private(set) var gameCovers: [String: String] = [:]
     /// Ajoute aussi les stickers gagnés automatiquement (or, platine, favori, nouveau).
     var autoStickers: Bool = UserDefaults.standard.bool(forKey: "autoStickers") {
         didSet { UserDefaults.standard.set(autoStickers, forKey: "autoStickers") }
@@ -40,6 +42,7 @@ final class Library {
     static let artistsURL = base.appendingPathComponent("artists.json")
     static let formatsURL = base.appendingPathComponent("formats.json")
     static let stickersURL = base.appendingPathComponent("stickers.json")
+    static let gamesURL = base.appendingPathComponent("games.json")
     /// Dossier visible dans Fichiers et dans iTunes sur PC : tout ce qu'on y dépose est importé.
     static let inbox = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
 
@@ -92,6 +95,81 @@ final class Library {
     }
 
     func album(_ id: String) -> AlbumInfo? { albums.first { $0.id == id } }
+
+    // MARK: Bandes-son de jeux
+
+    /// Une « bande-son » par jeu tagué, présentée comme un album dans la Collection.
+    var gameAlbums: [AlbumInfo] {
+        var byGame: [String: [Track]] = [:]
+        for t in tracks {
+            for g in t.games { byGame[g, default: []].append(t) }
+        }
+        return byGame.map { game, list in
+            AlbumInfo(id: GameCatalog.prefix + game, title: game, artist: "Bande-son",
+                      year: GameCatalog.releaseYear(game),
+                      tracks: list.sorted { $0.addedAt < $1.addedAt })
+        }
+        .sorted { $0.year != $1.year ? $0.year > $1.year : $0.title > $1.title }
+    }
+
+    /// Tous les jeux déjà utilisés (y compris ceux tapés à la main).
+    var usedGames: [String] {
+        Array(Set(tracks.flatMap(\.games))).sorted()
+    }
+
+    func setGames(_ id: UUID, _ games: [String]) {
+        guard let i = tracks.firstIndex(where: { $0.id == id }) else { return }
+        var seen = Set<String>()
+        tracks[i].games = games.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && seen.insert($0).inserted }
+        save()
+    }
+
+    func gameName(_ albumID: String) -> String? {
+        albumID.hasPrefix(GameCatalog.prefix) ? String(albumID.dropFirst(GameCatalog.prefix.count)) : nil
+    }
+
+    func gameCoverImage(_ game: String) -> UIImage? {
+        guard let name = gameCovers[game] else { return nil }
+        let key = name as NSString
+        if let cached = images.object(forKey: key) { return cached }
+        guard let img = UIImage(contentsOfFile: Self.artDir.appendingPathComponent(name).path) else { return nil }
+        images.setObject(img, forKey: key)
+        return img
+    }
+
+    func gameCoverName(_ game: String) -> String? { gameCovers[game] }
+
+    /// Ta photo de la jaquette du jeu.
+    func setGameCover(_ image: UIImage, for game: String) {
+        // Taille raisonnable pour la 3D (une photo de 12 Mpx serait inutilement lourde).
+        let maxSide: CGFloat = 1600
+        let scale = min(1, maxSide / max(image.size.width, image.size.height, 1))
+        let target = CGSize(width: image.size.width * scale, height: image.size.height * scale)
+        let resized = UIGraphicsImageRenderer(size: target).image { _ in image.draw(in: CGRect(origin: .zero, size: target)) }
+        guard let data = resized.jpegData(compressionQuality: 0.9) else { return }
+        let name = "game-" + UUID().uuidString + ".jpg"
+        do {
+            try data.write(to: Self.artDir.appendingPathComponent(name), options: .atomic)
+        } catch { return }
+        if let old = gameCovers[game] { try? FileManager.default.removeItem(at: Self.artDir.appendingPathComponent(old)) }
+        gameCovers[game] = name
+        saveGames()
+        artworkRevision += 1
+        message = "Jaquette enregistrée"
+    }
+
+    func resetGameCover(_ game: String) {
+        guard let old = gameCovers.removeValue(forKey: game) else { return }
+        try? FileManager.default.removeItem(at: Self.artDir.appendingPathComponent(old))
+        saveGames()
+        artworkRevision += 1
+    }
+
+    private func saveGames() {
+        guard let data = try? JSONEncoder().encode(gameCovers) else { return }
+        try? data.write(to: Self.gamesURL, options: .atomic)
+    }
 
     var artists: [ArtistInfo] {
         let allAlbums = albums
@@ -468,7 +546,8 @@ final class Library {
     // MARK: Collection
 
     func format(of albumID: String, default fallback: AlbumFormat) -> AlbumFormat {
-        AlbumFormat(rawValue: albumFormats[albumID] ?? "") ?? fallback
+        if albumID.hasPrefix(GameCatalog.prefix) { return .game }
+        return AlbumFormat(rawValue: albumFormats[albumID] ?? "") ?? fallback
     }
 
     func setFormat(_ format: AlbumFormat, for albumID: String) {
@@ -726,6 +805,8 @@ final class Library {
         saveFormats()
         albumStickers = [:]
         saveStickers()
+        gameCovers = [:]
+        saveGames()
         images.removeAllObjects()
         palettes = [:]
         save()
@@ -800,6 +881,10 @@ final class Library {
         if let data = try? Data(contentsOf: Self.formatsURL),
            let map = try? JSONDecoder().decode([String: String].self, from: data) {
             albumFormats = map
+        }
+        if let data = try? Data(contentsOf: Self.gamesURL),
+           let map = try? JSONDecoder().decode([String: String].self, from: data) {
+            gameCovers = map
         }
         if let data = try? Data(contentsOf: Self.stickersURL),
            let map = try? JSONDecoder().decode([String: [String]].self, from: data) {

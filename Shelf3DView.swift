@@ -1,4 +1,5 @@
 import SwiftUI
+import PhotosUI
 import SceneKit
 import UIKit
 
@@ -22,11 +23,14 @@ struct ShelfView: View {
     @State private var flipToken = 0
     @State private var resetToken = 0
     @State private var stickerAlbum: AlbumInfo?
+    /// Sous-section de la Collection : albums (CD et cassettes) ou bandes-son de jeux.
+    @State private var section = 0
 
     private static let quick = Animation.smooth(duration: 0.22)
 
     var body: some View {
-        let albums = library.albums
+        let _ = library.artworkRevision
+        let albums = section == 1 ? library.gameAlbums : library.albums
         let focused = albums.indices.contains(focusedIndex) ? albums[focusedIndex] : albums.first
         // La vue « en main » est déjà prête avec l'album au centre : l'ouverture est instantanée.
         let handAlbum = inspected ?? focused
@@ -35,8 +39,7 @@ struct ShelfView: View {
             Color(red: 0.03, green: 0.03, blue: 0.04).ignoresSafeArea()
 
             if albums.isEmpty {
-                ContentUnavailableView("Aucun album", systemImage: "opticaldisc",
-                                       description: Text("Importe de la musique pour remplir ta collection."))
+                emptyState
             } else {
                 ShelfSceneView(albums: albums, startIndex: startIndex ?? initialIndex(albums), motion: motion, paused: isOpen || !visible,
                                onFocus: { focusedIndex = $0 },
@@ -76,7 +79,8 @@ struct ShelfView: View {
                     .allowsHitTesting(isOpen)
 
                 if let inspected {
-                    ShelfInspector(album: inspected, format: format, isBack: isBack, discOut: $discOut,
+                    ShelfInspector(album: inspected, format: format, game: library.gameName(inspected.id),
+                                   isBack: isBack, discOut: $discOut,
                                    playingThisAlbum: playing,
                                    onFlip: {
                                        // Directement sur la scène : la réaction est immédiate.
@@ -122,7 +126,7 @@ struct ShelfView: View {
                 motion.start()
                 // On se replace sur l'album en cours d'écoute.
                 let i = initialIndex(library.albums)
-                if i != focusedIndex {
+                if section == 0 && i != focusedIndex {
                     ShelfSceneController.shared?.jump(to: i)
                     focusedIndex = i
                 }
@@ -131,8 +135,23 @@ struct ShelfView: View {
                 close()
             }
         }
+        .onChange(of: section) { _, _ in
+            close()
+            focusedIndex = 0
+            ShelfSceneController.shared?.jump(to: 0)
+        }
         .onDisappear { motion.stop() }
         .statusBarHidden(visible)
+    }
+
+    @ViewBuilder private var emptyState: some View {
+        if section == 1 {
+            ContentUnavailableView("Aucune bande-son", systemImage: "gamecontroller",
+                                   description: Text("Dans « Modifier les infos » d’un morceau, choisis un ou plusieurs jeux (FIFA 17, FC 24…). Leurs bandes-son apparaîtront ici en boîtiers PS5."))
+        } else {
+            ContentUnavailableView("Aucun album", systemImage: "opticaldisc",
+                                   description: Text("Importe de la musique pour remplir ta collection."))
+        }
     }
 
     /// La Collection s'ouvre sur l'album en cours d'écoute.
@@ -158,12 +177,12 @@ struct ShelfView: View {
     }
 
     private var topBar: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
+        HStack(alignment: .top) {
+            VStack(alignment: .leading, spacing: 10) {
                 Text("Collection").font(.largeTitle.bold())
-                Text("\(library.albums.count) album\(library.albums.count > 1 ? "s" : "")")
-                    .font(.subheadline)
-                    .foregroundStyle(.white.opacity(0.55))
+                SectionSwitch(section: $section,
+                              albums: library.albums.count,
+                              games: library.gameAlbums.count)
             }
             Spacer()
             Button { onClose() } label: {
@@ -591,6 +610,8 @@ extension Comparable {
 struct ShelfInspector: View {
     let album: AlbumInfo
     let format: AlbumFormat
+    /// Nom du jeu quand c'est une bande-son (boîtier PS5).
+    var game: String?
     let isBack: Bool
     @Binding var discOut: Bool
     let playingThisAlbum: Bool
@@ -600,12 +621,39 @@ struct ShelfInspector: View {
     var onFormat: (AlbumFormat) -> Void
     var onClose: () -> Void
     @Environment(Player.self) private var player
+    @Environment(Library.self) private var library
+    @State private var photoItem: PhotosPickerItem?
+    @State private var cropping: CropSource?
 
     var body: some View {
         let spinning = playingThisAlbum && player.isPlaying
         VStack(spacing: 16) {
-            HStack {
-                FormatSwitch(format: format, onChange: onFormat)
+            HStack(spacing: 10) {
+                if let game {
+                    // Bande-son : choisir la photo de la jaquette du jeu.
+                    PhotosPicker(selection: $photoItem, matching: .images) {
+                        Label("Jaquette", systemImage: "photo")
+                            .font(.subheadline.weight(.semibold))
+                            .padding(.horizontal, 16)
+                            .frame(height: 40)
+                            .contentShape(Capsule())
+                            .glassCapsule()
+                    }
+                    .buttonStyle(PressStyle(circle: false))
+                    if library.gameCoverName(game) != nil {
+                        Button {
+                            library.resetGameCover(game)
+                        } label: {
+                            Image(systemName: "arrow.uturn.backward")
+                                .font(.body.weight(.bold))
+                                .frame(width: 40, height: 40)
+                                .glassCircle()
+                        }
+                        .accessibilityLabel("Jaquette générée")
+                    }
+                } else {
+                    FormatSwitch(format: format, onChange: onFormat)
+                }
                 Spacer()
                 Button(action: onClose) {
                     Image(systemName: "xmark")
@@ -637,8 +685,8 @@ struct ShelfInspector: View {
             HStack(spacing: 10) {
                 inspectorButton(format == .cassette ? (isBack ? "Face A" : "Face B") : (isBack ? "Face" : "Dos"),
                                 symbol: "arrow.left.and.right.righttriangle.left.righttriangle.right", action: onFlip)
-                if format == .cd {
-                    inspectorButton(discOut ? "Ranger le CD" : "Sortir le CD", symbol: "opticaldisc") {
+                if format == .cd || format == .game {
+                    inspectorButton(discTitle, symbol: discSymbol) {
                         let out = !discOut
                         onDisc(out)
                         discOut = out
@@ -652,6 +700,30 @@ struct ShelfInspector: View {
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 26)
+        }
+        .onChange(of: photoItem) { _, item in loadCover(item) }
+        .fullScreenCover(item: $cropping) { source in
+            CoverCropper(image: source.image, aspect: CGFloat(Physical.size(.game).x / Physical.size(.game).y)) { cropped in
+                if let game { library.setGameCover(cropped, for: game) }
+            }
+        }
+    }
+
+    private var discTitle: String {
+        if format == .game { return discOut ? "Refermer" : "Ouvrir" }
+        return discOut ? "Ranger le CD" : "Sortir le CD"
+    }
+
+    private var discSymbol: String { format == .game ? "gamecontroller" : "opticaldisc" }
+
+    private func loadCover(_ item: PhotosPickerItem?) {
+        guard let item, game != nil else { return }
+        Task {
+            if let data = try? await item.loadTransferable(type: Data.self), let img = UIImage(data: data) {
+                // On recadre d'abord l'image au format de la jaquette.
+                cropping = CropSource(image: img)
+            }
+            photoItem = nil
         }
     }
 
@@ -865,7 +937,7 @@ final class InspectorSceneController: NSObject, UIGestureRecognizerDelegate {
     }
 
     func ensureDisc() {
-        guard let node, node.format == .cd, !node.hasDisc, let builder, let album else { return }
+        guard let node, node.format != .cassette, !node.hasDisc, let builder, let album else { return }
         node.attachDisc(builder.makeDisc(album))
     }
 
@@ -1061,6 +1133,190 @@ private struct StickerTile: View {
                     .padding(6)
                     .transition(.scale.combined(with: .opacity))
             }
+        }
+    }
+}
+
+
+/// Onglets de la Collection : Albums (CD et cassettes) ou Jeux (bandes-son en boîtiers PS5).
+private struct SectionSwitch: View {
+    @Binding var section: Int
+    let albums: Int
+    let games: Int
+    @Namespace private var pill
+
+    var body: some View {
+        HStack(spacing: 4) {
+            tab(0, "Albums", "\(albums)", "opticaldisc")
+            tab(1, "Jeux", "\(games)", "gamecontroller.fill")
+        }
+        .padding(4)
+        .glassCapsule()
+        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: section)
+        .sensoryFeedback(.selection, trigger: section)
+    }
+
+    private func tab(_ index: Int, _ title: String, _ count: String, _ symbol: String) -> some View {
+        let on = section == index
+        return Button {
+            section = index
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: symbol)
+                Text(title)
+                Text(count).opacity(0.55)
+            }
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(on ? Color.black : Color.white.opacity(0.85))
+            .padding(.horizontal, 14)
+            .frame(height: 34)
+            .background {
+                if on { Capsule().fill(.white).matchedGeometryEffect(id: "pill", in: pill) }
+            }
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(on ? AccessibilityTraits.isSelected : AccessibilityTraits())
+    }
+}
+
+
+// MARK: - Recadrer une image au format de la jaquette
+
+struct CropSource: Identifiable {
+    let id = UUID()
+    let image: UIImage
+}
+
+/// Place ta photo dans le cadre de la jaquette : glisse pour la déplacer, pince pour zoomer.
+struct CoverCropper: View {
+    let image: UIImage
+    /// Largeur ÷ hauteur du cadre (jaquette PS5 : 135 ÷ 170).
+    let aspect: CGFloat
+    var onDone: (UIImage) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var scale: CGFloat = 1
+    @State private var lastScale: CGFloat = 1
+    @State private var offset: CGSize = .zero
+    @State private var lastOffset: CGSize = .zero
+
+    var body: some View {
+        GeometryReader { geo in
+            let frame = frameSize(in: geo.size)
+            let shown = shownSize(frame)
+            ZStack {
+                Color.black.ignoresSafeArea()
+                Image(uiImage: image)
+                    .resizable()
+                    .frame(width: shown.width, height: shown.height)
+                    .offset(offset)
+                // Tout ce qui dépasse du cadre est assombri.
+                Rectangle()
+                    .fill(Color.black.opacity(0.65))
+                    .reverseMask {
+                        RoundedRectangle(cornerRadius: 6).frame(width: frame.width, height: frame.height)
+                    }
+                    .ignoresSafeArea()
+                    .allowsHitTesting(false)
+                RoundedRectangle(cornerRadius: 6)
+                    .strokeBorder(Color.white, lineWidth: 2)
+                    .frame(width: frame.width, height: frame.height)
+                    .allowsHitTesting(false)
+                VStack {
+                    HStack {
+                        Button("Annuler") { dismiss() }
+                        Spacer()
+                        Text("Jaquette").font(.headline)
+                        Spacer()
+                        Button("Utiliser") {
+                            onDone(crop(frame: frame))
+                            dismiss()
+                        }
+                        .fontWeight(.semibold)
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.top, 12)
+                    Spacer()
+                    Text("Glisse pour placer l’image · pince pour zoomer")
+                        .font(.footnote)
+                        .foregroundStyle(.white.opacity(0.7))
+                        .padding(.bottom, 24)
+                }
+                .foregroundStyle(.white)
+            }
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture()
+                    .onChanged { g in
+                        offset = clamp(CGSize(width: lastOffset.width + g.translation.width,
+                                              height: lastOffset.height + g.translation.height), frame: frame, scale: scale)
+                    }
+                    .onEnded { _ in lastOffset = offset }
+                    .simultaneously(with:
+                        MagnifyGesture()
+                            .onChanged { g in
+                                scale = min(6, max(1, lastScale * g.magnification))
+                                offset = clamp(offset, frame: frame, scale: scale)
+                            }
+                            .onEnded { _ in
+                                lastScale = scale
+                                lastOffset = offset
+                            }
+                    )
+            )
+        }
+        .sensoryFeedback(.selection, trigger: scale == 1)
+    }
+
+    private func frameSize(in size: CGSize) -> CGSize {
+        let w = min(size.width - 48, (size.height - 200) * aspect)
+        return CGSize(width: w, height: w / aspect)
+    }
+
+    /// L'image remplit toujours le cadre (échelle 1), puis on peut zoomer.
+    private func baseScale(_ frame: CGSize) -> CGFloat {
+        max(frame.width / max(image.size.width, 1), frame.height / max(image.size.height, 1))
+    }
+
+    private func shownSize(_ frame: CGSize, scale s: CGFloat? = nil) -> CGSize {
+        let k = baseScale(frame) * (s ?? scale)
+        return CGSize(width: image.size.width * k, height: image.size.height * k)
+    }
+
+    /// Empêche de faire sortir l'image du cadre (pas de bord vide).
+    private func clamp(_ o: CGSize, frame: CGSize, scale s: CGFloat) -> CGSize {
+        let shown = shownSize(frame, scale: s)
+        let mx = max(0, (shown.width - frame.width) / 2)
+        let my = max(0, (shown.height - frame.height) / 2)
+        return CGSize(width: min(mx, max(-mx, o.width)), height: min(my, max(-my, o.height)))
+    }
+
+    /// Découpe la partie visible dans le cadre, en bonne définition.
+    private func crop(frame: CGSize) -> UIImage {
+        let k = baseScale(frame) * scale
+        let shown = shownSize(frame)
+        let x = ((shown.width - frame.width) / 2 - offset.width) / k
+        let y = ((shown.height - frame.height) / 2 - offset.height) / k
+        let rect = CGRect(x: x, y: y, width: frame.width / k, height: frame.height / k)
+        let outW: CGFloat = min(1350, max(600, rect.width * image.scale))
+        let out = CGSize(width: outW, height: outW / aspect)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        return UIGraphicsImageRenderer(size: out, format: format).image { _ in
+            let f = out.width / rect.width
+            image.draw(in: CGRect(x: -rect.minX * f, y: -rect.minY * f,
+                                  width: image.size.width * f, height: image.size.height * f))
+        }
+    }
+}
+
+extension View {
+    /// Masque inversé : garde tout sauf la forme donnée.
+    func reverseMask<M: View>(@ViewBuilder _ mask: () -> M) -> some View {
+        self.mask {
+            Rectangle()
+                .overlay { mask().blendMode(.destinationOut) }
+                .compositingGroup()
         }
     }
 }

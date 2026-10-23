@@ -356,6 +356,8 @@ struct AmbientBackground: View {
 struct Scrubber: View {
     @Environment(Player.self) private var player
     @State private var dragValue: Double?
+    /// Position du morceau au moment où on a attrapé le point.
+    @State private var grabStart: Double?
 
     var body: some View {
         let total = max(player.duration, 0.01)
@@ -363,33 +365,51 @@ struct Scrubber: View {
         let active = dragValue != nil
         VStack(spacing: 6) {
             GeometryReader { geo in
+                let width = max(geo.size.width, 1)
+                let x = width * value / total
+                let knob: CGFloat = active ? 18 : 12
                 ZStack(alignment: .leading) {
                     Capsule().fill(.white.opacity(0.22))
+                        .frame(height: active ? 9 : 5)
                     Capsule()
-                        .fill(.white.opacity(active ? 1 : 0.75))
-                        .frame(width: max(0, geo.size.width * value / total))
-                        .animation(active ? nil : .linear(duration: 0.25), value: value)
+                        .fill(.white.opacity(active ? 1 : 0.8))
+                        .frame(width: max(0, x), height: active ? 9 : 5)
+                    // Le petit point au bout de la barre : c'est lui qu'on attrape pour avancer.
+                    Circle()
+                        .fill(.white)
+                        .frame(width: knob, height: knob)
+                        .shadow(color: .black.opacity(0.25), radius: 3, y: 1)
+                        .offset(x: min(max(0, x - knob / 2), width - knob))
                 }
-                .frame(height: active ? 12 : 7)
+                .animation(active ? nil : .linear(duration: 0.25), value: value)
                 .frame(maxHeight: .infinity)
                 .contentShape(Rectangle())
                 .gesture(
                     DragGesture(minimumDistance: 0)
                         .onChanged { g in
+                            if grabStart == nil {
+                                // Seul un appui sur le point (ou juste à côté) le fait bouger :
+                                // toucher ailleurs sur la barre ne change rien.
+                                let knobX = width * min(total, player.currentTime) / total
+                                guard abs(g.startLocation.x - knobX) <= 28 else { return }
+                                grabStart = min(total, player.currentTime)
+                            }
+                            guard let start = grabStart else { return }
                             player.isScrubbing = true
-                            dragValue = min(total, max(0, g.location.x / max(geo.size.width, 1) * total))
+                            let moved = Double(g.location.x - g.startLocation.x) / Double(width) * total
+                            dragValue = min(total, max(0, start + moved))
                         }
                         .onEnded { _ in
-                            if let v = dragValue { player.seek(to: v) }
+                            if grabStart != nil, let v = dragValue { player.seek(to: v) }
                             dragValue = nil
+                            grabStart = nil
                             player.isScrubbing = false
                         }
                 )
                 .animation(.spring(response: 0.35, dampingFraction: 0.7), value: active)
             }
-            .frame(height: 24)
-            .scaleEffect(x: active ? 1.03 : 1, y: 1)
-            .animation(.spring(response: 0.35, dampingFraction: 0.7), value: active)
+            .frame(height: 28)
+            .sensoryFeedback(.selection, trigger: active)
 
             HStack {
                 Text(formatTime(value))

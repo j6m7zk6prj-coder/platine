@@ -572,7 +572,7 @@ struct FormatSwitch: View {
 
     var body: some View {
         HStack(spacing: 4) {
-            ForEach(AlbumFormat.allCases) { f in
+            ForEach(AlbumFormat.choosable) { f in
                 Button {
                     if f != format { onChange(f) }
                 } label: {

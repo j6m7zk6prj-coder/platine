@@ -6,9 +6,17 @@ import UIKit
 
 enum Physical {
     /// Boîtier CD : 142 × 125 × 10 mm. Cassette : 100 × 63 × 12 mm (agrandie à la largeur du CD).
+    /// Boîtier de jeu PS5 : 135 × 170 × 14 mm.
     static func size(_ format: AlbumFormat) -> SCNVector3 {
-        format == .cd ? SCNVector3(1.42, 1.25, 0.1) : SCNVector3(1.42, 0.899, 0.17)
+        switch format {
+        case .cd: return SCNVector3(1.42, 1.25, 0.1)
+        case .cassette: return SCNVector3(1.42, 0.899, 0.17)
+        case .game: return SCNVector3(1.35, 1.7, 0.14)
+        }
     }
+
+    /// Profondeur du disque rangé dans le boîtier de jeu (posé sur le plateau).
+    static let gameDiscZ: Float = -0.023
 }
 
 // MARK: - Un album en 3D
@@ -23,25 +31,42 @@ final class AlbumNode {
     let body = SCNNode()
     private(set) var discPivot: SCNNode?
     let reels: [SCNNode]
+    /// Couvercle du boîtier de jeu, qui s'ouvre comme un livre.
+    let lidPivot: SCNNode?
     private(set) var spinning = false
     private(set) var discOut = false
 
     var size: SCNVector3 { Physical.size(format) }
 
-    init(albumID: String, format: AlbumFormat, signature: String, parts: [SCNNode], discPivot: SCNNode?, reels: [SCNNode]) {
+    init(albumID: String, format: AlbumFormat, signature: String, parts: [SCNNode], discPivot: SCNNode?, reels: [SCNNode],
+         lidPivot: SCNNode? = nil) {
         self.albumID = albumID
         self.format = format
         self.signature = signature
         self.discPivot = discPivot
         self.reels = reels
+        self.lidPivot = lidPivot
         root.addChildNode(body)
         for p in parts {
             body.addChildNode(p)
             // Les pièces transparentes ne sont pas recalculées dans le reflet du sol (plus fluide).
             if p.renderingOrder >= 9 { p.categoryBitMask = 2 }
         }
-        if let discPivot { root.addChildNode(discPivot) }
+        if let discPivot {
+            discPivot.position = restDisc
+            root.addChildNode(discPivot)
+        }
         for r in reels { body.addChildNode(r) }
+    }
+
+    private var restDisc: SCNVector3 {
+        format == .game ? SCNVector3(0, 0.02, Physical.gameDiscZ) : SCNVector3(0.05, 0, 0)
+    }
+    private var outDisc: SCNVector3 {
+        format == .game ? SCNVector3(0, 1.0, Physical.gameDiscZ + 0.14) : SCNVector3(0.05, 0.72, 0.02)
+    }
+    private var outBody: SCNVector3 {
+        format == .game ? SCNVector3(0, -0.45, 0) : SCNVector3(0, -0.32, 0)
     }
 
     /// Le disque n'est fabriqué qu'au besoin (ouverture plus rapide).
@@ -50,6 +75,7 @@ final class AlbumNode {
     func attachDisc(_ pivot: SCNNode) {
         guard discPivot == nil else { return }
         discPivot = pivot
+        pivot.position = restDisc
         root.addChildNode(pivot)
         if spinning {
             pivot.runAction(.repeatForever(.rotateBy(x: 0, y: 0, z: -2 * .pi, duration: 1.8)), forKey: "spin")
@@ -58,9 +84,10 @@ final class AlbumNode {
 
     /// Remet l'objet au repos sans animation.
     func settle() {
-        guard let discPivot else { return }
         discOut = false
-        discPivot.position = SCNVector3(0.05, 0, 0)
+        lidPivot?.eulerAngles = SCNVector3(0, 0, 0)
+        guard let discPivot else { return }
+        discPivot.position = restDisc
         discPivot.opacity = 0
         body.position = SCNVector3(0, 0, 0)
     }
@@ -83,6 +110,25 @@ final class AlbumNode {
     func setDiscOut(_ out: Bool, animated: Bool = true) {
         guard let discPivot, out != discOut else { return }
         discOut = out
+        if let lidPivot {
+            // Boîtier de jeu : le couvercle s'ouvre d'abord, puis le disque se soulève.
+            SCNTransaction.begin()
+            SCNTransaction.animationDuration = animated ? 0.55 : 0
+            SCNTransaction.animationTimingFunction = CAMediaTimingFunction(controlPoints: 0.3, 0.8, 0.3, 1)
+            lidPivot.eulerAngles = out ? SCNVector3(0, -2.45, 0) : SCNVector3(0, 0, 0)
+            if out { discPivot.opacity = 1 }
+            SCNTransaction.commit()
+            SCNTransaction.begin()
+            SCNTransaction.animationDuration = animated ? 0.7 : 0
+            SCNTransaction.animationTimingFunction = CAMediaTimingFunction(controlPoints: 0.25, 0.9, 0.3, 1)
+            discPivot.position = out ? outDisc : restDisc
+            body.position = out ? outBody : SCNVector3(0, 0, 0)
+            SCNTransaction.completionBlock = { [weak self] in
+                if self?.discOut == false { discPivot.opacity = 0 }
+            }
+            SCNTransaction.commit()
+            return
+        }
         SCNTransaction.begin()
         SCNTransaction.animationDuration = animated ? 0.7 : 0
         SCNTransaction.animationTimingFunction = CAMediaTimingFunction(controlPoints: 0.25, 0.9, 0.3, 1)
@@ -102,7 +148,12 @@ struct AlbumNodeBuilder {
     let settings: AppSettings
 
     func signature(_ album: AlbumInfo, _ format: AlbumFormat, _ badges: [AlbumBadge]) -> String {
-        let art = library.artworkURL(album.first)?.lastPathComponent ?? "-"
+        var art = library.artworkURL(album.first)?.lastPathComponent ?? "-"
+        if let game = library.gameName(album.id) {
+            // Bande-son : la jaquette choisie et la liste des morceaux (dos du boîtier).
+            art = (library.gameCoverName(game) ?? "auto") + "#" + String(album.tracks.count)
+                + "#" + (album.tracks.last?.id.uuidString ?? "")
+        }
         return [album.id, format.rawValue, art, badges.map(\.rawValue).joined(separator: ","), album.title, album.artist].joined(separator: "|")
     }
 
@@ -111,6 +162,7 @@ struct AlbumNodeBuilder {
         switch format {
         case .cd: return makeCD(album, badges: badges, extras: extras, signature: sig)
         case .cassette: return makeCassette(album, badges: badges, signature: sig)
+        case .game: return makeGameCase(album, badges: badges, extras: extras, signature: sig)
         }
     }
 
@@ -219,8 +271,15 @@ struct AlbumNodeBuilder {
     /// Le CD lui-même, rangé (invisible) dans le boîtier : un vrai disque de 120 mm,
     /// troué au centre, avec la face imprimée d'un côté et la face miroir irisée de l'autre.
     func makeDisc(_ album: AlbumInfo) -> SCNNode {
-        let label = cached("disclabel|" + album.id + "|" + (library.artworkURL(album.first)?.lastPathComponent ?? "-")) {
-            Self.discLabel(library.image(for: album.first))
+        let label: UIImage?
+        if let game = library.gameName(album.id) {
+            label = cached("gamedisc|" + game + "|" + (library.gameCoverName(game) ?? "auto")) {
+                Self.gameDiscLabel(self.gameCover(album, game: game), title: game)
+            }
+        } else {
+            label = cached("disclabel|" + album.id + "|" + (library.artworkURL(album.first)?.lastPathComponent ?? "-")) {
+                Self.discLabel(library.image(for: album.first))
+            }
         }
         // Face imprimée : couleurs fidèles, avec un léger vernis.
         let front = SCNMaterial()
@@ -614,6 +673,341 @@ struct AlbumNodeBuilder {
             ])
             let mb = mark.size()
             mark.draw(at: CGPoint(x: (w - mb.width) / 2, y: h - 70))
+        }
+    }
+
+    // MARK: Boîtier de jeu PS5 : plastique bleu, jaquette sous film, couvercle qui s'ouvre.
+
+    /// La jaquette : ta photo si tu en as mis une, sinon une jaquette générée.
+    func gameCover(_ album: AlbumInfo, game: String) -> UIImage {
+        if let img = library.gameCoverImage(game) { return img }
+        return cached("gamecover-auto|" + game + "|" + String(album.tracks.count)) {
+            Self.generatedGameCover(title: game, season: GameCatalog.season(game), count: album.tracks.count)
+        } ?? UIImage()
+    }
+
+    private func makeGameCase(_ album: AlbumInfo, badges: [AlbumBadge], extras: Bool, signature: String) -> AlbumNode {
+        let size = Physical.size(.game)
+        let W = CGFloat(size.x), H = CGFloat(size.y)
+        let game = library.gameName(album.id) ?? album.title
+        var parts: [SCNNode] = []
+
+        // Plastique bleu translucide des boîtiers PS5.
+        let blue = SCNMaterial()
+        blue.lightingModel = .physicallyBased
+        blue.diffuse.contents = UIColor(red: 0.13, green: 0.38, blue: 0.93, alpha: 0.9)
+        blue.roughness.contents = 0.3
+        blue.metalness.contents = 0.0
+        blue.clearCoat.contents = 0.5
+        blue.clearCoatRoughness.contents = 0.2
+        blue.blendMode = .alpha
+
+        let cover = gameCover(album, game: game)
+        let back = cached("gameback|" + signature) {
+            Self.gameBackInsert(cover: cover, title: game, season: GameCatalog.season(game),
+                                tracks: album.tracks.map { ($0.title, $0.displayArtist) })
+        }
+        let booklet = cached("gamebook|" + signature) {
+            Self.gameBooklet(title: game, tracks: album.tracks.map { ($0.title, $0.displayArtist) })
+        }
+        let spine = cached("gamespine|" + game) {
+            Self.spineImage(title: "Bande-son originale", artist: game, color: UIColor(red: 0.3, green: 0.6, blue: 1, alpha: 1))
+        }
+
+        // Partie arrière : le plateau bleu clair où le disque est clipsé, le dos imprimé.
+        let shell = SCNBox(width: W, height: H, length: 0.04, chamferRadius: 0.02)
+        shell.materials = [Self.printed(Self.gameTray), blue, Self.printed(back ?? UIColor.darkGray), blue, blue, blue]
+        let shellNode = SCNNode(geometry: shell)
+        shellNode.position.z = -0.05
+        parts.append(shellNode)
+        // Rebords du plateau tout autour.
+        let rims: [(CGFloat, CGFloat, Float, Float)] = [
+            (W, 0.03, 0, Float(H / 2 - 0.015)), (W, 0.03, 0, Float(-H / 2 + 0.015)),
+            (0.03, H, Float(W / 2 - 0.015), 0), (0.03, H, Float(-W / 2 + 0.015), 0)
+        ]
+        for (w, h, x, y) in rims {
+            let rim = SCNBox(width: w, height: h, length: 0.026, chamferRadius: 0.006)
+            rim.materials = [blue]
+            let n = SCNNode(geometry: rim)
+            n.position = SCNVector3(x, y, -0.018)
+            parts.append(n)
+        }
+
+        // Couvercle : il tourne autour de la charnière, à gauche, comme un livre.
+        let lidPivot = SCNNode()
+        lidPivot.position = SCNVector3(Float(-W / 2), 0, -0.005)
+        let lid = SCNBox(width: W, height: H, length: 0.075, chamferRadius: 0.025)
+        lid.materials = [blue, blue, Self.printed(booklet ?? UIColor.darkGray), Self.printed(spine ?? UIColor.darkGray), blue, blue]
+        let lidNode = SCNNode(geometry: lid)
+        lidNode.position = SCNVector3(Float(W / 2), 0, 0.0375)
+        lidPivot.addChildNode(lidNode)
+        // La jaquette glissée sous le film transparent.
+        let coverPlane = SCNPlane(width: W - 0.05, height: H - 0.05)
+        coverPlane.materials = [Self.printed(cover)]
+        let coverNode = SCNNode(geometry: coverPlane)
+        coverNode.position = SCNVector3(Float(W / 2), 0, 0.0758)
+        lidPivot.addChildNode(coverNode)
+        // Le film plastique : uniquement des reflets.
+        let film = SCNPlane(width: W - 0.03, height: H - 0.03)
+        let filmMat = Self.glassy(strength: 0.6)
+        if badges.contains(.platinum) { filmMat.shaderModifiers = [.fragment: Self.iridescence] }
+        film.materials = [filmMat]
+        let filmNode = SCNNode(geometry: film)
+        filmNode.position = SCNVector3(Float(W / 2), 0, 0.0768)
+        filmNode.renderingOrder = 11
+        filmNode.categoryBitMask = 2
+        lidPivot.addChildNode(filmNode)
+        parts.append(lidPivot)
+
+        return AlbumNode(albumID: album.id, format: .game, signature: signature, parts: parts,
+                         discPivot: extras ? makeDisc(album) : nil, reels: [], lidPivot: lidPivot)
+    }
+
+    /// Jaquette générée (en attendant ta photo) : bandeau blanc, stade de nuit, pelouse et nom du jeu.
+    static func generatedGameCover(title: String, season: String, count: Int) -> UIImage {
+        let w: CGFloat = 1080, h: CGFloat = 1360
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        return UIGraphicsImageRenderer(size: CGSize(width: w, height: h), format: format).image { ctx in
+            let c = ctx.cgContext
+            let space = CGColorSpaceCreateDeviceRGB()
+            // Ciel de stade.
+            let sky = [UIColor(red: 0.03, green: 0.06, blue: 0.16, alpha: 1).cgColor,
+                       UIColor(red: 0.06, green: 0.14, blue: 0.3, alpha: 1).cgColor,
+                       UIColor(red: 0.02, green: 0.05, blue: 0.1, alpha: 1).cgColor] as CFArray
+            if let g = CGGradient(colorsSpace: space, colors: sky, locations: [0, 0.55, 1]) {
+                c.drawLinearGradient(g, start: CGPoint(x: 0, y: 120), end: CGPoint(x: 0, y: h), options: [])
+            }
+            // Projecteurs.
+            for (x, y) in [(180.0, 260.0), (900.0, 240.0), (540.0, 200.0)] {
+                let glow = [UIColor(white: 1, alpha: 0.55).cgColor, UIColor(white: 1, alpha: 0).cgColor] as CFArray
+                if let g = CGGradient(colorsSpace: space, colors: glow, locations: [0, 1]) {
+                    c.drawRadialGradient(g, startCenter: CGPoint(x: x, y: y), startRadius: 0,
+                                         endCenter: CGPoint(x: x, y: y), endRadius: 260, options: [])
+                }
+            }
+            // Tribunes : rangées de petits points lumineux.
+            c.setFillColor(UIColor(white: 1, alpha: 0.08).cgColor)
+            var y: CGFloat = 640
+            while y < 960 {
+                var x: CGFloat = CGFloat(Int(y) % 14)
+                while x < w {
+                    c.fillEllipse(in: CGRect(x: x, y: y, width: 4, height: 4))
+                    x += 14
+                }
+                y += 12
+            }
+            // Pelouse rayée avec les lignes du terrain.
+            let grass = UIBezierPath()
+            grass.move(to: CGPoint(x: 0, y: 980))
+            grass.addLine(to: CGPoint(x: w, y: 980))
+            grass.addLine(to: CGPoint(x: w, y: h))
+            grass.addLine(to: CGPoint(x: 0, y: h))
+            grass.close()
+            c.saveGState()
+            c.addPath(grass.cgPath)
+            c.clip()
+            for i in 0..<10 {
+                c.setFillColor((i % 2 == 0 ? UIColor(red: 0.1, green: 0.5, blue: 0.2, alpha: 1)
+                                           : UIColor(red: 0.13, green: 0.58, blue: 0.24, alpha: 1)).cgColor)
+                c.fill(CGRect(x: CGFloat(i) * w / 10, y: 980, width: w / 10 + 1, height: h - 980))
+            }
+            c.setStrokeColor(UIColor(white: 1, alpha: 0.75).cgColor)
+            c.setLineWidth(5)
+            c.strokeLineSegments(between: [CGPoint(x: 0, y: 1060), CGPoint(x: w, y: 1060)])
+            c.strokeEllipse(in: CGRect(x: w / 2 - 230, y: 1010, width: 460, height: 120))
+            c.restoreGState()
+            // Ballon.
+            c.setFillColor(UIColor.white.cgColor)
+            c.fillEllipse(in: CGRect(x: 780, y: 1150, width: 120, height: 120))
+            c.setFillColor(UIColor(white: 0.1, alpha: 1).cgColor)
+            c.fillEllipse(in: CGRect(x: 822, y: 1192, width: 36, height: 36))
+
+            // Nom du jeu, en grand et penché.
+            let titleFont = UIFont.systemFont(ofSize: 220, weight: .black)
+            let italic = UIFont(descriptor: titleFont.fontDescriptor.withSymbolicTraits(.traitItalic) ?? titleFont.fontDescriptor, size: 220)
+            let attrs: [NSAttributedString.Key: Any] = [.font: italic, .foregroundColor: UIColor.white, .kern: -6]
+            let text = title.uppercased() as NSString
+            var size = text.size(withAttributes: attrs)
+            let shrink = min(1, (w - 120) / max(size.width, 1))
+            c.saveGState()
+            c.translateBy(x: w / 2, y: 430)
+            c.scaleBy(x: shrink, y: shrink)
+            size = text.size(withAttributes: attrs)
+            c.setShadow(offset: CGSize(width: 0, height: 10), blur: 30, color: UIColor(white: 0, alpha: 0.6).cgColor)
+            text.draw(at: CGPoint(x: -size.width / 2, y: -size.height / 2), withAttributes: attrs)
+            c.restoreGState()
+
+            var subText = "Bande-son originale"
+            if !season.isEmpty { subText += " · " + season }
+            let sub = subText as NSString
+            let subAttrs: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 40, weight: .bold),
+                                                            .foregroundColor: UIColor(white: 1, alpha: 0.85), .kern: 3]
+            let ss = sub.size(withAttributes: subAttrs)
+            sub.draw(at: CGPoint(x: (w - ss.width) / 2, y: 580), withAttributes: subAttrs)
+            let countText: String = String(count) + (count > 1 ? " titres" : " titre")
+            let n = countText as NSString
+            let ns = n.size(withAttributes: subAttrs)
+            n.draw(at: CGPoint(x: (w - ns.width) / 2, y: 1290 - ns.height), withAttributes: subAttrs)
+
+            // Bandeau blanc en haut, comme sur les jeux PS5.
+            c.setFillColor(UIColor(white: 0.96, alpha: 1).cgColor)
+            c.fill(CGRect(x: 0, y: 0, width: w, height: 120))
+            c.setFillColor(UIColor(white: 0.82, alpha: 1).cgColor)
+            c.fill(CGRect(x: 0, y: 118, width: w, height: 4))
+            let band = "PLATINE · BANDE-SON" as NSString
+            let bandAttrs: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 44, weight: .heavy),
+                                                             .foregroundColor: UIColor(white: 0.12, alpha: 1), .kern: 4]
+            band.draw(at: CGPoint(x: 48, y: 34), withAttributes: bandAttrs)
+        }
+    }
+
+    /// Dos du boîtier : visuel en haut, liste des morceaux, code-barres.
+    static func gameBackInsert(cover: UIImage, title: String, season: String, tracks: [(String, String)]) -> UIImage {
+        let w: CGFloat = 1080, h: CGFloat = 1360
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        return UIGraphicsImageRenderer(size: CGSize(width: w, height: h), format: format).image { ctx in
+            let c = ctx.cgContext
+            c.setFillColor(UIColor(red: 0.04, green: 0.06, blue: 0.12, alpha: 1).cgColor)
+            c.fill(CGRect(x: 0, y: 0, width: w, height: h))
+            c.setFillColor(UIColor(white: 0.96, alpha: 1).cgColor)
+            c.fill(CGRect(x: 0, y: 0, width: w, height: 90))
+            // Bandeau visuel repris de la jaquette.
+            if let cg = cover.cgImage {
+                let iw = CGFloat(cg.width), ih = CGFloat(cg.height)
+                c.saveGState()
+                c.clip(to: CGRect(x: 60, y: 130, width: w - 120, height: 380))
+                let scale = max((w - 120) / iw, 380 / ih)
+                cover.draw(in: CGRect(x: 60 + ((w - 120) - iw * scale) / 2, y: 130 + (380 - ih * scale) / 2,
+                                      width: iw * scale, height: ih * scale))
+                c.restoreGState()
+            }
+            let titleAttrs: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 56, weight: .black),
+                                                              .foregroundColor: UIColor.white]
+            (title.uppercased() as NSString).draw(at: CGPoint(x: 60, y: 540), withAttributes: titleAttrs)
+            let subAttrs: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 30, weight: .semibold),
+                                                            .foregroundColor: UIColor(white: 1, alpha: 0.6)]
+            var subtitle = "Bande-son originale"
+            if !season.isEmpty { subtitle += " · " + season }
+            (subtitle as NSString).draw(at: CGPoint(x: 60, y: 615), withAttributes: subAttrs)
+            // Liste des morceaux, sur deux colonnes si besoin.
+            let lineAttrs: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 26, weight: .medium),
+                                                             .foregroundColor: UIColor(white: 1, alpha: 0.9)]
+            let artistAttrs: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 22, weight: .regular),
+                                                               .foregroundColor: UIColor(white: 1, alpha: 0.5)]
+            let shown = Array(tracks.prefix(24))
+            let perColumn = shown.count > 12 ? (shown.count + 1) / 2 : 12
+            for (i, t) in shown.enumerated() {
+                let col = CGFloat(i / perColumn), row = CGFloat(i % perColumn)
+                let x = 60 + col * (w - 120) / 2, y = 690 + row * 46
+                let maxW = (shown.count > 12 ? (w - 120) / 2 : w - 120) - 20
+                let number: String = String(i + 1) + ". "
+                let line: String = number + t.0
+                (line as NSString).draw(in: CGRect(x: x, y: y, width: maxW * 0.62, height: 32), withAttributes: lineAttrs)
+                (t.1 as NSString).draw(in: CGRect(x: x + maxW * 0.64, y: y + 3, width: maxW * 0.36, height: 30), withAttributes: artistAttrs)
+            }
+            // Pied de page : code-barres et note d'âge générique.
+            c.setFillColor(UIColor.white.cgColor)
+            c.fill(CGRect(x: w - 300, y: h - 170, width: 240, height: 110))
+            c.setFillColor(UIColor.black.cgColor)
+            var x: CGFloat = w - 288
+            var k = 0
+            while x < w - 72 {
+                let bw: CGFloat = [2, 4, 3, 6, 2, 5][k % 6]
+                c.fill(CGRect(x: x, y: h - 160, width: bw, height: 80))
+                x += bw + 3
+                k += 1
+            }
+            c.setFillColor(UIColor(red: 0.2, green: 0.6, blue: 0.25, alpha: 1).cgColor)
+            c.fill(CGRect(x: 60, y: h - 170, width: 90, height: 110))
+            let age = "3+" as NSString
+            age.draw(at: CGPoint(x: 72, y: h - 150), withAttributes: [.font: UIFont.systemFont(ofSize: 54, weight: .black),
+                                                                     .foregroundColor: UIColor.white])
+        }
+    }
+
+    /// Livret, visible à l'intérieur du couvercle quand on ouvre le boîtier.
+    static func gameBooklet(title: String, tracks: [(String, String)]) -> UIImage {
+        let w: CGFloat = 1080, h: CGFloat = 1360
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        return UIGraphicsImageRenderer(size: CGSize(width: w, height: h), format: format).image { ctx in
+            let c = ctx.cgContext
+            // Fond du couvercle (bleu clair) et le livret posé dessus.
+            c.setFillColor(UIColor(red: 0.6, green: 0.74, blue: 0.95, alpha: 1).cgColor)
+            c.fill(CGRect(x: 0, y: 0, width: w, height: h))
+            let card = CGRect(x: 110, y: 120, width: w - 220, height: h - 240)
+            c.setFillColor(UIColor(red: 0.05, green: 0.07, blue: 0.1, alpha: 1).cgColor)
+            c.fill(card)
+            let head: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 60, weight: .black),
+                                                        .foregroundColor: UIColor(red: 0.45, green: 0.95, blue: 0.55, alpha: 1)]
+            ("ÉCOUTE LA" as NSString).draw(at: CGPoint(x: card.minX + 60, y: card.minY + 70), withAttributes: head)
+            ("BANDE-SON" as NSString).draw(at: CGPoint(x: card.minX + 60, y: card.minY + 140), withAttributes: head)
+            let sub: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 34, weight: .bold),
+                                                       .foregroundColor: UIColor.white]
+            (title.uppercased() as NSString).draw(at: CGPoint(x: card.minX + 60, y: card.minY + 230), withAttributes: sub)
+            let line: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 26, weight: .regular),
+                                                        .foregroundColor: UIColor(white: 1, alpha: 0.75)]
+            for (i, t) in tracks.prefix(16).enumerated() {
+                let entry: String = t.0 + " — " + t.1
+                (entry as NSString).draw(in: CGRect(x: card.minX + 60, y: card.minY + 320 + CGFloat(i) * 44,
+                                                                  width: card.width - 120, height: 34), withAttributes: line)
+            }
+            // Les deux clips qui tiennent le livret.
+            c.setFillColor(UIColor(red: 0.45, green: 0.6, blue: 0.9, alpha: 0.9).cgColor)
+            c.fill(CGRect(x: 80, y: 200, width: 90, height: 80))
+            c.fill(CGRect(x: 80, y: h - 280, width: 90, height: 80))
+        }
+    }
+
+    /// Plateau intérieur bleu clair, avec l'emplacement du disque et son ergot central.
+    static let gameTray: UIImage = {
+        let w: CGFloat = 540, h: CGFloat = 680
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        return UIGraphicsImageRenderer(size: CGSize(width: w, height: h), format: format).image { ctx in
+            let c = ctx.cgContext
+            c.setFillColor(UIColor(red: 0.62, green: 0.76, blue: 0.97, alpha: 1).cgColor)
+            c.fill(CGRect(x: 0, y: 0, width: w, height: h))
+            c.setStrokeColor(UIColor(white: 1, alpha: 0.6).cgColor)
+            c.setLineWidth(3)
+            c.stroke(CGRect(x: 18, y: 18, width: w - 36, height: h - 36))
+            let center = CGPoint(x: w / 2, y: h / 2 - 8)
+            for (r, a) in [(250.0, 0.35), (244.0, 0.2), (40.0, 0.5), (26.0, 0.6)] {
+                c.setStrokeColor(UIColor(red: 0.3, green: 0.45, blue: 0.75, alpha: CGFloat(a)).cgColor)
+                c.setLineWidth(4)
+                c.strokeEllipse(in: CGRect(x: center.x - CGFloat(r), y: center.y - CGFloat(r), width: CGFloat(r) * 2, height: CGFloat(r) * 2))
+            }
+        }
+    }()
+
+    /// Face imprimée du disque de jeu : visuel en haut, bandeau blanc en bas, nom du jeu.
+    static func gameDiscLabel(_ cover: UIImage, title: String) -> UIImage {
+        let base = discLabel(cover)
+        let size = base.size
+        let format = UIGraphicsImageRendererFormat()
+        format.opaque = false
+        format.scale = 1
+        return UIGraphicsImageRenderer(size: size, format: format).image { ctx in
+            let c = ctx.cgContext
+            base.draw(at: .zero)
+            let R = size.width / 2
+            // Bandeau blanc sur le bas du disque (dans la zone imprimée seulement).
+            c.saveGState()
+            let printArea = UIBezierPath(ovalIn: CGRect(x: R - R * 0.985, y: R - R * 0.985, width: 2 * R * 0.985, height: 2 * R * 0.985))
+            printArea.append(UIBezierPath(ovalIn: CGRect(x: R - R * 0.36, y: R - R * 0.36, width: 2 * R * 0.36, height: 2 * R * 0.36)).reversing())
+            c.addPath(printArea.cgPath)
+            c.clip()
+            c.setFillColor(UIColor(white: 0.97, alpha: 1).cgColor)
+            c.fill(CGRect(x: 0, y: R * 1.38, width: size.width, height: size.height))
+            c.restoreGState()
+            let attrs: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 64, weight: .black),
+                                                         .foregroundColor: UIColor.white]
+            let text = title.uppercased() as NSString
+            let ts = text.size(withAttributes: attrs)
+            c.setShadow(offset: CGSize(width: 0, height: 3), blur: 10, color: UIColor(white: 0, alpha: 0.6).cgColor)
+            text.draw(at: CGPoint(x: R - ts.width / 2, y: R * 0.42), withAttributes: attrs)
         }
     }
 
