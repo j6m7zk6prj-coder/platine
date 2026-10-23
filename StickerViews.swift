@@ -270,3 +270,180 @@ struct MyStickersSection: View {
         }
     }
 }
+
+
+// MARK: - Stickers placés librement sur la jaquette
+
+/// Un sticker (gagné, choisi ou à toi), dessiné dans un carré de la taille donnée.
+struct AnySticker: View {
+    let key: String
+    let size: CGFloat
+    var light: Double = -0.3
+    @Environment(Library.self) private var library
+
+    var body: some View {
+        Group {
+            if let badge = AlbumBadge(rawValue: key) {
+                HoloBadge(badge: badge, light: light, scale: size / 30)
+            } else if let sticker = library.customStickers.first(where: { $0.key == key }) {
+                CustomStickerBadge(sticker: sticker, light: light, size: size)
+            }
+        }
+        .frame(width: size, height: size)
+    }
+}
+
+/// Tous les stickers d'un album, chacun à sa place sur une jaquette de la taille donnée.
+struct PlacedStickers: View {
+    let album: AlbumInfo
+    let badges: [AlbumBadge]
+    let size: CGSize
+    @Environment(Library.self) private var library
+
+    var body: some View {
+        let keys = library.stickerOrder(for: album, badges: badges)
+        ZStack(alignment: .topLeading) {
+            Color.clear
+            ForEach(Array(keys.enumerated()), id: \.element) { index, key in
+                let p = library.placement(key, index: index, albumID: album.id)
+                AnySticker(key: key, size: size.width * 0.2 * p.scale)
+                    .rotationEffect(.degrees(p.rotation))
+                    .position(x: size.width * p.x, y: size.height * p.y)
+            }
+        }
+        .frame(width: size.width, height: size.height)
+    }
+}
+
+/// Écran pour placer les stickers où tu veux : glisse pour déplacer, pince pour la taille,
+/// tourne avec deux doigts pour l'angle.
+struct StickerPlacer: View {
+    let album: AlbumInfo
+    let badges: [AlbumBadge]
+    /// Image de fond : la pochette (CD) ou la jaquette (jeu).
+    let background: UIImage?
+    /// Largeur ÷ hauteur de la jaquette.
+    let aspect: CGFloat
+    @Environment(Library.self) private var library
+    @Environment(\.dismiss) private var dismiss
+    @State private var placements: [String: StickerPlacement] = [:]
+    @State private var dragStart: [String: StickerPlacement] = [:]
+    @State private var selected: String?
+
+    var body: some View {
+        let keys = library.stickerOrder(for: album, badges: badges)
+        NavigationStack {
+            VStack(spacing: 18) {
+                GeometryReader { geo in
+                    let w = min(geo.size.width - 40, (geo.size.height - 20) * aspect)
+                    let size = CGSize(width: w, height: w / aspect)
+                    ZStack(alignment: .topLeading) {
+                        Group {
+                            if let background {
+                                Image(uiImage: background).resizable().scaledToFill()
+                            } else {
+                                Color(white: 0.15)
+                            }
+                        }
+                        .frame(width: size.width, height: size.height)
+                        .clipped()
+                        ForEach(Array(keys.enumerated()), id: \.element) { index, key in
+                            let p = placements[key] ?? library.placement(key, index: index, albumID: album.id)
+                            AnySticker(key: key, size: size.width * 0.2 * p.scale)
+                                .overlay {
+                                    if selected == key {
+                                        Circle().strokeBorder(Color.white, style: StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
+                                            .padding(-6)
+                                    }
+                                }
+                                .rotationEffect(.degrees(p.rotation))
+                                .position(x: size.width * p.x, y: size.height * p.y)
+                                .gesture(drag(key, index: index, size: size)
+                                    .simultaneously(with: pinch(key, index: index))
+                                    .simultaneously(with: twist(key, index: index)))
+                        }
+                    }
+                    .frame(width: size.width, height: size.height)
+                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    .shadow(color: .black.opacity(0.5), radius: 20, y: 10)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+                Text("Glisse un sticker pour le déplacer · pince pour l’agrandir · tourne avec deux doigts")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 24)
+                Button("Remettre en place") {
+                    withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                        placements = [:]
+                        for (i, key) in keys.enumerated() { placements[key] = .standard(i) }
+                    }
+                }
+                .padding(.bottom, 10)
+            }
+            .navigationTitle("Placer les stickers")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Annuler") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("OK") {
+                        var map: [String: StickerPlacement] = [:]
+                        for (i, key) in keys.enumerated() {
+                            map[key] = placements[key] ?? library.placement(key, index: i, albumID: album.id)
+                        }
+                        library.setPlacements(map, for: album.id)
+                        dismiss()
+                    }
+                    .fontWeight(.semibold)
+                }
+            }
+        }
+        .environment(\.colorScheme, .dark)
+    }
+
+    private func current(_ key: String, _ index: Int) -> StickerPlacement {
+        placements[key] ?? library.placement(key, index: index, albumID: album.id)
+    }
+
+    private func begin(_ key: String, _ index: Int) -> StickerPlacement {
+        if let start = dragStart[key] { return start }
+        let start = current(key, index)
+        dragStart[key] = start
+        selected = key
+        return start
+    }
+
+    private func drag(_ key: String, index: Int, size: CGSize) -> some Gesture {
+        DragGesture(minimumDistance: 0)
+            .onChanged { g in
+                let start = begin(key, index)
+                var p = current(key, index)
+                p.x = min(1, max(0, start.x + Double(g.translation.width / size.width)))
+                p.y = min(1, max(0, start.y + Double(g.translation.height / size.height)))
+                placements[key] = p
+            }
+            .onEnded { _ in dragStart[key] = nil }
+    }
+
+    private func pinch(_ key: String, index: Int) -> some Gesture {
+        MagnifyGesture()
+            .onChanged { g in
+                let start = begin(key, index)
+                var p = current(key, index)
+                p.scale = min(3, max(0.4, start.scale * Double(g.magnification)))
+                placements[key] = p
+            }
+            .onEnded { _ in dragStart[key] = nil }
+    }
+
+    private func twist(_ key: String, index: Int) -> some Gesture {
+        RotateGesture()
+            .onChanged { g in
+                let start = begin(key, index)
+                var p = current(key, index)
+                p.rotation = start.rotation + g.rotation.degrees
+                placements[key] = p
+            }
+            .onEnded { _ in dragStart[key] = nil }
+    }
+}

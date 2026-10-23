@@ -6,12 +6,12 @@ import UIKit
 
 enum Physical {
     /// Boîtier CD : 142 × 125 × 10 mm. Cassette : 100 × 63 × 12 mm (agrandie à la largeur du CD).
-    /// Boîtier de jeu PS5 : 135 × 170 × 14 mm.
+    /// Boîtier de jeu (format Blu-ray des PS3, PS4 et PS5) : 135 × 171,5 × 14 mm.
     static func size(_ format: AlbumFormat) -> SCNVector3 {
         switch format {
         case .cd: return SCNVector3(1.42, 1.25, 0.1)
         case .cassette: return SCNVector3(1.42, 0.899, 0.17)
-        case .game: return SCNVector3(1.35, 1.7, 0.14)
+        case .game: return SCNVector3(1.35, 1.715, 0.14)
         }
     }
 
@@ -163,11 +163,13 @@ struct AlbumNodeBuilder {
             let coverName: String = library.gameCoverName(game) ?? "auto"
             let lastID: String = album.tracks.last?.id.uuidString ?? ""
             let count: String = String(album.tracks.count)
-            art = coverName + "#" + count + "#" + lastID
+            let console: String = library.platform(of: game).rawValue
+            art = coverName + "#" + count + "#" + lastID + "#" + console
         }
         let earned: String = badges.map(\.rawValue).joined(separator: ",")
         let mine: String = library.stickerKeys(for: album.id).joined(separator: ",")
-        let badgeList: String = earned + ";" + mine
+        let placed: String = library.placementSignature(album.id)
+        let badgeList: String = earned + ";" + mine + ";" + placed
         let parts: [String] = [album.id, format.rawValue, art, badgeList, album.title, album.artist]
         return parts.joined(separator: "|")
     }
@@ -289,9 +291,10 @@ struct AlbumNodeBuilder {
         let label: UIImage?
         if let game = library.gameName(album.id) {
             let coverName: String = library.gameCoverName(game) ?? "auto"
-            let key: String = "gamedisc|" + game + "|" + coverName
+            let platform = library.platform(of: game)
+            let key: String = "gamedisc|" + game + "|" + coverName + "|" + platform.rawValue
             label = cached(key) {
-                Self.gameDiscLabel(self.gameCover(album, game: game), title: game)
+                Self.gameDiscLabel(self.gameCover(album, game: game), title: game, band: platform.bandFill)
             }
         } else {
             label = cached("disclabel|" + album.id + "|" + (library.artworkURL(album.first)?.lastPathComponent ?? "-")) {
@@ -569,6 +572,29 @@ struct AlbumNodeBuilder {
         return node
     }
 
+    /// Stickers placés où tu les as mis, sur toute la surface de la jaquette.
+    private func placedStickerLayer(_ album: AlbumInfo, badges: [AlbumBadge], signature: String,
+                                    width: CGFloat, height: CGFloat) -> SCNNode? {
+        guard !library.stickerOrder(for: album, badges: badges).isEmpty else { return nil }
+        let pixelW: CGFloat = 540
+        let pixelH: CGFloat = 540 * height / width
+        let key: String = "placed|" + signature
+        guard let image = cached(key, {
+            renderTransparent(PlacedStickers(album: album, badges: badges, size: CGSize(width: pixelW, height: pixelH)),
+                              CGSize(width: pixelW, height: pixelH))
+        }) else { return nil }
+        let plane = SCNPlane(width: width, height: height)
+        let m = SCNMaterial()
+        m.lightingModel = .constant
+        m.diffuse.contents = image
+        m.blendMode = .alpha
+        m.writesToDepthBuffer = false
+        plane.materials = [m]
+        let node = SCNNode(geometry: plane)
+        node.renderingOrder = 10
+        return node
+    }
+
     private func renderTransparent<V: View>(_ view: V, _ size: CGSize) -> UIImage? {
         let content = view
             .frame(width: size.width, height: size.height)
@@ -735,10 +761,11 @@ struct AlbumNodeBuilder {
     /// La jaquette : ta photo si tu en as mis une, sinon une jaquette générée.
     func gameCover(_ album: AlbumInfo, game: String) -> UIImage {
         if let img = library.gameCoverImage(game) { return img }
+        let platform = library.platform(of: game)
         let count: String = String(album.tracks.count)
-        let key: String = "gamecover-auto|" + game + "|" + count
+        let key: String = "gamecover-auto|" + game + "|" + count + "|" + platform.rawValue
         return cached(key) {
-            Self.generatedGameCover(title: game, season: GameCatalog.season(game), count: album.tracks.count)
+            Self.generatedGameCover(title: game, season: GameCatalog.season(game), count: album.tracks.count, platform: platform)
         } ?? UIImage()
     }
 
@@ -748,11 +775,12 @@ struct AlbumNodeBuilder {
         let game = library.gameName(album.id) ?? album.title
         var parts: [SCNNode] = []
         let corner: CGFloat = 0.06   // coins bien arrondis, comme les vrais boîtiers
+        let platform = library.platform(of: game)
 
-        // Plastique bleu translucide des boîtiers PS5.
+        // Plastique translucide : transparent (PS3), bleu foncé (PS4) ou bleu vif (PS5).
         let blue = SCNMaterial()
         blue.lightingModel = .physicallyBased
-        blue.diffuse.contents = UIColor(red: 0.12, green: 0.36, blue: 0.92, alpha: 0.92)
+        blue.diffuse.contents = platform.plastic
         blue.roughness.contents = 0.28
         blue.metalness.contents = 0.0
         blue.clearCoat.contents = 0.6
@@ -765,9 +793,11 @@ struct AlbumNodeBuilder {
                                 tracks: album.tracks.map { ($0.title, $0.displayArtist) })
         }
         let booklet = cached("gamebook|" + signature) {
-            Self.gameBooklet(title: game, tracks: album.tracks.map { ($0.title, $0.displayArtist) })
+            Self.gameBooklet(title: game, tracks: album.tracks.map { ($0.title, $0.displayArtist) }, platform: platform)
         }
-        let spine = cached("gamespine2|" + game) { Self.gameSpine(title: game) }
+        let spineKey: String = "gamespine3|" + game + "|" + platform.rawValue
+        let spine = cached(spineKey) { Self.gameSpine(title: game, platform: platform) }
+        let trayImage = cached("gametray|" + platform.rawValue) { Self.gameTray(platform) }
 
         // Coque arrière : plaque aux coins arrondis + cadre (parois) tout autour.
         let backPlate = Self.roundedSlab(width: W, height: H, corner: corner, depth: 0.04, chamfer: 0.012)
@@ -783,7 +813,7 @@ struct AlbumNodeBuilder {
         // Plateau intérieur (vu quand le boîtier est ouvert).
         let tray = SCNPlane(width: W - 0.07, height: H - 0.07)
         tray.cornerRadius = corner - 0.03
-        tray.materials = [Self.printed(Self.gameTray)]
+        tray.materials = [Self.printed(trayImage ?? UIColor.lightGray)]
         let trayNode = SCNNode(geometry: tray)
         trayNode.position.z = -0.0305
         parts.append(trayNode)
@@ -807,7 +837,7 @@ struct AlbumNodeBuilder {
         // Tranche droite (côté ouverture) : l'encoche pour le pouce et les deux petits ergots.
         let slotMat = SCNMaterial()
         slotMat.lightingModel = .physicallyBased
-        slotMat.diffuse.contents = UIColor(red: 0.05, green: 0.17, blue: 0.58, alpha: 0.95)
+        slotMat.diffuse.contents = platform.plasticDark
         slotMat.roughness.contents = 0.25
         let slot = SCNPlane(width: 0.05, height: 0.42)
         slot.cornerRadius = 0.025
@@ -857,7 +887,8 @@ struct AlbumNodeBuilder {
         filmNode.renderingOrder = 11
         filmNode.categoryBitMask = 2
         lidPivot.addChildNode(filmNode)
-        if let stickers = stickerLayer(album, badges: badges, signature: signature) {
+        if let stickers = placedStickerLayer(album, badges: badges, signature: signature,
+                                             width: W - 0.06, height: H - 0.06) {
             stickers.position = SCNVector3(Float(W / 2), 0, 0.0751)
             lidPivot.addChildNode(stickers)
         }
@@ -900,7 +931,7 @@ struct AlbumNodeBuilder {
     }
 
     /// Jaquette générée (en attendant ta photo) : bandeau blanc, stade de nuit, pelouse et nom du jeu.
-    static func generatedGameCover(title: String, season: String, count: Int) -> UIImage {
+    static func generatedGameCover(title: String, season: String, count: Int, platform: GamePlatform = .ps5) -> UIImage {
         let w: CGFloat = 1080, h: CGFloat = 1360
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1
@@ -986,14 +1017,14 @@ struct AlbumNodeBuilder {
             let ns = n.size(withAttributes: subAttrs)
             n.draw(at: CGPoint(x: (w - ns.width) / 2, y: 1290 - ns.height), withAttributes: subAttrs)
 
-            // Bandeau blanc en haut, comme sur les jeux PS5.
-            c.setFillColor(UIColor(white: 0.96, alpha: 1).cgColor)
+            // Bandeau du haut aux couleurs de la console (noir PS3, bleu PS4, blanc PS5).
+            c.setFillColor(platform.bandFill.cgColor)
             c.fill(CGRect(x: 0, y: 0, width: w, height: 120))
-            c.setFillColor(UIColor(white: 0.82, alpha: 1).cgColor)
+            c.setFillColor(platform.bandLine.cgColor)
             c.fill(CGRect(x: 0, y: 118, width: w, height: 4))
-            let band = "PLATINE · BANDE-SON" as NSString
+            let band = (platform.label + "  ·  BANDE-SON") as NSString
             let bandAttrs: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 44, weight: .heavy),
-                                                             .foregroundColor: UIColor(white: 0.12, alpha: 1), .kern: 4]
+                                                             .foregroundColor: platform.bandText, .kern: 4]
             band.draw(at: CGPoint(x: 48, y: 34), withAttributes: bandAttrs)
         }
     }
@@ -1064,7 +1095,7 @@ struct AlbumNodeBuilder {
     }
 
     /// Dos du boîtier comme sur les vrais jeux : papier blanc, bandeau en haut, titre en grand, référence en bas.
-    static func gameSpine(title: String) -> UIImage {
+    static func gameSpine(title: String, platform: GamePlatform = .ps5) -> UIImage {
         let w: CGFloat = 136, h: CGFloat = 1650
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1
@@ -1072,12 +1103,14 @@ struct AlbumNodeBuilder {
             let c = ctx.cgContext
             c.setFillColor(UIColor(white: 0.97, alpha: 1).cgColor)
             c.fill(CGRect(x: 0, y: 0, width: w, height: h))
-            // Bandeau du haut, séparé par un fin trait bleu.
-            c.setFillColor(UIColor(red: 0.1, green: 0.3, blue: 0.85, alpha: 1).cgColor)
+            // Bandeau du haut aux couleurs de la console, séparé par un fin trait.
+            c.setFillColor(platform.bandFill.cgColor)
+            c.fill(CGRect(x: 0, y: 0, width: w, height: 330))
+            c.setFillColor((platform == .ps5 ? UIColor(red: 0.1, green: 0.3, blue: 0.85, alpha: 1) : platform.bandLine).cgColor)
             c.fill(CGRect(x: 0, y: 330, width: w, height: 4))
-            let brand = NSAttributedString(string: "PLATINE", attributes: [
-                .font: UIFont.systemFont(ofSize: 40, weight: .heavy),
-                .foregroundColor: UIColor(white: 0.08, alpha: 1), .kern: 6
+            let brand = NSAttributedString(string: platform.label, attributes: [
+                .font: UIFont.systemFont(ofSize: 46, weight: .heavy),
+                .foregroundColor: platform.bandText, .kern: 6
             ])
             c.saveGState()
             c.translateBy(x: w / 2, y: 165)
@@ -1110,16 +1143,16 @@ struct AlbumNodeBuilder {
 
     /// Intérieur du couvercle : plastique bleu translucide, la notice en papier glissée dessous
     /// (texte en petits paragraphes), les deux clips qui la tiennent.
-    static func gameBooklet(title: String, tracks: [(String, String)]) -> UIImage {
+    static func gameBooklet(title: String, tracks: [(String, String)], platform: GamePlatform = .ps5) -> UIImage {
         let w: CGFloat = 1080, h: CGFloat = 1360
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1
         return UIGraphicsImageRenderer(size: CGSize(width: w, height: h), format: format).image { ctx in
             let c = ctx.cgContext
-            c.setFillColor(UIColor(red: 0.42, green: 0.58, blue: 0.95, alpha: 1).cgColor)
+            c.setFillColor(platform.trayDark.cgColor)
             c.fill(CGRect(x: 0, y: 0, width: w, height: h))
             // Bord du couvercle.
-            c.setStrokeColor(UIColor(red: 0.2, green: 0.38, blue: 0.9, alpha: 1).cgColor)
+            c.setStrokeColor(platform.trayEdge.cgColor)
             c.setLineWidth(18)
             c.stroke(CGRect(x: 9, y: 9, width: w - 18, height: h - 18))
             // La notice, vue à travers le plastique (teinte bleutée).
@@ -1163,20 +1196,19 @@ struct AlbumNodeBuilder {
 
     /// Plateau intérieur comme sur un vrai boîtier PS5 : plastique bleu translucide,
     /// anneau en relief pour le disque, ergot central à branches, fines nervures en haut et en bas.
-    static let gameTray: UIImage = {
+    static func gameTray(_ platform: GamePlatform) -> UIImage {
         let w: CGFloat = 810, h: CGFloat = 1020
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1
         return UIGraphicsImageRenderer(size: CGSize(width: w, height: h), format: format).image { ctx in
             let c = ctx.cgContext
             let space = CGColorSpaceCreateDeviceRGB()
-            let bg = [UIColor(red: 0.55, green: 0.68, blue: 0.97, alpha: 1).cgColor,
-                      UIColor(red: 0.47, green: 0.61, blue: 0.95, alpha: 1).cgColor] as CFArray
+            let bg = [platform.trayLight.cgColor, platform.trayDark.cgColor] as CFArray
             if let g = CGGradient(colorsSpace: space, colors: bg, locations: [0, 1]) {
                 c.drawLinearGradient(g, start: .zero, end: CGPoint(x: w, y: h), options: [])
             }
             // Bord épais du plateau.
-            c.setStrokeColor(UIColor(red: 0.18, green: 0.36, blue: 0.92, alpha: 1).cgColor)
+            c.setStrokeColor(platform.trayEdge.cgColor)
             c.setLineWidth(26)
             c.stroke(CGRect(x: 13, y: 13, width: w - 26, height: h - 26))
             c.setStrokeColor(UIColor(white: 1, alpha: 0.5).cgColor)
@@ -1218,10 +1250,10 @@ struct AlbumNodeBuilder {
             c.setFillColor(UIColor(red: 0.25, green: 0.42, blue: 0.92, alpha: 1).cgColor)
             c.fillEllipse(in: CGRect(x: center.x - 24, y: center.y - 24, width: 48, height: 48))
         }
-    }()
+    }
 
     /// Face imprimée du disque de jeu : visuel en haut, bandeau blanc en bas, nom du jeu.
-    static func gameDiscLabel(_ cover: UIImage, title: String) -> UIImage {
+    static func gameDiscLabel(_ cover: UIImage, title: String, band: UIColor = UIColor(white: 0.97, alpha: 1)) -> UIImage {
         let base = discLabel(cover)
         let size = base.size
         let format = UIGraphicsImageRendererFormat()
@@ -1237,7 +1269,7 @@ struct AlbumNodeBuilder {
             printArea.append(UIBezierPath(ovalIn: CGRect(x: R - R * 0.36, y: R - R * 0.36, width: 2 * R * 0.36, height: 2 * R * 0.36)).reversing())
             c.addPath(printArea.cgPath)
             c.clip()
-            c.setFillColor(UIColor(white: 0.97, alpha: 1).cgColor)
+            c.setFillColor(band.cgColor)
             c.fill(CGRect(x: 0, y: R * 1.38, width: size.width, height: size.height))
             c.restoreGState()
             let attrs: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 64, weight: .black),
@@ -1459,13 +1491,7 @@ struct CoverFace: View {
             ZStack(alignment: .topTrailing) {
                 ArtworkView(track: album.first, animated: false, cornerRadius: 0)
                 if badges.contains(.platinum) { HoloSheen(light: -0.2) }
-                VStack(alignment: .trailing, spacing: 6) {
-                    ForEach(badges) { HoloBadge(badge: $0, light: -0.3, scale: geo.size.width / 220) }
-                    ForEach(library.customStickers(for: album.id)) {
-                        CustomStickerBadge(sticker: $0, size: geo.size.width * 0.2)
-                    }
-                }
-                .padding(geo.size.width * 0.035)
+                PlacedStickers(album: album, badges: badges, size: geo.size)
             }
         }
     }
@@ -1557,5 +1583,64 @@ extension SCNView {
         rendersContinuously = true
         isPlaying = true
         isJitteringEnabled = false
+    }
+}
+
+
+// MARK: - Couleurs des boîtiers selon la console
+
+extension GamePlatform {
+    /// Plastique du boîtier : transparent (PS3), bleu foncé (PS4), bleu vif (PS5).
+    var plastic: UIColor {
+        switch self {
+        case .ps3: return UIColor(red: 0.86, green: 0.9, blue: 0.95, alpha: 0.42)
+        case .ps4: return UIColor(red: 0.04, green: 0.24, blue: 0.72, alpha: 0.9)
+        case .ps5: return UIColor(red: 0.12, green: 0.36, blue: 0.92, alpha: 0.92)
+        }
+    }
+    var plasticDark: UIColor {
+        switch self {
+        case .ps3: return UIColor(white: 0.55, alpha: 0.8)
+        case .ps4: return UIColor(red: 0.02, green: 0.12, blue: 0.45, alpha: 0.95)
+        case .ps5: return UIColor(red: 0.05, green: 0.17, blue: 0.58, alpha: 0.95)
+        }
+    }
+    /// Plateau intérieur : clair, puis plus sombre, et son bord.
+    var trayLight: UIColor {
+        switch self {
+        case .ps3: return UIColor(red: 0.86, green: 0.88, blue: 0.9, alpha: 1)
+        case .ps4: return UIColor(red: 0.38, green: 0.52, blue: 0.86, alpha: 1)
+        case .ps5: return UIColor(red: 0.55, green: 0.68, blue: 0.97, alpha: 1)
+        }
+    }
+    var trayDark: UIColor {
+        switch self {
+        case .ps3: return UIColor(red: 0.76, green: 0.78, blue: 0.81, alpha: 1)
+        case .ps4: return UIColor(red: 0.28, green: 0.42, blue: 0.8, alpha: 1)
+        case .ps5: return UIColor(red: 0.47, green: 0.61, blue: 0.95, alpha: 1)
+        }
+    }
+    var trayEdge: UIColor {
+        switch self {
+        case .ps3: return UIColor(white: 0.62, alpha: 1)
+        case .ps4: return UIColor(red: 0.06, green: 0.24, blue: 0.7, alpha: 1)
+        case .ps5: return UIColor(red: 0.18, green: 0.36, blue: 0.92, alpha: 1)
+        }
+    }
+    /// Bandeau du haut de la jaquette : noir (PS3), bleu (PS4), blanc (PS5).
+    var bandFill: UIColor {
+        switch self {
+        case .ps3: return UIColor(white: 0.06, alpha: 1)
+        case .ps4: return UIColor(red: 0.0, green: 0.27, blue: 0.68, alpha: 1)
+        case .ps5: return UIColor(white: 0.96, alpha: 1)
+        }
+    }
+    var bandText: UIColor { self == .ps5 ? UIColor(white: 0.1, alpha: 1) : .white }
+    var bandLine: UIColor {
+        switch self {
+        case .ps3: return UIColor(white: 0.45, alpha: 1)
+        case .ps4: return UIColor(white: 1, alpha: 0.85)
+        case .ps5: return UIColor(white: 0.8, alpha: 1)
+        }
     }
 }

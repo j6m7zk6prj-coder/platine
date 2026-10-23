@@ -109,7 +109,7 @@ enum AlbumFormat: String, CaseIterable, Identifiable {
         switch self {
         case .cd: return "CD"
         case .cassette: return "Cassette"
-        case .game: return "Jeu PS5"
+        case .game: return "Jeu vidéo"
         }
     }
     /// Formats proposés pour un album (le boîtier de jeu est réservé aux bandes-son).
@@ -266,4 +266,29 @@ struct CustomSticker: Codable, Identifiable, Hashable {
 
     static let prefix = "custom:"
     var key: String { Self.prefix + id.uuidString }
+}
+
+
+/// Console du boîtier de jeu : même format Blu-ray (135 × 171,5 mm), plastique et bandeau différents.
+enum GamePlatform: String, Codable, CaseIterable, Identifiable {
+    case ps3, ps4, ps5
+    var id: String { rawValue }
+    var label: String { rawValue.uppercased() }
+}
+
+/// Position d'un sticker sur la jaquette : x et y de 0 à 1, taille relative.
+struct StickerPlacement: Codable, Hashable {
+    var x: Double
+    var y: Double
+    var scale: Double = 1
+    var rotation: Double = 0
+
+    /// Placement par défaut : en colonne, en haut à droite.
+    static func standard(_ index: Int) -> StickerPlacement {
+        StickerPlacement(x: 0.84, y: 0.13 + 0.19 * Double(index), scale: 1)
+    }
+
+    var signature: String {
+        String(format: "%.3f,%.3f,%.2f,%.2f", x, y, scale, rotation)
+    }
 }

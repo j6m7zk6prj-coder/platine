@@ -632,16 +632,17 @@ struct ShelfInspector: View {
         VStack(spacing: 16) {
             HStack(spacing: 10) {
                 if let game {
-                    // Bande-son : choisir la photo de la jaquette du jeu.
+                    // Bande-son : console du boîtier, puis la photo de la jaquette.
+                    PlatformSwitch(platform: library.platform(of: game)) { library.setPlatform($0, for: game) }
                     PhotosPicker(selection: $photoItem, matching: .images) {
-                        Label("Jaquette", systemImage: "photo")
-                            .font(.subheadline.weight(.semibold))
-                            .padding(.horizontal, 16)
-                            .frame(height: 40)
-                            .contentShape(Capsule())
-                            .glassCapsule()
+                        Image(systemName: "photo")
+                            .font(.body.weight(.semibold))
+                            .frame(width: 40, height: 40)
+                            .contentShape(Circle())
+                            .glassCircle()
                     }
                     .buttonStyle(PressStyle(circle: false))
+                    .accessibilityLabel("Jaquette")
                     if library.gameCoverName(game) != nil {
                         Button {
                             library.resetGameCover(game)
@@ -1056,6 +1057,27 @@ struct StickerPicker: View {
     @Environment(Library.self) private var library
     @Environment(AppSettings.self) private var settings
     @Environment(\.dismiss) private var dismiss
+    @State private var placing = false
+
+    /// Les stickers se placent sur la pochette d'un CD ou la jaquette d'un jeu (pas sur les cassettes).
+    private var canPlace: Bool {
+        library.format(of: album.id, default: settings.shelfFormat) != .cassette
+    }
+
+    private var placerBackground: UIImage? {
+        if let game = library.gameName(album.id) {
+            return library.gameCoverImage(game)
+                ?? AlbumNodeBuilder.generatedGameCover(title: game, season: GameCatalog.season(game),
+                                                       count: album.tracks.count, platform: library.platform(of: game))
+        }
+        return library.image(for: album.first)
+    }
+
+    private var placerAspect: CGFloat {
+        guard library.gameName(album.id) != nil else { return 1 }
+        let s = Physical.size(.game)
+        return (CGFloat(s.x) - 0.06) / (CGFloat(s.y) - 0.06)
+    }
 
     var body: some View {
         let chosen = library.stickers(for: album.id)
@@ -1083,6 +1105,16 @@ struct StickerPicker: View {
                             }
                         }
                     }
+                    if canPlace {
+                        Button {
+                            placing = true
+                        } label: {
+                            Label("Placer les stickers sur la jaquette", systemImage: "hand.draw")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .buttonBorderShape(.capsule)
+                    }
                     MyStickersSection(album: album, light: -0.3)
                         .padding(.top, 6)
                     if !library.stickerKeys(for: album.id).isEmpty {
@@ -1097,6 +1129,10 @@ struct StickerPicker: View {
                     }
                 }
                 .padding(20)
+            }
+            .sheet(isPresented: $placing) {
+                StickerPlacer(album: album, badges: library.badges(for: album),
+                              background: placerBackground, aspect: placerAspect)
             }
             .navigationTitle("Stickers")
             .navigationBarTitleDisplayMode(.inline)
@@ -1334,5 +1370,40 @@ extension View {
                 .overlay { mask().blendMode(.destinationOut) }
                 .compositingGroup()
         }
+    }
+}
+
+
+/// Console du boîtier de jeu : PS3, PS4 ou PS5.
+private struct PlatformSwitch: View {
+    let platform: GamePlatform
+    var onChange: (GamePlatform) -> Void
+    @Namespace private var pill
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(GamePlatform.allCases) { p in
+                let on = p == platform
+                Button {
+                    if !on { onChange(p) }
+                } label: {
+                    Text(p.label)
+                        .font(.footnote.weight(.bold))
+                        .foregroundStyle(on ? Color.black : Color.white.opacity(0.85))
+                        .padding(.horizontal, 10)
+                        .frame(height: 32)
+                        .background {
+                            if on { Capsule().fill(.white).matchedGeometryEffect(id: "pill", in: pill) }
+                        }
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(on ? AccessibilityTraits.isSelected : AccessibilityTraits())
+            }
+        }
+        .padding(4)
+        .glassCapsule()
+        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: platform)
+        .sensoryFeedback(.selection, trigger: platform)
     }
 }

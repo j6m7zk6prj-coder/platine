@@ -21,6 +21,10 @@ final class Library {
     private(set) var gameCovers: [String: String] = [:]
     /// Stickers faits à partir de tes images.
     private(set) var customStickers: [CustomSticker] = []
+    /// Où chaque sticker est collé : album → sticker → position.
+    private(set) var stickerPlacements: [String: [String: StickerPlacement]] = [:]
+    /// Console choisie pour chaque jeu (PS3, PS4 ou PS5).
+    private(set) var gamePlatforms: [String: String] = [:]
     /// Ajoute aussi les stickers gagnés automatiquement (or, platine, favori, nouveau).
     var autoStickers: Bool = UserDefaults.standard.bool(forKey: "autoStickers") {
         didSet { UserDefaults.standard.set(autoStickers, forKey: "autoStickers") }
@@ -46,6 +50,8 @@ final class Library {
     static let stickersURL = base.appendingPathComponent("stickers.json")
     static let gamesURL = base.appendingPathComponent("games.json")
     static let customStickersURL = base.appendingPathComponent("customstickers.json")
+    static let placementsURL = base.appendingPathComponent("placements.json")
+    static let platformsURL = base.appendingPathComponent("platforms.json")
     /// Dossier visible dans Fichiers et dans iTunes sur PC : tout ce qu'on y dépose est importé.
     static let inbox = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
 
@@ -639,6 +645,52 @@ final class Library {
         saveStickers()
     }
 
+    // MARK: Position des stickers
+
+    /// Clés des stickers affichés sur un album, dans l'ordre (gagnés/choisis puis les tiens).
+    func stickerOrder(for album: AlbumInfo, badges: [AlbumBadge]) -> [String] {
+        badges.map(\.rawValue) + customStickers(for: album.id).map(\.key)
+    }
+
+    func placement(_ key: String, index: Int, albumID: String) -> StickerPlacement {
+        stickerPlacements[albumID]?[key] ?? .standard(index)
+    }
+
+    func setPlacements(_ map: [String: StickerPlacement], for albumID: String) {
+        stickerPlacements[albumID] = map.isEmpty ? nil : map
+        savePlacements()
+        artworkRevision += 1
+    }
+
+    /// Résumé des positions (sert à savoir quand redessiner la jaquette en 3D).
+    func placementSignature(_ albumID: String) -> String {
+        guard let map = stickerPlacements[albumID] else { return "" }
+        var parts: [String] = []
+        for key in map.keys.sorted() {
+            let value: String = map[key]?.signature ?? ""
+            parts.append(key + "=" + value)
+        }
+        return parts.joined(separator: ";")
+    }
+
+    private func savePlacements() {
+        guard let data = try? JSONEncoder().encode(stickerPlacements) else { return }
+        try? data.write(to: Self.placementsURL, options: .atomic)
+    }
+
+    // MARK: Console du boîtier de jeu
+
+    func platform(of game: String) -> GamePlatform {
+        GamePlatform(rawValue: gamePlatforms[game] ?? "") ?? .ps5
+    }
+
+    func setPlatform(_ platform: GamePlatform, for game: String) {
+        gamePlatforms[game] = platform.rawValue
+        artworkRevision += 1
+        guard let data = try? JSONEncoder().encode(gamePlatforms) else { return }
+        try? data.write(to: Self.platformsURL, options: .atomic)
+    }
+
     private func saveCustomStickers() {
         guard let data = try? JSONEncoder().encode(customStickers) else { return }
         try? data.write(to: Self.customStickersURL, options: .atomic)
@@ -947,6 +999,14 @@ final class Library {
         if let data = try? Data(contentsOf: Self.formatsURL),
            let map = try? JSONDecoder().decode([String: String].self, from: data) {
             albumFormats = map
+        }
+        if let data = try? Data(contentsOf: Self.placementsURL),
+           let map = try? JSONDecoder().decode([String: [String: StickerPlacement]].self, from: data) {
+            stickerPlacements = map
+        }
+        if let data = try? Data(contentsOf: Self.platformsURL),
+           let map = try? JSONDecoder().decode([String: String].self, from: data) {
+            gamePlatforms = map
         }
         if let data = try? Data(contentsOf: Self.customStickersURL),
            let list = try? JSONDecoder().decode([CustomSticker].self, from: data) {
