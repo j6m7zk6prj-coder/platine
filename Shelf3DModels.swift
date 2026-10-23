@@ -128,7 +128,7 @@ struct AlbumNodeBuilder {
         let smoke = Self.plastic(UIColor(white: 0.1, alpha: 1), roughness: 0.45, coat: 0.2)
         let black = Self.plastic(UIColor(white: 0.03, alpha: 1), roughness: 0.5, coat: 0.1)
         // Les tranches gauche et droite portent le dos imprimé (titre et artiste), comme un vrai boîtier.
-        let spineMat = Self.printed(spine)
+        let spineMat = Self.printed(spine ?? UIColor.darkGray)
         tray.materials = [black, spineMat, Self.printed(backImage ?? UIColor.darkGray), spineMat, smoke, smoke]
         let trayNode = SCNNode(geometry: tray)
         trayNode.position.z = -0.007
@@ -214,8 +214,9 @@ struct AlbumNodeBuilder {
         front.writesToDepthBuffer = true
 
         // Face gravée : miroir argenté, reflet en « nœud papillon » et arcs-en-ciel qui tournent avec l'angle.
+        let matrix = Self.matrixCode(album)
         let dataSide = cached("discback|" + album.id + "|" + album.title) {
-            Self.discDataSide(matrix: "PLATINE  ·  \(album.artist.uppercased()) — \(album.title.uppercased())  ·  PL-\(album.id.unicodeScalars.reduce(0) { ($0 &* 31 &+ Int($1.value)) & 0xffff } % 9000 + 1000)-2  ·  01  ")
+            Self.discDataSide(matrix: matrix)
         }
         let back = SCNMaterial()
         back.lightingModel = .constant
@@ -366,6 +367,18 @@ struct AlbumNodeBuilder {
             ring(0.265, 0.125, UIColor(white: 0.92, alpha: 0.16))
             ring(0.135, 0.125, UIColor(white: 1, alpha: 0.35))
         }
+    }
+
+    /// Numéro de série gravé autour du centre (toujours le même pour un album).
+    static func matrixCode(_ album: AlbumInfo) -> String {
+        var hash = 0
+        for scalar in album.id.unicodeScalars {
+            hash = (hash &* 31 &+ Int(scalar.value)) & 0xffff
+        }
+        let serial: Int = hash % 9000 + 1000
+        let artist: String = album.artist.uppercased()
+        let title: String = album.title.uppercased()
+        return "PLATINE  ·  " + artist + " — " + title + "  ·  PL-" + String(serial) + "-2  ·  01  "
     }
 
     /// Face gravée (le dessous d'un vrai CD) : miroir de l'anneau central, zone de données,
