@@ -52,6 +52,11 @@ struct RootView: View {
         }
         .task {
             if settings.autoImport { await library.scanInbox() }
+            // La Collection 3D est préparée en douce : elle s'ouvrira instantanément.
+            try? await Task.sleep(for: .seconds(1.5))
+            let playing = player.currentID.flatMap { library.track($0) }?.albumKey
+            let start = library.albums.firstIndex { $0.id == playing } ?? 0
+            await ShelfSceneController.warmUp(library: library, settings: settings, start: start)
         }
         .onChange(of: phase) { _, newPhase in
             if newPhase == .active, settings.autoImport { Task { await library.scanInbox() } }

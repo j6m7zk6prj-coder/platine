@@ -34,8 +34,8 @@ struct ShelfView: View {
             if albums.isEmpty {
                 ContentUnavailableView("Aucun album", systemImage: "opticaldisc",
                                        description: Text("Importe de la musique pour remplir ta collection."))
-            } else if let startIndex {
-                ShelfSceneView(albums: albums, startIndex: startIndex, motion: motion, paused: isOpen,
+            } else {
+                ShelfSceneView(albums: albums, startIndex: startIndex ?? initialIndex(albums), motion: motion, paused: isOpen,
                                onFocus: { focusedIndex = $0 },
                                onOpen: { i in open(albums[i]) })
                     .ignoresSafeArea()
@@ -92,14 +92,19 @@ struct ShelfView: View {
         .onAppear {
             motion.start()
             if startIndex == nil {
-                let playingAlbum = player.currentID.flatMap { library.track($0) }?.albumKey
-                let i = albums.firstIndex { $0.id == playingAlbum } ?? 0
+                let i = initialIndex(albums)
                 focusedIndex = i
                 startIndex = i
             }
         }
         .onDisappear { motion.stop() }
         .statusBarHidden()
+    }
+
+    /// La Collection s'ouvre sur l'album en cours d'écoute.
+    private func initialIndex(_ albums: [AlbumInfo]) -> Int {
+        let playingAlbum = player.currentID.flatMap { library.track($0) }?.albumKey
+        return albums.firstIndex { $0.id == playingAlbum } ?? 0
     }
 
     private func isPlaying(_ album: AlbumInfo) -> Bool {
@@ -195,7 +200,7 @@ struct ShelfSceneView: UIViewRepresentable {
     @Environment(AppSettings.self) private var settings
 
     func makeCoordinator() -> ShelfSceneController {
-        ShelfSceneController(builder: AlbumNodeBuilder(library: library, settings: settings), start: startIndex)
+        ShelfSceneController.obtain(builder: AlbumNodeBuilder(library: library, settings: settings), start: startIndex)
     }
 
     func makeUIView(context: Context) -> SCNView {
@@ -219,11 +224,51 @@ struct ShelfSceneView: UIViewRepresentable {
 
     static func dismantleUIView(_ uiView: SCNView, coordinator: ShelfSceneController) {
         coordinator.stop()
+        coordinator.onFocus = { _ in }
+        coordinator.onOpen = { _ in }
     }
 }
 
 @MainActor
-final class ShelfSceneController: NSObject {
+final class ShelfSceneController: NSObject, UIGestureRecognizerDelegate {
+    /// Un seul carrousel pour toute l'app, gardé en mémoire : rouvrir la Collection est instantané.
+    static var shared: ShelfSceneController?
+
+    static func obtain(builder: AlbumNodeBuilder, start: Int) -> ShelfSceneController {
+        if let s = shared {
+            s.builder = builder
+            s.jump(to: start)
+            return s
+        }
+        let s = ShelfSceneController(builder: builder, start: start)
+        shared = s
+        return s
+    }
+
+    /// Prépare la Collection en arrière-plan, peu après le lancement de l'app.
+    static func warmUp(library: Library, settings: AppSettings, start: Int) async {
+        let albums = library.albums
+        guard !albums.isEmpty else { return }
+        let builder = AlbumNodeBuilder(library: library, settings: settings)
+        let c = obtain(builder: builder, start: start)
+        c.update(albums: albums, library: library, settings: settings)
+        let order = albums.indices.sorted { abs($0 - start) < abs($1 - start) }
+        for i in order.prefix(9) {
+            _ = c.node(at: i, force: true)
+            // Une pochette à la fois, pour ne jamais ralentir l'app.
+            try? await Task.sleep(for: .milliseconds(40))
+        }
+        c.layout()
+        c.view.prepare([c.scene], completionHandler: nil)
+        // La vue « en main » aussi.
+        let inspector = InspectorSceneController.obtain()
+        inspector.show(album: albums[start.clamped(0, albums.count - 1)],
+                       format: library.format(of: albums[start.clamped(0, albums.count - 1)].id, default: settings.shelfFormat),
+                       badges: library.badges(for: albums[start.clamped(0, albums.count - 1)]),
+                       builder: builder, animated: false)
+        inspector.view.prepare([inspector.scene], completionHandler: nil)
+    }
+
     let view = SCNView()
     let scene = SCNScene()
     var builder: AlbumNodeBuilder
@@ -245,6 +290,14 @@ final class ShelfSceneController: NSObject {
     private let haptic = UISelectionFeedbackGenerator()
     private let cameraNode = SCNNode()
     private var lastSpotAlbum = ""
+    private var pausedState = false
+
+    func jump(to i: Int) {
+        pos = Double(i)
+        target = Double(i)
+        vel = 0
+        lastFocus = -1
+    }
 
     init(builder: AlbumNodeBuilder, start: Int) {
         self.builder = builder
@@ -267,8 +320,25 @@ final class ShelfSceneController: NSObject {
 
         let pan = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
         let tap = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
-        view.addGestureRecognizer(pan)
-        view.addGestureRecognizer(tap)
+        for g in [pan, tap] as [UIGestureRecognizer] {
+            g.delegate = self
+            g.cancelsTouchesInView = false
+            view.addGestureRecognizer(g)
+        }
+        setPaused(true)
+    }
+
+    /// Les gestes 3D ne prennent jamais le doigt posé sur un bouton (haut et bas de l'écran).
+    nonisolated func gestureRecognizer(_ g: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        MainActor.assumeIsolated {
+            let p = touch.location(in: view)
+            let h = view.bounds.height
+            if p.y < 120 || p.y > h - 200 { return false }
+            if g is UITapGestureRecognizer {
+                return !view.hitTest(p, options: nil).isEmpty
+            }
+            return true
+        }
     }
 
     func start() {
@@ -276,17 +346,21 @@ final class ShelfSceneController: NSObject {
         let l = CADisplayLink(target: self, selector: #selector(tick))
         l.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 120, preferred: 120)
         l.add(to: .main, forMode: .common)
+        l.isPaused = pausedState
         link = l
     }
 
     func stop() {
         link?.invalidate()
         link = nil
+        setPaused(true)
     }
 
-    /// Caché derrière l'album en main : le carrousel arrête de se redessiner.
+    /// Caché (album en main, ou Collection fermée) : le carrousel ne se redessine plus et ne capte plus les touchers.
     func setPaused(_ paused: Bool) {
-        guard paused != (link?.isPaused ?? false) else { return }
+        view.isUserInteractionEnabled = !paused
+        guard paused != pausedState else { return }
+        pausedState = paused
         link?.isPaused = paused
         view.rendersContinuously = !paused
         view.isPlaying = !paused
@@ -318,7 +392,7 @@ final class ShelfSceneController: NSObject {
     private var builtThisFrame = false
 
     /// Le modèle d'un album s'il existe déjà ; sinon il est fabriqué (au plus un par image).
-    private func node(at i: Int, force: Bool = false) -> AlbumNode? {
+    fileprivate func node(at i: Int, force: Bool = false) -> AlbumNode? {
         let album = albums[i]
         if let n = nodes[album.id] { return n }
         guard force || !builtThisFrame else { return nil }
@@ -357,7 +431,7 @@ final class ShelfSceneController: NSObject {
         layout()
     }
 
-    private func layout() {
+    fileprivate func layout() {
         guard !albums.isEmpty else { return }
         let tiltX = motion?.x ?? 0
         let tiltY = motion?.y ?? 0
@@ -543,7 +617,7 @@ struct InspectorSceneView: UIViewRepresentable {
     @Environment(Library.self) private var library
     @Environment(AppSettings.self) private var settings
 
-    func makeCoordinator() -> InspectorSceneController { InspectorSceneController() }
+    func makeCoordinator() -> InspectorSceneController { InspectorSceneController.obtain() }
 
     func makeUIView(context: Context) -> SCNView {
         let c = context.coordinator
@@ -573,12 +647,22 @@ struct InspectorSceneView: UIViewRepresentable {
     }
 
     static func dismantleUIView(_ uiView: SCNView, coordinator: InspectorSceneController) {
+        coordinator.setActive(false)
         coordinator.stop()
     }
 }
 
 @MainActor
-final class InspectorSceneController: NSObject {
+final class InspectorSceneController: NSObject, UIGestureRecognizerDelegate {
+    static var shared: InspectorSceneController?
+
+    static func obtain() -> InspectorSceneController {
+        if let s = shared { return s }
+        let s = InspectorSceneController()
+        shared = s
+        return s
+    }
+
     let view = SCNView()
     let scene = SCNScene()
     var motion: MotionTilt?
@@ -632,10 +716,25 @@ final class InspectorSceneController: NSObject {
         double.numberOfTapsRequired = 2
         let single = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
         single.require(toFail: double)
-        view.addGestureRecognizer(pan)
-        view.addGestureRecognizer(pinch)
-        view.addGestureRecognizer(double)
-        view.addGestureRecognizer(single)
+        for g in [pan, pinch, double, single] as [UIGestureRecognizer] {
+            g.delegate = self
+            g.cancelsTouchesInView = false
+            view.addGestureRecognizer(g)
+        }
+        view.isUserInteractionEnabled = false
+    }
+
+    /// Les boutons (Dos, Sortir le CD, Lire…) restent toujours prioritaires sur les gestes 3D.
+    nonisolated func gestureRecognizer(_ g: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        MainActor.assumeIsolated {
+            let p = touch.location(in: view)
+            let h = view.bounds.height
+            if p.y < 110 || p.y > h - 230 { return false }
+            if g is UITapGestureRecognizer {
+                return !view.hitTest(p, options: nil).isEmpty
+            }
+            return true
+        }
     }
 
     func start() {
@@ -654,6 +753,7 @@ final class InspectorSceneController: NSObject {
     /// Allume ou met en veille la vue « en main ». En veille elle ne consomme rien,
     /// mais reste prête : l'ouvrir est instantané.
     func setActive(_ on: Bool) {
+        view.isUserInteractionEnabled = on
         guard on != active else { return }
         active = on
         if on {

@@ -165,26 +165,227 @@ struct AlbumNodeBuilder {
                          discPivot: extras ? makeDisc(album) : nil, reels: [])
     }
 
-    /// Le CD lui-même, rangé (invisible) dans le boîtier.
+    /// Le CD lui-même, rangé (invisible) dans le boîtier : un vrai disque de 120 mm,
+    /// troué au centre, avec la face imprimée d'un côté et la face miroir irisée de l'autre.
     func makeDisc(_ album: AlbumInfo) -> SCNNode {
-        let disc = SCNCylinder(radius: 0.58, height: 0.012)
-        let silver = Self.plastic(UIColor(white: 0.82, alpha: 1), roughness: 0.25, coat: 0.3)
-        silver.metalness.contents = 0.8
-        let image = cached("disc|" + album.id + "|" + album.title) {
-            render(CDDisc(album: album, spinning: false), CGSize(width: 512, height: 512), scale: 1.2)
+        let label = cached("disclabel|" + album.id + "|" + (library.artworkURL(album.first)?.lastPathComponent ?? "-")) {
+            Self.discLabel(library.image(for: album.first))
         }
-        let print = Self.plastic(image ?? UIColor.lightGray, roughness: 0.3, coat: 0.3)
-        print.metalness.contents = 0.25
-        // Ordre des faces d'un cylindre : côté, dessus, dessous.
-        disc.materials = [silver, print, silver]
-        let discNode = SCNNode(geometry: disc)
-        discNode.eulerAngles.x = .pi / 2
+        // Face imprimée : couleurs fidèles, avec un léger vernis.
+        let front = SCNMaterial()
+        front.lightingModel = .constant
+        front.diffuse.contents = label
+        front.multiply.contents = UIColor(white: 0.95, alpha: 1)
+        front.blendMode = .alpha
+        front.writesToDepthBuffer = true
+
+        // Face gravée : miroir argenté qui se teinte d'arc-en-ciel selon l'angle.
+        let back = SCNMaterial()
+        back.lightingModel = .physicallyBased
+        back.diffuse.contents = Self.discDataSide
+        back.metalness.contents = 1.0
+        back.roughness.contents = 0.16
+        back.blendMode = .alpha
+        back.shaderModifiers = [.fragment: Self.diffraction]
+
+        let rim = SCNMaterial()
+        rim.lightingModel = .physicallyBased
+        rim.diffuse.contents = UIColor(white: 0.8, alpha: 0.55)
+        rim.roughness.contents = 0.2
+        rim.writesToDepthBuffer = false
+
+        let geometry = Self.discGeometry(outer: 0.6, inner: 0.075, thickness: 0.012)
+        geometry.materials = [front, back, rim, rim]
+        let discNode = SCNNode(geometry: geometry)
+        let gloss = SCNNode(geometry: Self.discGeometry(outer: 0.598, inner: 0.165, thickness: 0.0125, faces: .front))
+        gloss.geometry?.materials = [Self.glassy(strength: 0.4)]
+        gloss.renderingOrder = 11
+        discNode.addChildNode(gloss)
+
         let pivot = SCNNode()
         pivot.addChildNode(discNode)
         pivot.position = SCNVector3(0.05, 0, 0)
         pivot.opacity = 0
         return pivot
     }
+
+    enum DiscFaces { case all, front }
+
+    /// Anneau plat (vrai trou central) : face avant, face arrière, tranche extérieure et intérieure.
+    static func discGeometry(outer r1: Float, inner r0: Float, thickness: Float, faces: DiscFaces = .all, segments n: Int = 160) -> SCNGeometry {
+        var positions: [SCNVector3] = []
+        var normals: [SCNVector3] = []
+        var uvs: [CGPoint] = []
+        var elements: [SCNGeometryElement] = []
+        let h = thickness / 2
+
+        func face(z: Float, front: Bool) {
+            let base = UInt32(positions.count)
+            for i in 0...n {
+                let a = Float(i) / Float(n) * 2 * .pi
+                for r in [r0, r1] {
+                    let x = cos(a) * r, y = sin(a) * r
+                    positions.append(SCNVector3(x, y, z))
+                    normals.append(SCNVector3(0, 0, front ? 1 : -1))
+                    // Le dos est vu en miroir : on retourne l'image pour qu'elle se lise à l'endroit.
+                    let u = front ? 0.5 + x / (2 * r1) : 0.5 - x / (2 * r1)
+                    uvs.append(CGPoint(x: CGFloat(u), y: CGFloat(0.5 - y / (2 * r1))))
+                }
+            }
+            var idx: [UInt32] = []
+            for i in 0..<UInt32(n) {
+                let a = base + i * 2, b = a + 1, c = a + 2, d = a + 3
+                idx += front ? [a, b, d, a, d, c] : [a, d, b, a, c, d]
+            }
+            elements.append(SCNGeometryElement(indices: idx, primitiveType: .triangles))
+        }
+
+        func wall(radius r: Float, outward: Bool) {
+            let base = UInt32(positions.count)
+            for i in 0...n {
+                let a = Float(i) / Float(n) * 2 * .pi
+                let c = cos(a), s = sin(a)
+                for z in [-h, h] {
+                    positions.append(SCNVector3(c * r, s * r, z))
+                    normals.append(outward ? SCNVector3(c, s, 0) : SCNVector3(-c, -s, 0))
+                    uvs.append(CGPoint(x: CGFloat(i) / CGFloat(n), y: z > 0 ? 0 : 1))
+                }
+            }
+            var idx: [UInt32] = []
+            for i in 0..<UInt32(n) {
+                let v0 = base + i * 2, v1 = v0 + 1, v2 = v0 + 2, v3 = v0 + 3
+                idx += outward ? [v0, v2, v3, v0, v3, v1] : [v0, v3, v2, v0, v1, v3]
+            }
+            elements.append(SCNGeometryElement(indices: idx, primitiveType: .triangles))
+        }
+
+        face(z: h, front: true)
+        if faces == .all {
+            face(z: -h, front: false)
+            wall(radius: r1, outward: true)
+            wall(radius: r0, outward: false)
+        }
+        let sources = [SCNGeometrySource(vertices: positions),
+                       SCNGeometrySource(normals: normals),
+                       SCNGeometrySource(textureCoordinates: uvs)]
+        return SCNGeometry(sources: sources, elements: elements)
+    }
+
+    /// Face imprimée : la pochette sur la zone d'impression, puis l'anneau miroir,
+    /// l'anneau d'empilage et le moyeu en plastique transparent, comme un vrai CD.
+    static func discLabel(_ cover: UIImage?) -> UIImage {
+        let size: CGFloat = 1024
+        let R = size / 2
+        let format = UIGraphicsImageRendererFormat()
+        format.opaque = false
+        format.scale = 1
+        return UIGraphicsImageRenderer(size: CGSize(width: size, height: size), format: format).image { ctx in
+            let c = ctx.cgContext
+            let center = CGPoint(x: R, y: R)
+            func circle(_ f: CGFloat) -> CGRect {
+                CGRect(x: R - R * f, y: R - R * f, width: 2 * R * f, height: 2 * R * f)
+            }
+            func ring(_ outer: CGFloat, _ inner: CGFloat, _ color: UIColor) {
+                c.saveGState()
+                let path = UIBezierPath(ovalIn: circle(outer))
+                path.append(UIBezierPath(ovalIn: circle(inner)).reversing())
+                c.addPath(path.cgPath)
+                c.setFillColor(color.cgColor)
+                c.fillPath()
+                c.restoreGState()
+            }
+
+            // Bord transparent du disque.
+            ring(1.0, 0.985, UIColor(white: 0.85, alpha: 0.35))
+
+            // Zone imprimée (de 38 à 118 mm).
+            c.saveGState()
+            let printPath = UIBezierPath(ovalIn: circle(0.985))
+            printPath.append(UIBezierPath(ovalIn: circle(0.36)).reversing())
+            c.addPath(printPath.cgPath)
+            c.clip()
+            if let cg = cover?.cgImage {
+                let iw = CGFloat(cg.width), ih = CGFloat(cg.height)
+                let scale = max(size / iw, size / ih)
+                let w = iw * scale, h = ih * scale
+                // UIKit dessine à l'endroit (pas besoin de retourner l'image ici).
+                cover?.draw(in: CGRect(x: (size - w) / 2, y: (size - h) / 2, width: w, height: h))
+            } else {
+                c.setFillColor(UIColor(white: 0.9, alpha: 1).cgColor)
+                c.fill(CGRect(x: 0, y: 0, width: size, height: size))
+            }
+            // Léger assombrissement vers le centre, comme une impression sérigraphiée.
+            let colors = [UIColor(white: 0, alpha: 0.22).cgColor, UIColor(white: 0, alpha: 0).cgColor] as CFArray
+            if let grad = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors, locations: [0, 1]) {
+                c.drawRadialGradient(grad, startCenter: center, startRadius: R * 0.36, endCenter: center, endRadius: R * 0.55, options: [])
+            }
+            c.restoreGState()
+            ring(0.985, 0.978, UIColor(white: 0, alpha: 0.25))
+
+            // Anneau miroir (sans impression) puis anneau d'empilage en relief.
+            ring(0.36, 0.30, UIColor(white: 0.78, alpha: 1))
+            ring(0.355, 0.35, UIColor(white: 1, alpha: 0.6))
+            ring(0.30, 0.285, UIColor(white: 0.55, alpha: 0.9))
+            ring(0.285, 0.265, UIColor(white: 0.8, alpha: 0.75))
+            // Moyeu en plastique transparent jusqu'au trou.
+            ring(0.265, 0.125, UIColor(white: 0.92, alpha: 0.16))
+            ring(0.135, 0.125, UIColor(white: 1, alpha: 0.35))
+        }
+    }
+
+    /// Face gravée (le dessous d'un vrai CD) : argentée, zone de données un peu plus sombre.
+    static let discDataSide: UIImage = {
+        let size: CGFloat = 1024
+        let R = size / 2
+        let format = UIGraphicsImageRendererFormat()
+        format.opaque = false
+        format.scale = 1
+        return UIGraphicsImageRenderer(size: CGSize(width: size, height: size), format: format).image { ctx in
+            let c = ctx.cgContext
+            func circle(_ f: CGFloat) -> CGRect {
+                CGRect(x: R - R * f, y: R - R * f, width: 2 * R * f, height: 2 * R * f)
+            }
+            func ring(_ outer: CGFloat, _ inner: CGFloat, _ color: UIColor) {
+                let path = UIBezierPath(ovalIn: circle(outer))
+                path.append(UIBezierPath(ovalIn: circle(inner)).reversing())
+                c.addPath(path.cgPath)
+                c.setFillColor(color.cgColor)
+                c.fillPath()
+            }
+            ring(1.0, 0.985, UIColor(white: 0.85, alpha: 0.35))
+            // Partie non gravée, très brillante.
+            ring(0.985, 0.36, UIColor(white: 0.93, alpha: 1))
+            // Zone gravée (les données), plus sombre et légèrement violacée.
+            ring(0.86, 0.37, UIColor(red: 0.74, green: 0.72, blue: 0.8, alpha: 1))
+            // Fines pistes concentriques.
+            c.setStrokeColor(UIColor(white: 1, alpha: 0.05).cgColor)
+            c.setLineWidth(1)
+            var f: CGFloat = 0.38
+            while f < 0.86 {
+                c.strokeEllipse(in: circle(f))
+                f += 0.012
+            }
+            ring(0.36, 0.30, UIColor(white: 0.85, alpha: 1))
+            ring(0.30, 0.265, UIColor(white: 0.6, alpha: 0.9))
+            ring(0.265, 0.125, UIColor(white: 0.92, alpha: 0.16))
+        }
+    }()
+
+    /// Arc-en-ciel de diffraction : il tourne autour du centre et glisse selon l'angle de vue.
+    static let diffraction = """
+    #pragma body
+    float2 p = _surface.diffuseTexcoord - float2(0.5, 0.5);
+    float r = length(p) * 2.0;
+    float a = atan2(p.y, p.x);
+    float3 v = normalize(_surface.view);
+    float3 n = normalize(_surface.normal);
+    float facing = saturate(dot(v, n));
+    float band = a * 2.0 / 6.28318 + facing * 1.4 + r * 0.6;
+    float3 rainbow = 0.5 + 0.5 * cos(6.28318 * (band + float3(0.0, 0.33, 0.67)));
+    float lobes = pow(abs(cos(a + facing * 3.0)), 3.0);
+    float zone = smoothstep(0.35, 0.4, r) * (1.0 - smoothstep(0.95, 0.985, r));
+    _output.color.rgb += rainbow * zone * (0.08 + 0.32 * lobes);
+    """
 
     // MARK: Cassette : coque fumée arrondie, vis, fenêtre vitrée et bobines.
 

@@ -114,7 +114,7 @@ struct SettingsView: View {
             }
 
             Section {
-                LabeledContent("Version", value: "2.5")
+                LabeledContent("Version", value: "2.6")
             } footer: {
                 Text("Platine lit ta propre musique. Seule la recherche de paroles contacte internet (LRCLIB), et uniquement quand tu ouvres des paroles absentes ou lances la recherche.")
             }
