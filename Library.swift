@@ -19,6 +19,8 @@ final class Library {
     private(set) var albumStickers: [String: [String]] = [:]
     /// Jaquette choisie pour chaque jeu : nom du jeu → fichier image.
     private(set) var gameCovers: [String: String] = [:]
+    /// Stickers faits à partir de tes images.
+    private(set) var customStickers: [CustomSticker] = []
     /// Ajoute aussi les stickers gagnés automatiquement (or, platine, favori, nouveau).
     var autoStickers: Bool = UserDefaults.standard.bool(forKey: "autoStickers") {
         didSet { UserDefaults.standard.set(autoStickers, forKey: "autoStickers") }
@@ -43,6 +45,7 @@ final class Library {
     static let formatsURL = base.appendingPathComponent("formats.json")
     static let stickersURL = base.appendingPathComponent("stickers.json")
     static let gamesURL = base.appendingPathComponent("games.json")
+    static let customStickersURL = base.appendingPathComponent("customstickers.json")
     /// Dossier visible dans Fichiers et dans iTunes sur PC : tout ce qu'on y dépose est importé.
     static let inbox = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
 
@@ -580,6 +583,67 @@ final class Library {
         saveStickers()
     }
 
+    /// Tes stickers posés sur cet album.
+    func customStickers(for albumID: String) -> [CustomSticker] {
+        let keys = albumStickers[albumID] ?? []
+        return keys.compactMap { key in customStickers.first { $0.key == key } }
+    }
+
+    /// Liste brute (sert à savoir quand reconstruire le modèle 3D).
+    func stickerKeys(for albumID: String) -> [String] { albumStickers[albumID] ?? [] }
+
+    func toggleCustomSticker(_ sticker: CustomSticker, for albumID: String) {
+        var list = albumStickers[albumID] ?? []
+        if let i = list.firstIndex(of: sticker.key) {
+            list.remove(at: i)
+        } else {
+            if list.count >= 3 { list.removeFirst() }
+            list.append(sticker.key)
+        }
+        albumStickers[albumID] = list.isEmpty ? nil : list
+        saveStickers()
+    }
+
+    func customStickerImage(_ sticker: CustomSticker) -> UIImage? {
+        let key = sticker.file as NSString
+        if let cached = images.object(forKey: key) { return cached }
+        guard let img = UIImage(contentsOfFile: Self.artDir.appendingPathComponent(sticker.file).path) else { return nil }
+        images.setObject(img, forKey: key)
+        return img
+    }
+
+    /// Crée un sticker à partir d'une image (déjà recadrée).
+    @discardableResult
+    func addCustomSticker(_ image: UIImage, finish: StickerFinish, round: Bool) -> CustomSticker? {
+        let side: CGFloat = 600
+        let resized = UIGraphicsImageRenderer(size: CGSize(width: side, height: side)).image { _ in
+            image.draw(in: CGRect(x: 0, y: 0, width: side, height: side))
+        }
+        guard let data = resized.pngData() else { return nil }
+        let name = "sticker-" + UUID().uuidString + ".png"
+        do { try data.write(to: Self.artDir.appendingPathComponent(name), options: .atomic) } catch { return nil }
+        let sticker = CustomSticker(file: name, finish: finish, round: round)
+        customStickers.append(sticker)
+        saveCustomStickers()
+        return sticker
+    }
+
+    func deleteCustomSticker(_ sticker: CustomSticker) {
+        customStickers.removeAll { $0.id == sticker.id }
+        for (album, list) in albumStickers {
+            let kept = list.filter { $0 != sticker.key }
+            albumStickers[album] = kept.isEmpty ? nil : kept
+        }
+        try? FileManager.default.removeItem(at: Self.artDir.appendingPathComponent(sticker.file))
+        saveCustomStickers()
+        saveStickers()
+    }
+
+    private func saveCustomStickers() {
+        guard let data = try? JSONEncoder().encode(customStickers) else { return }
+        try? data.write(to: Self.customStickersURL, options: .atomic)
+    }
+
     func clearStickers(for albumID: String) {
         albumStickers[albumID] = nil
         saveStickers()
@@ -807,6 +871,8 @@ final class Library {
         saveStickers()
         gameCovers = [:]
         saveGames()
+        customStickers = []
+        saveCustomStickers()
         images.removeAllObjects()
         palettes = [:]
         save()
@@ -881,6 +947,10 @@ final class Library {
         if let data = try? Data(contentsOf: Self.formatsURL),
            let map = try? JSONDecoder().decode([String: String].self, from: data) {
             albumFormats = map
+        }
+        if let data = try? Data(contentsOf: Self.customStickersURL),
+           let list = try? JSONDecoder().decode([CustomSticker].self, from: data) {
+            customStickers = list
         }
         if let data = try? Data(contentsOf: Self.gamesURL),
            let map = try? JSONDecoder().decode([String: String].self, from: data) {

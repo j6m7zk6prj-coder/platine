@@ -208,9 +208,11 @@ struct ShelfView: View {
                     .font(.headline)
                     .foregroundStyle(.white.opacity(0.6))
                     .lineLimit(1)
-                if !badges.isEmpty {
+                let custom = library.customStickers(for: album.id)
+                if !badges.isEmpty || !custom.isEmpty {
                     HStack(spacing: 6) {
                         ForEach(badges) { HoloBadge(badge: $0, light: -0.3, scale: 1.25, showsText: true) }
+                        ForEach(custom) { CustomStickerBadge(sticker: $0, size: 30) }
                     }
                     .padding(.top, 6)
                 }
@@ -464,7 +466,7 @@ final class ShelfSceneController: NSObject, UIGestureRecognizerDelegate {
         builtThisFrame = true
         let n = builder.make(album, format: formats[i], badges: badges[i], extras: false)
         // Ombre douce posée au sol.
-        let w = CGFloat(n.size.x)
+        let w = CGFloat(n.shownSize.x)
         let shadow = SCNPlane(width: w * 1.25, height: w * 0.45)
         let m = SCNMaterial()
         m.lightingModel = .constant
@@ -473,7 +475,7 @@ final class ShelfSceneController: NSObject, UIGestureRecognizerDelegate {
         shadow.materials = [m]
         let shadowNode = SCNNode(geometry: shadow)
         shadowNode.eulerAngles.x = -.pi / 2
-        shadowNode.position = SCNVector3(0, -n.size.y / 2 + 0.004, 0.05)
+        shadowNode.position = SCNVector3(0, -n.shownSize.y / 2 + 0.004, 0.05)
         n.root.addChildNode(shadowNode)
         n.root.opacity = 0
         scene.rootNode.addChildNode(n.root)
@@ -525,7 +527,7 @@ final class ShelfSceneController: NSObject, UIGestureRecognizerDelegate {
             let z = -ease * 1.1 - max(0, ad - 1) * 0.25
             let rotY = -s * ease * 1.0
             let scale = 1 - ease * 0.05
-            let h = Double(n.size.y)
+            let h = Double(n.shownSize.y)
             n.root.position = SCNVector3(Float(x), Float(h / 2 + 0.001), Float(z))
             n.root.scale = SCNVector3(Float(scale), Float(scale), Float(scale))
             let isFocus = i == focus && ad < 0.5
@@ -1081,7 +1083,9 @@ struct StickerPicker: View {
                             }
                         }
                     }
-                    if !chosen.isEmpty {
+                    MyStickersSection(album: album, light: -0.3)
+                        .padding(.top, 6)
+                    if !library.stickerKeys(for: album.id).isEmpty {
                         Button(role: .destructive) {
                             withAnimation { library.clearStickers(for: album.id) }
                         } label: {

@@ -238,3 +238,32 @@ func formatDuration(_ seconds: Double) -> String {
 }
 
 func songCount(_ n: Int) -> String { n == 1 ? "1 morceau" : "\(n) morceaux" }
+
+
+/// Finition d'un sticker fait à partir de ta propre image.
+enum StickerFinish: String, Codable, CaseIterable, Identifiable {
+    case holo, silver, gold, rose, color
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .holo: return "Holographique"
+        case .silver: return "Argent"
+        case .gold: return "Or"
+        case .rose: return "Or rose"
+        case .color: return "Couleurs + reflet"
+        }
+    }
+}
+
+/// Sticker créé à partir d'une image (gardée dans le dossier des pochettes).
+struct CustomSticker: Codable, Identifiable, Hashable {
+    var id: UUID = UUID()
+    var file: String
+    var finish: StickerFinish
+    var name: String = "Mon sticker"
+    /// Forme découpée : rond ou carré arrondi.
+    var round: Bool = true
+
+    static let prefix = "custom:"
+    var key: String { Self.prefix + id.uuidString }
+}
