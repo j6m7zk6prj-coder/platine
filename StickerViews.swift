@@ -279,6 +279,8 @@ struct AnySticker: View {
     let key: String
     let size: CGFloat
     var light: Double = -0.3
+    /// Coin en bas à droite soulevé, comme un sticker qui se décolle.
+    var peeled = false
     @Environment(Library.self) private var library
 
     var body: some View {
@@ -290,6 +292,51 @@ struct AnySticker: View {
             }
         }
         .frame(width: size, height: size)
+        .mask {
+            if peeled {
+                PeelMask().fill(style: FillStyle(eoFill: false))
+            } else {
+                Rectangle()
+            }
+        }
+        .overlay(alignment: .bottomTrailing) {
+            if peeled {
+                // Le revers du coin : papier blanc, ombré.
+                PeelCurl()
+                    .fill(LinearGradient(colors: [Color(white: 0.98), Color(white: 0.78)],
+                                         startPoint: .topLeading, endPoint: .bottomTrailing))
+                    .frame(width: size * 0.3, height: size * 0.3)
+                    .shadow(color: .black.opacity(0.45), radius: size * 0.04, x: -size * 0.02, y: -size * 0.02)
+                    .offset(x: -size * 0.06, y: -size * 0.06)
+            }
+        }
+    }
+}
+
+/// Le sticker sans son coin en bas à droite.
+struct PeelMask: Shape {
+    func path(in rect: CGRect) -> Path {
+        var p = Path()
+        let cut = rect.width * 0.36
+        p.move(to: CGPoint(x: rect.minX, y: rect.minY))
+        p.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+        p.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - cut))
+        p.addLine(to: CGPoint(x: rect.maxX - cut, y: rect.maxY))
+        p.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
+        p.closeSubpath()
+        return p
+    }
+}
+
+/// Le coin replié.
+struct PeelCurl: Shape {
+    func path(in rect: CGRect) -> Path {
+        var p = Path()
+        p.move(to: CGPoint(x: rect.maxX, y: rect.minY))
+        p.addQuadCurve(to: CGPoint(x: rect.minX, y: rect.maxY), control: CGPoint(x: rect.minX + rect.width * 0.15, y: rect.minY + rect.height * 0.15))
+        p.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+        p.closeSubpath()
+        return p
     }
 }
 
@@ -306,7 +353,7 @@ struct PlacedStickers: View {
             Color.clear
             ForEach(Array(keys.enumerated()), id: \.element) { index, key in
                 let p = library.placement(key, index: index, albumID: album.id)
-                AnySticker(key: key, size: size.width * 0.2 * p.scale)
+                AnySticker(key: key, size: size.width * 0.2 * p.scale, peeled: p.peeled)
                     .rotationEffect(.degrees(p.rotation))
                     .position(x: size.width * p.x, y: size.height * p.y)
             }
@@ -349,7 +396,7 @@ struct StickerPlacer: View {
                         .clipped()
                         ForEach(Array(keys.enumerated()), id: \.element) { index, key in
                             let p = placements[key] ?? library.placement(key, index: index, albumID: album.id)
-                            AnySticker(key: key, size: size.width * 0.2 * p.scale)
+                            AnySticker(key: key, size: size.width * 0.2 * p.scale, peeled: p.peeled)
                                 .overlay {
                                     if selected == key {
                                         Circle().strokeBorder(Color.white, style: StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
@@ -368,11 +415,16 @@ struct StickerPlacer: View {
                     .shadow(color: .black.opacity(0.5), radius: 20, y: 10)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
-                Text("Glisse un sticker pour le déplacer · pince pour l’agrandir · tourne avec deux doigts")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 24)
+                if let key = selected, let index = keys.firstIndex(of: key) {
+                    selectedPanel(key, index: index)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                } else {
+                    Text("Touche un sticker pour le régler · glisse pour le déplacer · pince pour l’agrandir · tourne avec deux doigts")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 24)
+                }
                 Button("Remettre en place") {
                     withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
                         placements = [:]
@@ -399,6 +451,51 @@ struct StickerPlacer: View {
             }
         }
         .environment(\.colorScheme, .dark)
+    }
+
+    /// Réglages du sticker touché : taille, coin décollé, dupliquer, retirer.
+    private func selectedPanel(_ key: String, index: Int) -> some View {
+        let p = current(key, index)
+        let custom = library.customStickers.first { $0.key == key }
+        return VStack(spacing: 12) {
+            HStack(spacing: 12) {
+                Image(systemName: "minus.magnifyingglass").foregroundStyle(.secondary)
+                Slider(value: Binding(get: { p.scale }, set: { v in
+                    var q = current(key, index)
+                    q.scale = v
+                    placements[key] = q
+                }), in: 0.4...3)
+                Image(systemName: "plus.magnifyingglass").foregroundStyle(.secondary)
+            }
+            HStack(spacing: 10) {
+                Button {
+                    var q = current(key, index)
+                    q.peeled.toggle()
+                    placements[key] = q
+                } label: {
+                    Label(p.peeled ? "Recoller" : "Décoller un coin", systemImage: "arrow.up.right.and.arrow.down.left")
+                        .font(.subheadline.weight(.semibold))
+                }
+                .buttonStyle(.bordered)
+                if let custom {
+                    Button {
+                        library.duplicateCustomSticker(custom, for: album.id)
+                    } label: {
+                        Label("Dupliquer", systemImage: "plus.square.on.square").font(.subheadline.weight(.semibold))
+                    }
+                    .buttonStyle(.bordered)
+                }
+                Button(role: .destructive) {
+                    library.removeSticker(key, from: album.id)
+                    placements[key] = nil
+                    selected = nil
+                } label: {
+                    Label("Retirer", systemImage: "trash").font(.subheadline.weight(.semibold))
+                }
+                .buttonStyle(.bordered)
+            }
+        }
+        .padding(.horizontal, 20)
     }
 
     private func current(_ key: String, _ index: Int) -> StickerPlacement {
@@ -445,5 +542,172 @@ struct StickerPlacer: View {
                 placements[key] = p
             }
             .onEnded { _ in dragStart[key] = nil }
+    }
+}
+
+
+// MARK: - Personnaliser le boîtier
+
+/// Jaquette, dos, tranche et disque : chaque image peut être remplacée par la tienne, recadrée au bon format.
+struct CaseCustomizer: View {
+    let album: AlbumInfo
+    /// Nom du jeu (boîtier de jeu) ; nil pour un CD (seul le disque se personnalise).
+    let game: String?
+    @Environment(Library.self) private var library
+    @Environment(\.dismiss) private var dismiss
+    @State private var target: Slot?
+    @State private var photoItem: PhotosPickerItem?
+    @State private var cropping: CropSource?
+
+    enum Slot: String, Identifiable {
+        case cover, back, spine, disc
+        var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .cover: return "Jaquette"
+            case .back: return "Dos du boîtier"
+            case .spine: return "Tranche"
+            case .disc: return "Disque"
+            }
+        }
+        var detail: String {
+            switch self {
+            case .cover: return "La face avant, sous le film"
+            case .back: return "L’arrière du boîtier"
+            case .spine: return "Le côté, visible sur l’étagère"
+            case .disc: return "Recadrée en cercle, comme une photo de profil"
+            }
+        }
+        var symbol: String {
+            switch self {
+            case .cover: return "rectangle.portrait"
+            case .back: return "rectangle.portrait.on.rectangle.portrait"
+            case .spine: return "rectangle.split.3x1"
+            case .disc: return "opticaldisc"
+            }
+        }
+    }
+
+    private var slots: [Slot] { game == nil ? [.disc] : [.cover, .back, .spine, .disc] }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    ForEach(slots) { slot in row(slot) }
+                } footer: {
+                    Text("Le boîtier au-dessus se met à jour dès que tu valides une image.")
+                }
+            }
+            .navigationTitle("Personnaliser")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("OK") { dismiss() }.fontWeight(.semibold)
+                }
+            }
+        }
+        .environment(\.colorScheme, .dark)
+        .onChange(of: photoItem) { _, item in
+            guard let item else { return }
+            Task {
+                if let data = try? await item.loadTransferable(type: Data.self), let img = UIImage(data: data) {
+                    cropping = CropSource(image: img)
+                }
+                photoItem = nil
+            }
+        }
+        .fullScreenCover(item: $cropping) { source in
+            CoverCropper(image: source.image, aspect: aspect(target ?? .cover),
+                         title: (target ?? .cover).title, round: target == .disc) { cropped in
+                save(cropped, in: target ?? .cover)
+            }
+        }
+    }
+
+    private func row(_ slot: Slot) -> some View {
+        HStack(spacing: 14) {
+            thumbnail(slot)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(slot.title).font(.body.weight(.semibold))
+                Text(isCustom(slot) ? "Ton image" : slot.detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            if isCustom(slot) {
+                Button {
+                    reset(slot)
+                } label: {
+                    Image(systemName: "arrow.uturn.backward")
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel("Remettre l’image d’origine")
+            }
+            PhotosPicker(selection: Binding(get: { nil }, set: { item in
+                target = slot
+                photoItem = item
+            }), matching: .images) {
+                Text("Changer").font(.subheadline.weight(.semibold))
+            }
+            .buttonStyle(.bordered)
+            .buttonBorderShape(.capsule)
+        }
+        .padding(.vertical, 4)
+    }
+
+    @ViewBuilder private func thumbnail(_ slot: Slot) -> some View {
+        let img = current(slot)
+        let shape = slot == .disc ? AnyShape(Circle()) : AnyShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        ZStack {
+            Color(white: 0.18)
+            if let img {
+                Image(uiImage: img).resizable().scaledToFill()
+            } else {
+                Image(systemName: slot.symbol).foregroundStyle(.secondary)
+            }
+        }
+        .frame(width: slot == .spine ? 18 : (slot == .disc ? 52 : 44), height: 52)
+        .clipShape(shape)
+    }
+
+    private func current(_ slot: Slot) -> UIImage? {
+        switch slot {
+        case .cover: return game.flatMap { library.gameCoverImage($0) }
+        case .back: return game.flatMap { library.extraImage("back", $0) }
+        case .spine: return game.flatMap { library.extraImage("spine", $0) }
+        case .disc: return library.extraImage("disc", album.id)
+        }
+    }
+
+    private func isCustom(_ slot: Slot) -> Bool { current(slot) != nil }
+
+    private func aspect(_ slot: Slot) -> CGFloat {
+        let s = Physical.size(.game)
+        let w = CGFloat(s.x), h = CGFloat(s.y)
+        switch slot {
+        case .cover: return (w - 0.06) / (h - 0.06)
+        case .back: return (w - 0.05) / (h - 0.05)
+        case .spine: return 0.112 / (h - 0.13)
+        case .disc: return 1
+        }
+    }
+
+    private func save(_ image: UIImage, in slot: Slot) {
+        switch slot {
+        case .cover: if let game { library.setGameCover(image, for: game) }
+        case .back: if let game { library.setExtraImage(image, kind: "back", key: game) }
+        case .spine: if let game { library.setExtraImage(image, kind: "spine", key: game) }
+        case .disc: library.setExtraImage(image, kind: "disc", key: album.id)
+        }
+    }
+
+    private func reset(_ slot: Slot) {
+        switch slot {
+        case .cover: if let game { library.resetGameCover(game) }
+        case .back: if let game { library.resetExtraImage("back", game) }
+        case .spine: if let game { library.resetExtraImage("spine", game) }
+        case .disc: library.resetExtraImage("disc", album.id)
+        }
     }
 }

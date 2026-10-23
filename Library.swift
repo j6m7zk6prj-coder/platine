@@ -25,6 +25,8 @@ final class Library {
     private(set) var stickerPlacements: [String: [String: StickerPlacement]] = [:]
     /// Console choisie pour chaque jeu (PS3, PS4 ou PS5).
     private(set) var gamePlatforms: [String: String] = [:]
+    /// Tes images pour le dos, la tranche et le disque : « genre|clé » → fichier.
+    private(set) var extraImages: [String: String] = [:]
     /// Ajoute aussi les stickers gagnés automatiquement (or, platine, favori, nouveau).
     var autoStickers: Bool = UserDefaults.standard.bool(forKey: "autoStickers") {
         didSet { UserDefaults.standard.set(autoStickers, forKey: "autoStickers") }
@@ -51,6 +53,7 @@ final class Library {
     static let gamesURL = base.appendingPathComponent("games.json")
     static let customStickersURL = base.appendingPathComponent("customstickers.json")
     static let placementsURL = base.appendingPathComponent("placements.json")
+    static let extraImagesURL = base.appendingPathComponent("extraimages.json")
     static let platformsURL = base.appendingPathComponent("platforms.json")
     /// Dossier visible dans Fichiers et dans iTunes sur PC : tout ce qu'on y dépose est importé.
     static let inbox = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -555,8 +558,9 @@ final class Library {
     // MARK: Collection
 
     func format(of albumID: String, default fallback: AlbumFormat) -> AlbumFormat {
+        // Les cassettes ont été retirées : tous les albums sont des CD, les bandes-son des jeux.
         if albumID.hasPrefix(GameCatalog.prefix) { return .game }
-        return AlbumFormat(rawValue: albumFormats[albumID] ?? "") ?? fallback
+        return .cd
     }
 
     func setFormat(_ format: AlbumFormat, for albumID: String) {
@@ -576,13 +580,13 @@ final class Library {
         (albumStickers[albumID] ?? []).compactMap(AlbumBadge.init(rawValue:))
     }
 
-    /// Pose ou retire un sticker (3 au maximum par album).
+    /// Pose ou retire un sticker (6 au maximum par album).
     func toggleSticker(_ badge: AlbumBadge, for albumID: String) {
         var list = albumStickers[albumID] ?? []
         if let i = list.firstIndex(of: badge.rawValue) {
             list.remove(at: i)
         } else {
-            if list.count >= 3 { list.removeFirst() }
+            if list.count >= 6 { list.removeFirst() }
             list.append(badge.rawValue)
         }
         albumStickers[albumID] = list.isEmpty ? nil : list
@@ -603,7 +607,7 @@ final class Library {
         if let i = list.firstIndex(of: sticker.key) {
             list.remove(at: i)
         } else {
-            if list.count >= 3 { list.removeFirst() }
+            if list.count >= 6 { list.removeFirst() }
             list.append(sticker.key)
         }
         albumStickers[albumID] = list.isEmpty ? nil : list
@@ -676,6 +680,65 @@ final class Library {
     private func savePlacements() {
         guard let data = try? JSONEncoder().encode(stickerPlacements) else { return }
         try? data.write(to: Self.placementsURL, options: .atomic)
+    }
+
+    // MARK: Dos, tranche et disque personnalisés
+
+    /// `kind` : « back » (dos du boîtier), « spine » (tranche) ou « disc » (disque).
+    func extraImageName(_ kind: String, _ key: String) -> String? {
+        extraImages[kind + "|" + key]
+    }
+
+    func extraImage(_ kind: String, _ key: String) -> UIImage? {
+        guard let name = extraImageName(kind, key) else { return nil }
+        let cacheKey = name as NSString
+        if let cached = images.object(forKey: cacheKey) { return cached }
+        guard let img = UIImage(contentsOfFile: Self.artDir.appendingPathComponent(name).path) else { return nil }
+        images.setObject(img, forKey: cacheKey)
+        return img
+    }
+
+    func setExtraImage(_ image: UIImage, kind: String, key: String) {
+        let maxSide: CGFloat = 1400
+        let scale = min(1, maxSide / max(image.size.width, image.size.height, 1))
+        let target = CGSize(width: image.size.width * scale, height: image.size.height * scale)
+        let resized = UIGraphicsImageRenderer(size: target).image { _ in image.draw(in: CGRect(origin: .zero, size: target)) }
+        guard let data = resized.jpegData(compressionQuality: 0.9) else { return }
+        let name = kind + "-" + UUID().uuidString + ".jpg"
+        do { try data.write(to: Self.artDir.appendingPathComponent(name), options: .atomic) } catch { return }
+        resetExtraImage(kind, key, notify: false)
+        extraImages[kind + "|" + key] = name
+        saveExtraImages()
+        artworkRevision += 1
+    }
+
+    func resetExtraImage(_ kind: String, _ key: String, notify: Bool = true) {
+        guard let old = extraImages.removeValue(forKey: kind + "|" + key) else { return }
+        try? FileManager.default.removeItem(at: Self.artDir.appendingPathComponent(old))
+        saveExtraImages()
+        if notify { artworkRevision += 1 }
+    }
+
+    private func saveExtraImages() {
+        guard let data = try? JSONEncoder().encode(extraImages) else { return }
+        try? data.write(to: Self.extraImagesURL, options: .atomic)
+    }
+
+    /// Duplique un de tes stickers (nouvelle copie, posée sur l'album).
+    @discardableResult
+    func duplicateCustomSticker(_ sticker: CustomSticker, for albumID: String) -> CustomSticker? {
+        guard let img = customStickerImage(sticker),
+              let copy = addCustomSticker(img, finish: sticker.finish, round: sticker.round) else { return nil }
+        toggleCustomSticker(copy, for: albumID)
+        return copy
+    }
+
+    /// Retire un sticker (gagné, choisi ou à toi) de cet album.
+    func removeSticker(_ key: String, from albumID: String) {
+        var list = albumStickers[albumID] ?? []
+        list.removeAll { $0 == key }
+        albumStickers[albumID] = list.isEmpty ? nil : list
+        saveStickers()
     }
 
     // MARK: Console du boîtier de jeu
@@ -999,6 +1062,10 @@ final class Library {
         if let data = try? Data(contentsOf: Self.formatsURL),
            let map = try? JSONDecoder().decode([String: String].self, from: data) {
             albumFormats = map
+        }
+        if let data = try? Data(contentsOf: Self.extraImagesURL),
+           let map = try? JSONDecoder().decode([String: String].self, from: data) {
+            extraImages = map
         }
         if let data = try? Data(contentsOf: Self.placementsURL),
            let map = try? JSONDecoder().decode([String: [String: StickerPlacement]].self, from: data) {

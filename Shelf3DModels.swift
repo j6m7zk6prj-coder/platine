@@ -136,6 +136,14 @@ final class AlbumNode {
                 if self?.discOut == false { discPivot.opacity = 0 }
             }
             SCNTransaction.commit()
+            if out && animated {
+                // Le disque se détache de l'ergot avec un petit rebond.
+                let up = SCNAction.moveBy(x: 0, y: 0, z: 0.05, duration: 0.16)
+                up.timingMode = .easeOut
+                let down = SCNAction.moveBy(x: 0, y: 0, z: -0.05, duration: 0.24)
+                down.timingMode = .easeIn
+                discPivot.runAction(.sequence([.wait(duration: 0.55), up, down]), forKey: "pop")
+            }
             return
         }
         SCNTransaction.begin()
@@ -164,12 +172,15 @@ struct AlbumNodeBuilder {
             let lastID: String = album.tracks.last?.id.uuidString ?? ""
             let count: String = String(album.tracks.count)
             let console: String = library.platform(of: game).rawValue
-            art = coverName + "#" + count + "#" + lastID + "#" + console
+            let backName: String = library.extraImageName("back", game) ?? "-"
+            let spineName: String = library.extraImageName("spine", game) ?? "-"
+            art = coverName + "#" + count + "#" + lastID + "#" + console + "#" + backName + "#" + spineName
         }
         let earned: String = badges.map(\.rawValue).joined(separator: ",")
         let mine: String = library.stickerKeys(for: album.id).joined(separator: ",")
         let placed: String = library.placementSignature(album.id)
-        let badgeList: String = earned + ";" + mine + ";" + placed
+        let discName: String = library.extraImageName("disc", album.id) ?? "-"
+        let badgeList: String = earned + ";" + mine + ";" + placed + ";" + discName
         let parts: [String] = [album.id, format.rawValue, art, badgeList, album.title, album.artist]
         return parts.joined(separator: "|")
     }
@@ -289,7 +300,10 @@ struct AlbumNodeBuilder {
     /// troué au centre, avec la face imprimée d'un côté et la face miroir irisée de l'autre.
     func makeDisc(_ album: AlbumInfo) -> SCNNode {
         let label: UIImage?
-        if let game = library.gameName(album.id) {
+        if let custom = library.extraImage("disc", album.id) {
+            let name: String = library.extraImageName("disc", album.id) ?? "-"
+            label = cached("customdisc|" + name) { Self.discLabel(custom) }
+        } else if let game = library.gameName(album.id) {
             let coverName: String = library.gameCoverName(game) ?? "auto"
             let platform = library.platform(of: game)
             let key: String = "gamedisc|" + game + "|" + coverName + "|" + platform.rawValue
@@ -778,38 +792,48 @@ struct AlbumNodeBuilder {
         let platform = library.platform(of: game)
 
         // Plastique translucide : transparent (PS3), bleu foncé (PS4) ou bleu vif (PS5).
-        let blue = SCNMaterial()
-        blue.lightingModel = .physicallyBased
-        blue.diffuse.contents = platform.plastic
-        blue.roughness.contents = 0.28
-        blue.metalness.contents = 0.0
-        blue.clearCoat.contents = 0.6
-        blue.clearCoatRoughness.contents = 0.15
-        blue.blendMode = .alpha
+        let plastic = SCNMaterial()
+        plastic.lightingModel = .physicallyBased
+        plastic.diffuse.contents = platform.plastic
+        plastic.roughness.contents = 0.26
+        plastic.metalness.contents = 0.0
+        plastic.clearCoat.contents = 0.7
+        plastic.clearCoatRoughness.contents = 0.12
+        plastic.blendMode = .alpha
 
+        // Les images : les tiennes si tu en as choisi, sinon celles générées par Platine.
         let cover = gameCover(album, game: game)
-        let back = cached("gameback|" + signature) {
+        let back: UIImage? = library.extraImage("back", game) ?? cached("gameback|" + signature) {
             Self.gameBackInsert(cover: cover, title: game, season: GameCatalog.season(game),
                                 tracks: album.tracks.map { ($0.title, $0.displayArtist) })
         }
         let booklet = cached("gamebook|" + signature) {
             Self.gameBooklet(title: game, tracks: album.tracks.map { ($0.title, $0.displayArtist) }, platform: platform)
         }
-        let spineKey: String = "gamespine3|" + game + "|" + platform.rawValue
-        let spine = cached(spineKey) { Self.gameSpine(title: game, platform: platform) }
+        let spineKey: String = "gamespine4|" + game + "|" + platform.rawValue
+        let spine: UIImage? = library.extraImage("spine", game) ?? cached(spineKey) { Self.gameSpine(title: game, platform: platform) }
         let trayImage = cached("gametray|" + platform.rawValue) { Self.gameTray(platform) }
 
-        // Coque arrière : plaque aux coins arrondis + cadre (parois) tout autour.
-        let backPlate = Self.roundedSlab(width: W, height: H, corner: corner, depth: 0.04, chamfer: 0.012)
-        backPlate.materials = [blue]
+        // Un seul bloc : seules les arêtes extérieures sont arrondies, les pièces se touchent sans jour.
+        let backPlate = Self.roundedSlab(width: W, height: H, corner: corner, depth: 0.04, chamfer: 0.012, mode: .back)
+        backPlate.materials = [plastic]
         let backNode = SCNNode(geometry: backPlate)
         backNode.position.z = -0.051
         parts.append(backNode)
-        let frame = Self.roundedFrame(width: W, height: H, corner: corner, wall: 0.035, depth: 0.028, chamfer: 0.004)
-        frame.materials = [blue]
+        let frame = Self.roundedFrame(width: W, height: H, corner: corner, wall: 0.035, depth: 0.0275, chamfer: 0)
+        frame.materials = [plastic]
         let frameNode = SCNNode(geometry: frame)
-        frameNode.position.z = -0.018
+        frameNode.position.z = -0.01775
         parts.append(frameNode)
+        // Fine rainure de fermeture entre le plateau et le couvercle.
+        let seam = Self.roundedFrame(width: W + 0.002, height: H + 0.002, corner: corner, wall: 0.004, depth: 0.0016, chamfer: 0)
+        let seamMat = SCNMaterial()
+        seamMat.lightingModel = .constant
+        seamMat.diffuse.contents = platform.plasticDark
+        seam.materials = [seamMat]
+        let seamNode = SCNNode(geometry: seam)
+        seamNode.position.z = -0.004
+        parts.append(seamNode)
         // Plateau intérieur (vu quand le boîtier est ouvert).
         let tray = SCNPlane(width: W - 0.07, height: H - 0.07)
         tray.cornerRadius = corner - 0.03
@@ -817,6 +841,12 @@ struct AlbumNodeBuilder {
         let trayNode = SCNNode(geometry: tray)
         trayNode.position.z = -0.0305
         parts.append(trayNode)
+        // Charnière : la tige arrondie le long du dos, visible boîtier ouvert.
+        let hinge = SCNCylinder(radius: 0.011, height: H - 0.16)
+        hinge.materials = [plastic]
+        let hingeNode = SCNNode(geometry: hinge)
+        hingeNode.position = SCNVector3(Float(-W / 2) + 0.012, 0, -0.004)
+        parts.append(hingeNode)
         // Dos imprimé, sous le film arrière.
         let backPrint = SCNPlane(width: W - 0.05, height: H - 0.05)
         backPrint.cornerRadius = 0.02
@@ -825,14 +855,7 @@ struct AlbumNodeBuilder {
         backPrintNode.eulerAngles.y = .pi
         backPrintNode.position.z = -0.0715
         parts.append(backPrintNode)
-        let backFilm = SCNPlane(width: W - 0.03, height: H - 0.03)
-        backFilm.cornerRadius = 0.03
-        backFilm.materials = [Self.glassy(strength: 0.5)]
-        let backFilmNode = SCNNode(geometry: backFilm)
-        backFilmNode.eulerAngles.y = .pi
-        backFilmNode.position.z = -0.0722
-        backFilmNode.renderingOrder = 11
-        parts.append(backFilmNode)
+        parts.append(Self.filmNode(width: W - 0.03, height: H - 0.03, z: -0.0722, flipped: true, platinum: false))
 
         // Tranche droite (côté ouverture) : l'encoche pour le pouce et les deux petits ergots.
         let slotMat = SCNMaterial()
@@ -853,45 +876,67 @@ struct AlbumNodeBuilder {
             t.position = SCNVector3(Float(W / 2) + 0.002, Float(y), -0.005)
             parts.append(t)
         }
-        // Dos (tranche gauche) : la jaquette en papier, visible sous le plastique.
-        let spinePlane = SCNPlane(width: 0.115, height: H - 2 * corner - 0.02)
+        // Tranche gauche : la jaquette en papier qui s'enroule, sous un film brillant.
+        let spineHeight = H - 2 * corner - 0.01
+        let spinePlane = SCNPlane(width: 0.112, height: spineHeight)
         spinePlane.materials = [Self.printed(spine ?? UIColor.white)]
         let spineNode = SCNNode(geometry: spinePlane)
         spineNode.eulerAngles.y = -.pi / 2
-        spineNode.position = SCNVector3(Float(-W / 2) - 0.0015, 0, 0)
+        spineNode.position = SCNVector3(Float(-W / 2) - 0.0015, 0, -0.0015)
         parts.append(spineNode)
+        let spineFilm = SCNPlane(width: 0.118, height: spineHeight + 0.01)
+        spineFilm.materials = [Self.glassy(strength: 0.55)]
+        let spineFilmNode = SCNNode(geometry: spineFilm)
+        spineFilmNode.eulerAngles.y = -.pi / 2
+        spineFilmNode.position = SCNVector3(Float(-W / 2) - 0.0025, 0, -0.0015)
+        spineFilmNode.renderingOrder = 11
+        parts.append(spineFilmNode)
 
         // Couvercle : il tourne autour de la charnière, à gauche, comme un livre.
         let lidPivot = SCNNode()
         lidPivot.position = SCNVector3(Float(-W / 2), 0, -0.004)
-        let lid = Self.roundedSlab(width: W, height: H, corner: corner, depth: 0.074, chamfer: 0.014)
-        lid.materials = [blue]
+        let lid = Self.roundedSlab(width: W, height: H, corner: corner, depth: 0.074, chamfer: 0.014, mode: .front)
+        lid.materials = [plastic]
         let lidNode = SCNNode(geometry: lid)
         lidNode.position = SCNVector3(Float(W / 2), 0, 0.037)
         lidPivot.addChildNode(lidNode)
-        // La jaquette glissée sous le film transparent, avec le liseré bleu tout autour.
+        // Rebord moulé en relief autour de la jaquette.
+        let lip = Self.roundedFrame(width: W - 0.012, height: H - 0.012, corner: corner - 0.006, wall: 0.016, depth: 0.004, chamfer: 0.0015)
+        lip.materials = [plastic]
+        let lipNode = SCNNode(geometry: lip)
+        lipNode.position = SCNVector3(Float(W / 2), 0, 0.0755)
+        lidPivot.addChildNode(lipNode)
+        // Petits creux moulés aux quatre coins.
+        let dimpleMat = SCNMaterial()
+        dimpleMat.lightingModel = .constant
+        dimpleMat.diffuse.contents = platform.plasticDark.withAlphaComponent(0.6)
+        for (dx, dy) in [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
+            let dimple = SCNPlane(width: 0.018, height: 0.018)
+            dimple.cornerRadius = 0.009
+            dimple.materials = [dimpleMat]
+            let d = SCNNode(geometry: dimple)
+            let cx: Float = Float(W / 2)
+            let ox: Float = Float(dx) * Float(W / 2 - 0.022)
+            let oy: Float = Float(dy) * Float(H / 2 - 0.022)
+            d.position = SCNVector3(cx + ox, oy, 0.0778)
+            lidPivot.addChildNode(d)
+        }
+        // La jaquette glissée sous le film transparent.
         let coverPlane = SCNPlane(width: W - 0.06, height: H - 0.06)
         coverPlane.cornerRadius = 0.018
         coverPlane.materials = [Self.printed(cover)]
         let coverNode = SCNNode(geometry: coverPlane)
         coverNode.position = SCNVector3(Float(W / 2), 0, 0.0745)
         lidPivot.addChildNode(coverNode)
-        // Le film plastique : uniquement des reflets.
-        let film = SCNPlane(width: W - 0.03, height: H - 0.03)
-        film.cornerRadius = 0.03
-        let filmMat = Self.glassy(strength: 0.6)
-        if badges.contains(.platinum) { filmMat.shaderModifiers = [.fragment: Self.iridescence] }
-        film.materials = [filmMat]
-        let filmNode = SCNNode(geometry: film)
-        filmNode.position = SCNVector3(Float(W / 2), 0, 0.0755)
-        filmNode.renderingOrder = 11
-        filmNode.categoryBitMask = 2
-        lidPivot.addChildNode(filmNode)
         if let stickers = placedStickerLayer(album, badges: badges, signature: signature,
                                              width: W - 0.06, height: H - 0.06) {
             stickers.position = SCNVector3(Float(W / 2), 0, 0.0751)
             lidPivot.addChildNode(stickers)
         }
+        let film = Self.filmNode(width: W - 0.03, height: H - 0.03, z: 0.0758, flipped: false,
+                                 platinum: badges.contains(.platinum))
+        film.position.x = Float(W / 2)
+        lidPivot.addChildNode(film)
         // Intérieur du couvercle : la notice (visible boîtier ouvert).
         let inner = SCNPlane(width: W - 0.07, height: H - 0.07)
         inner.cornerRadius = 0.03
@@ -906,14 +951,69 @@ struct AlbumNodeBuilder {
                          discPivot: extras ? makeDisc(album) : nil, reels: [], lidPivot: lidPivot)
     }
 
+    /// Film plastique : reflets sur toute la surface, et un bord un peu plus brillant (surépaisseur).
+    static func filmNode(width: CGFloat, height: CGFloat, z: Float, flipped: Bool, platinum: Bool) -> SCNNode {
+        let group = SCNNode()
+        let film = SCNPlane(width: width, height: height)
+        film.cornerRadius = 0.03
+        let filmMat = glassy(strength: 0.6)
+        if platinum { filmMat.shaderModifiers = [.fragment: iridescence] }
+        film.materials = [filmMat]
+        let filmNode = SCNNode(geometry: film)
+        filmNode.renderingOrder = 11
+        group.addChildNode(filmNode)
+        let rim = SCNPlane(width: width, height: height)
+        rim.cornerRadius = 0.03
+        let rimMat = SCNMaterial()
+        rimMat.lightingModel = .constant
+        rimMat.diffuse.contents = filmRim
+        rimMat.blendMode = .add
+        rimMat.writesToDepthBuffer = false
+        rim.materials = [rimMat]
+        let rimNode = SCNNode(geometry: rim)
+        rimNode.renderingOrder = 12
+        rimNode.position.z = 0.0002
+        group.addChildNode(rimNode)
+        group.position.z = z
+        if flipped { group.eulerAngles.y = .pi }
+        group.categoryBitMask = 2
+        filmNode.categoryBitMask = 2
+        rimNode.categoryBitMask = 2
+        return group
+    }
+
+    /// Bord du film plastique : liseré lumineux très fin, et reflet doux dans un coin.
+    static let filmRim: UIImage = {
+        let w: CGFloat = 540, h: CGFloat = 686
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        return UIGraphicsImageRenderer(size: CGSize(width: w, height: h), format: format).image { ctx in
+            let c = ctx.cgContext
+            c.setFillColor(UIColor.black.cgColor)
+            c.fill(CGRect(x: 0, y: 0, width: w, height: h))
+            c.setStrokeColor(UIColor(white: 0.5, alpha: 1).cgColor)
+            c.setLineWidth(3)
+            c.stroke(CGRect(x: 2, y: 2, width: w - 4, height: h - 4))
+            c.setStrokeColor(UIColor(white: 0.18, alpha: 1).cgColor)
+            c.setLineWidth(6)
+            c.stroke(CGRect(x: 7, y: 7, width: w - 14, height: h - 14))
+            let colors = [UIColor(white: 0.22, alpha: 1).cgColor, UIColor.black.cgColor] as CFArray
+            if let g = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors, locations: [0, 1]) {
+                c.drawRadialGradient(g, startCenter: CGPoint(x: w * 0.85, y: h * 0.1), startRadius: 0,
+                                     endCenter: CGPoint(x: w * 0.85, y: h * 0.1), endRadius: w * 0.45, options: [])
+            }
+        }
+    }()
+
     /// Plaque aux coins arrondis et aux arêtes adoucies, centrée (épaisseur sur z).
-    static func roundedSlab(width: CGFloat, height: CGFloat, corner: CGFloat, depth: CGFloat, chamfer: CGFloat) -> SCNGeometry {
+    static func roundedSlab(width: CGFloat, height: CGFloat, corner: CGFloat, depth: CGFloat, chamfer: CGFloat,
+                            mode: SCNChamferMode = .both) -> SCNGeometry {
         let path = UIBezierPath(roundedRect: CGRect(x: -width / 2, y: -height / 2, width: width, height: height),
                                 cornerRadius: corner)
         path.flatness = 0.002
         let shape = SCNShape(path: path, extrusionDepth: depth)
         shape.chamferRadius = chamfer
-        shape.chamferMode = .both
+        shape.chamferMode = mode
         return shape
     }
 
@@ -1119,10 +1219,11 @@ struct AlbumNodeBuilder {
             brand.draw(at: CGPoint(x: -bs.width / 2, y: -bs.height / 2))
             c.restoreGState()
             // Titre du jeu, en très gros et penché, qui se lit de haut en bas.
-            let base = UIFont.systemFont(ofSize: 96, weight: .black)
-            let italic = UIFont(descriptor: base.fontDescriptor.withSymbolicTraits(.traitItalic) ?? base.fontDescriptor, size: 96)
+            let base = UIFont.systemFont(ofSize: 104, weight: .black)
+            let italic = UIFont(descriptor: base.fontDescriptor.withSymbolicTraits([.traitItalic, .traitBold]) ?? base.fontDescriptor, size: 104)
             let titleText = NSAttributedString(string: title.uppercased(), attributes: [
-                .font: italic, .foregroundColor: UIColor(white: 0.05, alpha: 1), .kern: -2
+                .font: italic, .foregroundColor: UIColor(white: 0.05, alpha: 1), .kern: -1,
+                .strokeColor: UIColor(white: 0.05, alpha: 1), .strokeWidth: -4
             ])
             let ts = titleText.size()
             let shrink = min(1, 1000 / max(ts.width, 1))

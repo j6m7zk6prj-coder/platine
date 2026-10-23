@@ -113,7 +113,7 @@ enum AlbumFormat: String, CaseIterable, Identifiable {
         }
     }
     /// Formats proposés pour un album (le boîtier de jeu est réservé aux bandes-son).
-    static let choosable: [AlbumFormat] = [.cd, .cassette]
+    static let choosable: [AlbumFormat] = [.cd]
 }
 
 /// Les jeux de foot dont on peut taguer la bande-son.
@@ -282,6 +282,27 @@ struct StickerPlacement: Codable, Hashable {
     var y: Double
     var scale: Double = 1
     var rotation: Double = 0
+    /// Coin soulevé, comme un sticker à moitié décollé.
+    var peeled: Bool = false
+
+    init(x: Double, y: Double, scale: Double = 1, rotation: Double = 0, peeled: Bool = false) {
+        self.x = x
+        self.y = y
+        self.scale = scale
+        self.rotation = rotation
+        self.peeled = peeled
+    }
+
+    enum CodingKeys: String, CodingKey { case x, y, scale, rotation, peeled }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        x = try c.decodeIfPresent(Double.self, forKey: .x) ?? 0.84
+        y = try c.decodeIfPresent(Double.self, forKey: .y) ?? 0.13
+        scale = try c.decodeIfPresent(Double.self, forKey: .scale) ?? 1
+        rotation = try c.decodeIfPresent(Double.self, forKey: .rotation) ?? 0
+        peeled = try c.decodeIfPresent(Bool.self, forKey: .peeled) ?? false
+    }
 
     /// Placement par défaut : en colonne, en haut à droite.
     static func standard(_ index: Int) -> StickerPlacement {
@@ -289,6 +310,6 @@ struct StickerPlacement: Codable, Hashable {
     }
 
     var signature: String {
-        String(format: "%.3f,%.3f,%.2f,%.2f", x, y, scale, rotation)
+        String(format: "%.3f,%.3f,%.2f,%.2f,%d", x, y, scale, rotation, peeled ? 1 : 0)
     }
 }

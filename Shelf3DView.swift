@@ -319,6 +319,17 @@ final class ShelfSceneController: NSObject, UIGestureRecognizerDelegate {
             // Une pochette à la fois, pour ne jamais ralentir l'app.
             try? await Task.sleep(for: .milliseconds(40))
         }
+        // Les boîtiers de jeux aussi, pour que l'onglet Jeux s'ouvre sans attendre.
+        let games = library.gameAlbums
+        if !games.isEmpty {
+            c.update(albums: games, library: library, settings: settings)
+            for i in games.indices.prefix(6) {
+                _ = c.node(at: i, force: true)
+                try? await Task.sleep(for: .milliseconds(40))
+            }
+            c.update(albums: albums, library: library, settings: settings)
+            c.jump(to: start)
+        }
         c.layout()
         c.view.prepare([c.scene], completionHandler: nil)
         // La vue « en main » aussi.
@@ -440,8 +451,7 @@ final class ShelfSceneController: NSObject, UIGestureRecognizerDelegate {
         badges = newAlbums.map { library.badges(for: $0) }
         let ids = Set(newAlbums.map(\.id))
         for (id, node) in nodes where !ids.contains(id) {
-            node.root.removeFromParentNode()
-            nodes[id] = nil
+            node.root.isHidden = true
         }
         // Un format ou une pochette qui change : le modèle est reconstruit.
         for (i, album) in albums.enumerated() {
@@ -520,6 +530,10 @@ final class ShelfSceneController: NSObject, UIGestureRecognizerDelegate {
             }
             guard let n = node(at: i, force: ad < 0.6) else { continue }
             n.root.isHidden = false
+            if n.format == .game {
+                placeOnShelf(n, d: d, ad: ad, isFocus: i == focus && ad < 0.5, tiltX: tiltX, tiltY: tiltY)
+                continue
+            }
             let s = d < 0 ? -1.0 : 1.0
             let e = min(ad, 1)
             let ease = e * e * (3 - 2 * e)
@@ -539,6 +553,23 @@ final class ShelfSceneController: NSObject, UIGestureRecognizerDelegate {
             onFocus(focus)
             updateSpot(for: albums[focus])
         }
+    }
+
+    /// Jeux rangés comme sur une étagère : on voit leurs tranches côte à côte ;
+    /// celui du centre sort du rang et se tourne vers toi.
+    private func placeOnShelf(_ n: AlbumNode, d: Double, ad: Double, isFocus: Bool, tiltX: Double, tiltY: Double) {
+        let s = d < 0 ? -1.0 : 1.0
+        let e = min(ad, 1)
+        let ease = e * e * (3 - 2 * e)
+        let spine = Double(n.shownSize.z) + 0.035
+        let x = s * (ease * 0.78 + max(0, ad - 1) * spine)
+        let z = -ease * 0.55
+        // De face (0) quand il est au centre, de profil (tranche vers toi) dans le rang.
+        let rotY = ease * Double.pi / 2
+        let h = Double(n.shownSize.y)
+        n.root.position = SCNVector3(Float(x), Float(h / 2 + 0.001), Float(z))
+        n.root.scale = SCNVector3(1, 1, 1)
+        n.root.eulerAngles = SCNVector3(Float(isFocus ? -tiltY * 0.05 : 0), Float(rotY + (isFocus ? tiltX * 0.1 : 0)), 0)
     }
 
     private func updateSpot(for album: AlbumInfo) {
@@ -626,37 +657,28 @@ struct ShelfInspector: View {
     @Environment(Library.self) private var library
     @State private var photoItem: PhotosPickerItem?
     @State private var cropping: CropSource?
+    @State private var customizing = false
 
     var body: some View {
         let spinning = playingThisAlbum && player.isPlaying
         VStack(spacing: 16) {
             HStack(spacing: 10) {
                 if let game {
-                    // Bande-son : console du boîtier, puis la photo de la jaquette.
+                    // Bande-son : console du boîtier (PS3, PS4, PS5).
                     PlatformSwitch(platform: library.platform(of: game)) { library.setPlatform($0, for: game) }
-                    PhotosPicker(selection: $photoItem, matching: .images) {
-                        Image(systemName: "photo")
-                            .font(.body.weight(.semibold))
-                            .frame(width: 40, height: 40)
-                            .contentShape(Circle())
-                            .glassCircle()
-                    }
-                    .buttonStyle(PressStyle(circle: false))
-                    .accessibilityLabel("Jaquette")
-                    if library.gameCoverName(game) != nil {
-                        Button {
-                            library.resetGameCover(game)
-                        } label: {
-                            Image(systemName: "arrow.uturn.backward")
-                                .font(.body.weight(.bold))
-                                .frame(width: 40, height: 40)
-                                .glassCircle()
-                        }
-                        .accessibilityLabel("Jaquette générée")
-                    }
-                } else {
-                    FormatSwitch(format: format, onChange: onFormat)
                 }
+                // Personnaliser : jaquette, dos, tranche et disque (le disque seulement pour un CD).
+                Button {
+                    customizing = true
+                } label: {
+                    Label("Personnaliser", systemImage: "paintbrush.pointed.fill")
+                        .labelStyle(.iconOnly)
+                        .font(.body.weight(.semibold))
+                        .frame(width: 40, height: 40)
+                        .contentShape(Circle())
+                        .glassCircle()
+                }
+                .buttonStyle(PressStyle(circle: false))
                 Spacer()
                 Button(action: onClose) {
                     Image(systemName: "xmark")
@@ -705,10 +727,12 @@ struct ShelfInspector: View {
             .padding(.bottom, 26)
         }
         .onChange(of: photoItem) { _, item in loadCover(item) }
-        .fullScreenCover(item: $cropping) { source in
-            CoverCropper(image: source.image, aspect: CGFloat(Physical.size(.game).x / Physical.size(.game).y)) { cropped in
-                if let game { library.setGameCover(cropped, for: game) }
-            }
+        .sheet(isPresented: $customizing) {
+            // Feuille à mi-hauteur : le boîtier reste visible au-dessus et se met à jour en direct.
+            CaseCustomizer(album: album, game: game)
+                .presentationDetents([.medium, .large])
+                .presentationBackgroundInteraction(.enabled(upThrough: .medium))
+                .presentationDragIndicator(.visible)
         }
     }
 
@@ -802,6 +826,17 @@ struct InspectorSceneView: UIViewRepresentable {
 
 @MainActor
 final class InspectorSceneController: NSObject, UIGestureRecognizerDelegate {
+    /// Ombre floue (dégradé radial sombre).
+    static let softShadow: UIImage = {
+        UIGraphicsImageRenderer(size: CGSize(width: 256, height: 290)).image { ctx in
+            let colors = [UIColor(white: 0, alpha: 0.75).cgColor, UIColor(white: 0, alpha: 0).cgColor] as CFArray
+            guard let grad = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors, locations: [0, 1]) else { return }
+            let center = CGPoint(x: 128, y: 145)
+            ctx.cgContext.drawRadialGradient(grad, startCenter: center, startRadius: 10,
+                                             endCenter: center, endRadius: 128, options: [])
+        }
+    }()
+
     static var shared: InspectorSceneController?
 
     static func obtain() -> InspectorSceneController {
@@ -849,6 +884,18 @@ final class InspectorSceneController: NSObject, UIGestureRecognizerDelegate {
         scene.rootNode.addChildNode(holder)
         holder.position = SCNVector3(0, 0.3, 0)
         holder.eulerAngles = SCNVector3(Float(restX), Float(restY), 0)
+        // Ombre douce derrière l'objet tenu en main : il se détache du fond.
+        let shadow = SCNPlane(width: 3.0, height: 3.4)
+        let shadowMat = SCNMaterial()
+        shadowMat.lightingModel = .constant
+        shadowMat.diffuse.contents = Self.softShadow
+        shadowMat.writesToDepthBuffer = false
+        shadow.materials = [shadowMat]
+        let shadowNode = SCNNode(geometry: shadow)
+        shadowNode.position = SCNVector3(0.08, 0.12, -0.9)
+        shadowNode.renderingOrder = -1
+        shadowNode.opacity = 0.7
+        scene.rootNode.addChildNode(shadowNode)
 
         view.scene = scene
         view.pointOfView = cameraNode
@@ -1051,7 +1098,7 @@ final class InspectorSceneController: NSObject, UIGestureRecognizerDelegate {
 
 // MARK: - Stickers holographiques
 
-/// Choix des stickers posés sur un album (3 au maximum).
+/// Choix des stickers posés sur un album (6 au maximum).
 struct StickerPicker: View {
     let album: AlbumInfo
     @Environment(Library.self) private var library
@@ -1084,7 +1131,7 @@ struct StickerPicker: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    Text("Touche un sticker pour le coller sur « \(album.title) » ou le retirer. Trois au maximum.")
+                    Text("Touche un sticker pour le coller sur « \(album.title) » ou le retirer. Six au maximum.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                     TimelineView(.animation(minimumInterval: 1.0 / 30)) { context in
@@ -1285,6 +1332,14 @@ struct CoverCropper: View {
                         .strokeBorder(Color.white, lineWidth: 2)
                         .frame(width: frame.width, height: frame.height)
                         .allowsHitTesting(false)
+                    if round {
+                        // Le trou du disque, pour voir ce qui sera caché au centre.
+                        Circle()
+                            .fill(Color.black.opacity(0.75))
+                            .overlay(Circle().strokeBorder(Color.white.opacity(0.8), lineWidth: 1.5))
+                            .frame(width: frame.width * 0.27, height: frame.width * 0.27)
+                            .allowsHitTesting(false)
+                    }
                 }
                 .frame(width: geo.size.width, height: geo.size.height)
                 .contentShape(Rectangle())
