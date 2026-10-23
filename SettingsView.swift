@@ -83,6 +83,16 @@ struct SettingsView: View {
                 .padding(.vertical, 4)
                 Toggle("Fond aux couleurs de la pochette", isOn: $settings.dynamicBackground)
                 Toggle("Pochettes animées", isOn: $settings.animatedArtwork)
+                NavigationLink {
+                    AppIconPicker()
+                } label: {
+                    HStack {
+                        Text("Icône de l’app")
+                        Spacer()
+                        Text(AppIconChoice.all.first { $0.iconName == UIApplication.shared.alternateIconName }?.title ?? "Platine")
+                            .foregroundStyle(.secondary)
+                    }
+                }
                 Toggle("Retours haptiques", isOn: $settings.haptics)
                 Picker("Format dans la Collection", selection: $settings.shelfFormat) {
                     ForEach(AlbumFormat.allCases) { Text($0.label).tag($0) }

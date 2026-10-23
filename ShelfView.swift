@@ -66,6 +66,11 @@ struct ShelfView: View {
                     }
                     Spacer(minLength: 24)
                 }
+                // Le carrousel s'efface quand un album est en main : rien ne se superpose.
+                .opacity(inspected == nil ? 1 : 0)
+                .scaleEffect(inspected == nil ? 1 : 0.94)
+                .blur(radius: inspected == nil ? 0 : 12)
+                .allowsHitTesting(inspected == nil)
 
                 if let inspected {
                     ShelfInspector(album: inspected, motion: motion) {
@@ -241,8 +246,10 @@ struct PhysicalAlbum: View {
         case .cd:
             CDCaseView(album: album, showBack: back, lightX: lightX, lightY: lightY, animated: false, badges: badges)
         case .cassette:
+            // Retournée, la face B est remise à l'endroit (sinon le texte apparaît en miroir).
             CassetteView(album: album, sideB: back, spinning: spinning, progress: progress,
                          lightX: lightX, badges: badges)
+                .rotation3DEffect(.degrees(back ? 180 : 0), axis: (x: 0, y: 1, z: 0))
         }
     }
 }
@@ -797,6 +804,43 @@ struct CassetteBottom: Shape {
     }
 }
 
+// MARK: - Choix CD / Cassette
+
+/// Sélecteur en verre avec une pastille qui glisse d'un format à l'autre.
+struct FormatSwitch: View {
+    let format: AlbumFormat
+    var onChange: (AlbumFormat) -> Void
+    @Namespace private var pill
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(AlbumFormat.allCases) { f in
+                Button {
+                    if f != format { onChange(f) }
+                } label: {
+                    Label(f.label, systemImage: f == .cd ? "opticaldisc" : "recordingtape")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(f == format ? Color.black : Color.white.opacity(0.8))
+                        .padding(.horizontal, 14)
+                        .frame(height: 36)
+                        .background {
+                            if f == format {
+                                Capsule().fill(.white).matchedGeometryEffect(id: "pill", in: pill)
+                            }
+                        }
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(f == format ? AccessibilityTraits.isSelected : AccessibilityTraits())
+            }
+        }
+        .padding(4)
+        .glassCapsule()
+        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: format)
+        .sensoryFeedback(.selection, trigger: format)
+    }
+}
+
 // MARK: - Prendre un album en main
 
 /// Un CD ou une cassette en grand : fais-le tourner au doigt, zoome, retourne-le.
@@ -832,21 +876,28 @@ struct ShelfInspector: View {
         let badges = library.badges(for: album)
         let spinning = playingThisAlbum && player.isPlaying
         ZStack {
-            Rectangle().fill(.black.opacity(0.72)).ignoresSafeArea()
-                .onTapGesture(perform: onClose)
+            // Fond opaque : seul l'album en main est visible.
+            ZStack {
+                Color(red: 0.03, green: 0.03, blue: 0.04)
+                RadialGradient(colors: [library.palette(for: album.first)[1].opacity(0.35), .clear],
+                               center: UnitPoint(x: 0.5, y: 0.42), startRadius: 10, endRadius: 380)
+            }
+            .ignoresSafeArea()
+            .contentShape(Rectangle())
+            .onTapGesture(perform: onClose)
 
             VStack(spacing: 16) {
                 HStack {
-                    Picker("Format", selection: Binding(get: { format }, set: { newValue in
-                        withAnimation(.smooth(duration: 0.45)) {
+                    FormatSwitch(format: format) { newValue in
+                        withAnimation(.smooth(duration: 0.5)) {
                             discOut = false
+                            angleX = -6
+                            angleY = 16
+                            startX = -6
+                            startY = 16
                             library.setFormat(newValue, for: album.id)
                         }
-                    })) {
-                        ForEach(AlbumFormat.allCases) { Text($0.label).tag($0) }
                     }
-                    .pickerStyle(.segmented)
-                    .frame(width: 200)
                     Spacer()
                     Button(action: onClose) {
                         Image(systemName: "xmark")
@@ -880,8 +931,8 @@ struct ShelfInspector: View {
                         .id(format)
                         .transition(.asymmetric(insertion: .scale(scale: 0.85).combined(with: .opacity),
                                                 removal: .scale(scale: 1.05).combined(with: .opacity)))
-                        .rotation3DEffect(.degrees(angleX), axis: (x: 1, y: 0, z: 0), perspective: 0.45)
-                        .rotation3DEffect(.degrees(angleY + motion.x * 5), axis: (x: 0, y: 1, z: 0), perspective: 0.45)
+                        .rotation3DEffect(.degrees(angleX), axis: (x: 1, y: 0, z: 0), perspective: 0.3)
+                        .rotation3DEffect(.degrees(angleY + motion.x * 5), axis: (x: 0, y: 1, z: 0), perspective: 0.3)
                         .offset(x: discOut ? -60 : 0)
                         .shadow(color: .black.opacity(0.7), radius: 30, x: -angleY / 4, y: 24)
                         .gesture(rotateGesture.simultaneously(with: zoomGesture))
