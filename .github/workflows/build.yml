@@ -64,7 +64,10 @@ jobs:
             ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES="$ALT_ICONS" \
             ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS=YES \
             build 2>&1 | tee build.log | grep -E "error:|BUILD (SUCCEEDED|FAILED)" || true
-          test -d build/Release-iphoneos/Platine.app
+          # L'app doit être complète, sinon la compilation a échoué : on s'arrête (rouge).
+          grep -q "BUILD SUCCEEDED" build.log
+          test -f build/Release-iphoneos/Platine.app/Info.plist
+          test -f build/Release-iphoneos/Platine.app/Platine
 
       - name: Emballer le .ipa
         run: |
