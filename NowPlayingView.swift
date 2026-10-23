@@ -4,22 +4,37 @@ import SwiftUI
 struct NowPlayingView: View {
     @Environment(Player.self) private var player
     @Environment(Library.self) private var library
+    @Environment(AppSettings.self) private var settings
     @Environment(\.dismiss) private var dismiss
     @State private var editing: EditTarget?
+    @State private var editingInfo: EditTarget?
+    @State private var addTarget: AddToPlaylistTarget?
+    @State private var showQueue = false
+    @State private var showLyrics = false
     @State private var bounceNext = 0
     @State private var bouncePrev = 0
 
     var body: some View {
         let track = player.currentID.flatMap { library.track($0) }
         VStack(spacing: 0) {
-            Spacer(minLength: 24)
-            artwork(track)
-            Spacer(minLength: 20)
-            VStack(spacing: 22) {
+            if player.sleepActive {
+                sleepBadge.padding(.top, 14)
+            }
+            Spacer(minLength: 18)
+            if showLyrics, let t = track {
+                LyricsPane(track: t)
+                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
+            } else {
+                artwork(track)
+            }
+            Spacer(minLength: 18)
+            VStack(spacing: 20) {
                 header(track)
                 Scrubber()
                 transport
-                volume
+                if !showLyrics {
+                    volume.transition(.opacity)
+                }
                 bottomBar
             }
         }
@@ -28,8 +43,18 @@ struct NowPlayingView: View {
         .foregroundStyle(.white)
         .background { AmbientBackground(track: track, dim: 0.26) }
         .animation(.smooth(duration: 0.45), value: player.currentID)
+        .animation(.smooth(duration: 0.4), value: showLyrics)
         .sheet(item: $editing) { target in
             ArtworkEditor(trackID: target.id)
+        }
+        .sheet(item: $editingInfo) { target in
+            TrackInfoEditor(trackID: target.id)
+        }
+        .sheet(item: $addTarget) { target in
+            AddToPlaylistSheet(target: target)
+        }
+        .sheet(isPresented: $showQueue) {
+            QueueView()
         }
         .onChange(of: player.currentID) { _, id in
             if id == nil { dismiss() }
@@ -57,10 +82,28 @@ struct NowPlayingView: View {
             .accessibilityAddTraits(.isButton)
     }
 
+    private var sleepBadge: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            HStack(spacing: 6) {
+                Image(systemName: "moon.zzz.fill")
+                if player.sleepAtTrackEnd {
+                    Text("Arrêt à la fin du morceau")
+                } else if let end = player.sleepEndDate {
+                    Text("Arrêt dans " + formatTime(max(0, end.timeIntervalSince(context.date))))
+                        .monospacedDigit()
+                }
+            }
+            .font(.footnote.weight(.semibold))
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .glassCapsule()
+        }
+    }
+
     // MARK: Titre
 
     private func header(_ t: Track?) -> some View {
-        HStack(alignment: .center, spacing: 12) {
+        HStack(alignment: .center, spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(t?.title ?? "Aucun morceau")
                     .font(.title3.weight(.semibold))
@@ -75,10 +118,49 @@ struct NowPlayingView: View {
             .transition(.opacity.combined(with: .offset(y: 6)))
 
             if let t {
+                Button {
+                    library.toggleFavorite(t.id)
+                } label: {
+                    Image(systemName: t.isFavorite ? "heart.fill" : "heart")
+                        .font(.body.weight(.bold))
+                        .foregroundStyle(t.isFavorite ? AnyShapeStyle(.tint) : AnyShapeStyle(.white))
+                        .contentTransition(.symbolEffect(.replace))
+                        .frame(width: 36, height: 36)
+                        .glassCircle()
+                }
+                .buttonStyle(PressStyle(circle: false))
+                .sensoryFeedback(trigger: t.isFavorite) { _, _ in settings.haptics ? .success : nil }
+                .accessibilityLabel(t.isFavorite ? "Retirer des favoris" : "Ajouter aux favoris")
+
                 Menu {
+                    Button("Ajouter à une playlist", systemImage: "text.badge.plus") {
+                        addTarget = AddToPlaylistTarget(trackIDs: [t.id])
+                    }
                     Button("Changer la pochette", systemImage: "photo.on.rectangle") {
                         editing = EditTarget(id: t.id)
                     }
+                    Button("Modifier les infos", systemImage: "pencil") {
+                        editingInfo = EditTarget(id: t.id)
+                    }
+                    Menu {
+                        ForEach([15, 30, 45, 60, 90], id: \.self) { m in
+                            Button("\(m) minutes") { player.setSleepTimer(minutes: m) }
+                        }
+                        Button("À la fin du morceau") { player.setSleepAtTrackEnd() }
+                        if player.sleepActive {
+                            Button("Désactiver", role: .destructive) { player.setSleepTimer(minutes: nil) }
+                        }
+                    } label: {
+                        Label("Minuterie de sommeil", systemImage: "moon.zzz")
+                    }
+                    Menu {
+                        Picker("Vitesse", selection: Binding(get: { settings.playbackSpeed }, set: { player.setSpeed($0) })) {
+                            ForEach(AppSettings.speeds, id: \.self) { Text(AppSettings.speedLabel($0)).tag($0) }
+                        }
+                    } label: {
+                        Label("Vitesse : " + AppSettings.speedLabel(settings.playbackSpeed), systemImage: "speedometer")
+                    }
+                    Divider()
                     Button("Retirer de la bibliothèque", systemImage: "trash", role: .destructive) {
                         library.remove([t.id])
                         player.removed([t.id])
@@ -119,7 +201,7 @@ struct NowPlayingView: View {
                     .contentTransition(.symbolEffect(.replace))
                     .frame(width: 86, height: 86)
             }
-            .sensoryFeedback(.impact(weight: .medium), trigger: player.isPlaying)
+            .sensoryFeedback(trigger: player.isPlaying) { _, _ in settings.haptics ? .impact(weight: .medium) : nil }
             .accessibilityLabel(player.isPlaying ? "Pause" : "Lecture")
 
             Spacer()
@@ -149,9 +231,13 @@ struct NowPlayingView: View {
     }
 
     private var bottomBar: some View {
-        HStack {
+        HStack(spacing: 0) {
+            toggle(symbol: "quote.bubble", on: showLyrics, label: "Paroles") {
+                showLyrics.toggle()
+            }
+            Spacer()
             toggle(symbol: "shuffle", on: player.shuffle, label: "Lecture aléatoire") {
-                player.shuffle.toggle()
+                player.setShuffle(!player.shuffle)
             }
             Spacer()
             RoutePicker()
@@ -162,6 +248,10 @@ struct NowPlayingView: View {
                    on: player.repeatMode != .off,
                    label: "Répéter") {
                 player.cycleRepeat()
+            }
+            Spacer()
+            toggle(symbol: "list.bullet", on: showQueue, label: "File d’attente") {
+                showQueue = true
             }
         }
         .padding(.horizontal, 8)
@@ -175,12 +265,12 @@ struct NowPlayingView: View {
                 .font(.body.weight(.semibold))
                 .contentTransition(.symbolEffect(.replace))
                 .foregroundStyle(on ? Color.black : Color.white.opacity(0.75))
-                .frame(width: 48, height: 36)
+                .frame(width: 46, height: 36)
                 .background(Capsule().fill(.white.opacity(on ? 0.95 : 0)))
                 .animation(.spring(response: 0.35, dampingFraction: 0.7), value: on)
         }
         .buttonStyle(PressStyle(circle: false))
-        .sensoryFeedback(.selection, trigger: on)
+        .sensoryFeedback(trigger: on) { _, _ in settings.haptics ? .selection : nil }
         .accessibilityLabel(label)
         .accessibilityValue(on ? "Activé" : "Désactivé")
     }

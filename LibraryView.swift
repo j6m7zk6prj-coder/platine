@@ -1,142 +1,105 @@
 import SwiftUI
-import UniformTypeIdentifiers
 
-/// Écran d'accueil : la bibliothèque, le mini-lecteur et les imports.
-struct LibraryView: View {
+// MARK: - Accueil de la bibliothèque
+
+struct LibraryHomeView: View {
     @Environment(Library.self) private var library
     @Environment(Player.self) private var player
-    @Environment(\.scenePhase) private var phase
-    @State private var importing = false
-    @State private var showPlayer = false
-    @State private var editing: EditTarget?
-    @State private var query = ""
+    @Environment(UIState.self) private var ui
 
     private var currentTrack: Track? { player.currentID.flatMap { library.track($0) } }
 
-    private var filtered: [Track] {
-        guard !query.isEmpty else { return library.tracks }
-        return library.tracks.filter {
-            $0.title.localizedCaseInsensitiveContains(query)
-                || $0.artist.localizedCaseInsensitiveContains(query)
-                || $0.album.localizedCaseInsensitiveContains(query)
+    var body: some View {
+        Group {
+            if library.tracks.isEmpty {
+                EmptyLibraryView()
+            } else {
+                content
+            }
         }
+        .navigationTitle("Bibliothèque")
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button { ui.importing = true } label: { Image(systemName: "plus") }
+                    .accessibilityLabel("Importer de la musique")
+            }
+        }
+        .background { AmbientBackground(track: currentTrack, dim: 0.55) }
     }
+
+    private var content: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 28) {
+                Button { ui.showShelf = true } label: {
+                    HStack(spacing: 14) {
+                        Image(systemName: "opticaldisc.fill")
+                            .font(.title)
+                            .foregroundStyle(.tint)
+                            .symbolEffect(.pulse, options: .repeating, isActive: player.isPlaying)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Collection").font(.title3.weight(.semibold))
+                            Text("Tes albums en CD, à prendre en main")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(.tertiary)
+                    }
+                    .padding(16)
+                    .contentShape(Rectangle())
+                    .glass(22, interactive: true)
+                }
+                .buttonStyle(PressStyle(circle: false))
+
+                VStack(spacing: 0) {
+                    LibraryLink(title: "Playlists", icon: "music.note.list", count: library.playlists.count) { PlaylistsView() }
+                    rowDivider
+                    LibraryLink(title: "Artistes", icon: "music.mic", count: library.artists.count) { ArtistsView() }
+                    rowDivider
+                    LibraryLink(title: "Albums", icon: "square.stack", count: library.albums.count) { AlbumsView() }
+                    rowDivider
+                    LibraryLink(title: "Morceaux", icon: "music.note", count: library.tracks.count) { SongsView() }
+                    rowDivider
+                    LibraryLink(title: "Favoris", icon: "heart", count: library.favorites.count) { SongsView(favoritesOnly: true) }
+                }
+                .glass(22)
+
+                if !library.recentlyAdded.isEmpty {
+                    VStack(alignment: .leading, spacing: 14) {
+                        Text("Ajouts récents").font(.title2.bold())
+                        LazyVGrid(columns: [GridItem(.flexible(), spacing: 16), GridItem(.flexible(), spacing: 16)], spacing: 22) {
+                            ForEach(library.recentlyAdded) { album in
+                                NavigationLink { AlbumDetailView(albumID: album.id) } label: { AlbumCard(album: album) }
+                                    .buttonStyle(.plain)
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 8)
+            .padding(.bottom, 24)
+        }
+        .scrollIndicators(.hidden)
+    }
+
+    private var rowDivider: some View {
+        Divider().overlay(Color.white.opacity(0.08)).padding(.leading, 60)
+    }
+}
+
+struct EmptyLibraryView: View {
+    @Environment(UIState.self) private var ui
 
     var body: some View {
-        NavigationStack {
-            Group {
-                if library.tracks.isEmpty {
-                    emptyState
-                } else {
-                    list
-                }
-            }
-            .navigationTitle("Platine")
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button { importing = true } label: {
-                        Image(systemName: "plus")
-                    }
-                    .accessibilityLabel("Importer de la musique")
-                }
-            }
-            .background { AmbientBackground(track: currentTrack, dim: 0.5) }
-        }
-        .safeAreaInset(edge: .bottom) {
-            MiniPlayer { showPlayer = true }
-                .padding(.horizontal, 12)
-                .padding(.bottom, 4)
-                .animation(.spring(response: 0.5, dampingFraction: 0.82), value: player.currentID)
-        }
-        .overlay(alignment: .top) { banner }
-        .animation(.spring(response: 0.45, dampingFraction: 0.8), value: library.message)
-        .animation(.spring(response: 0.45, dampingFraction: 0.8), value: library.isImporting)
-        .sheet(isPresented: $showPlayer) {
-            NowPlayingView()
-                .presentationDragIndicator(.visible)
-                .presentationCornerRadius(40)
-                .presentationBackground(.black)
-        }
-        .sheet(item: $editing) { target in
-            ArtworkEditor(trackID: target.id)
-        }
-        .fileImporter(isPresented: $importing, allowedContentTypes: [.audio], allowsMultipleSelection: true) { result in
-            if case .success(let urls) = result {
-                Task { await library.importFiles(urls) }
-            }
-        }
-        .task { await library.scanInbox() }
-        .onChange(of: phase) { _, newPhase in
-            if newPhase == .active { Task { await library.scanInbox() } }
-        }
-        .onChange(of: library.artworkRevision) { _, _ in
-            player.updateNowPlaying()
-        }
-    }
-
-    // MARK: Liste
-
-    private var list: some View {
-        List {
-            ForEach(filtered) { t in
-                let isCurrent = t.id == player.currentID
-                TrackRow(track: t, isCurrent: isCurrent)
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        if isCurrent { showPlayer = true } else { player.play(t.id) }
-                    }
-                    .listRowBackground(isCurrent ? Color.white.opacity(0.08) : Color.clear)
-                    .listRowSeparatorTint(.white.opacity(0.1))
-                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                        Button(role: .destructive) { remove(t) } label: {
-                            Label("Retirer", systemImage: "trash")
-                        }
-                        Button { editing = EditTarget(id: t.id) } label: {
-                            Label("Pochette", systemImage: "photo")
-                        }
-                        .tint(.indigo)
-                    }
-                    .contextMenu {
-                        Button("Lire", systemImage: "play.fill") { player.play(t.id) }
-                        Button("Changer la pochette", systemImage: "photo.on.rectangle") {
-                            editing = EditTarget(id: t.id)
-                        }
-                        Button("Retirer de la bibliothèque", systemImage: "trash", role: .destructive) { remove(t) }
-                    } preview: {
-                        ArtworkView(track: t, cornerRadius: 0)
-                            .frame(width: 300, height: 300)
-                            .environment(library)
-                    }
-            }
-
-            Text(summary)
-                .font(.footnote)
-                .foregroundStyle(.white.opacity(0.45))
-                .frame(maxWidth: .infinity)
-                .listRowBackground(Color.clear)
-                .listRowSeparator(.hidden)
-                .padding(.vertical, 8)
-        }
-        .listStyle(.plain)
-        .scrollContentBackground(.hidden)
-        .searchable(text: $query, prompt: "Titres, artistes, albums")
-        .animation(.smooth, value: library.tracks.map(\.id))
-    }
-
-    private var summary: String {
-        let n = library.tracks.count
-        let minutes = Int((library.totalDuration / 60).rounded())
-        let length = minutes >= 60 ? "\(minutes / 60) h \(String(format: "%02d", minutes % 60)) min" : "\(minutes) min"
-        return "\(n) morceau\(n > 1 ? "x" : "") · \(length)"
-    }
-
-    private var emptyState: some View {
         ContentUnavailableView {
             Label("Ta bibliothèque est vide", systemImage: "music.note")
         } description: {
-            Text("Importe des morceaux depuis Fichiers, ou copie-les depuis ton PC dans le dossier Platine avec l’app Appareils Apple.")
+            Text("Importe des morceaux depuis Fichiers, ou copie-les depuis ton PC dans le dossier Platine avec iTunes.")
         } actions: {
-            Button { importing = true } label: {
+            Button { ui.importing = true } label: {
                 Text("Importer de la musique")
                     .fontWeight(.semibold)
                     .foregroundStyle(.black)
@@ -145,82 +108,239 @@ struct LibraryView: View {
             }
             .buttonStyle(.borderedProminent)
             .buttonBorderShape(.capsule)
-            .tint(.white)
         }
-    }
-
-    // MARK: Bandeau (import, confirmations)
-
-    @ViewBuilder private var banner: some View {
-        if library.isImporting {
-            HStack(spacing: 10) {
-                ProgressView().tint(.white)
-                Text("Import en cours…").font(.subheadline.weight(.semibold))
-            }
-            .padding(.horizontal, 18)
-            .padding(.vertical, 11)
-            .glassCapsule()
-            .padding(.top, 6)
-            .transition(.move(edge: .top).combined(with: .opacity))
-        } else if let message = library.message {
-            Text(message)
-                .font(.subheadline.weight(.semibold))
-                .padding(.horizontal, 18)
-                .padding(.vertical, 11)
-                .glassCapsule()
-                .padding(.top, 6)
-                .transition(.move(edge: .top).combined(with: .opacity))
-                .task(id: message) {
-                    try? await Task.sleep(nanoseconds: 2_200_000_000)
-                    if library.message == message { library.message = nil }
-                }
-        }
-    }
-
-    private func remove(_ t: Track) {
-        library.remove([t.id])
-        player.removed([t.id])
-        library.message = "« \(t.title) » retiré"
     }
 }
 
-// MARK: - Ligne de la bibliothèque
+struct LibraryLink<Destination: View>: View {
+    let title: String
+    let icon: String
+    let count: Int
+    @ViewBuilder let destination: () -> Destination
 
-struct TrackRow: View {
-    let track: Track
-    let isCurrent: Bool
+    var body: some View {
+        NavigationLink {
+            destination()
+        } label: {
+            HStack(spacing: 14) {
+                Image(systemName: icon)
+                    .font(.title3)
+                    .foregroundStyle(.tint)
+                    .frame(width: 30)
+                Text(title).font(.title3)
+                Spacer()
+                Text("\(count)").foregroundStyle(.secondary).monospacedDigit()
+                Image(systemName: "chevron.right")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+struct AlbumCard: View {
+    let album: AlbumInfo
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ArtworkView(track: album.first, animated: false, cornerRadius: 10)
+                .aspectRatio(1, contentMode: .fit)
+                .shadow(color: .black.opacity(0.3), radius: 10, y: 6)
+            Text(album.title).font(.subheadline.weight(.semibold)).lineLimit(1)
+            Text(album.artist).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+        }
+        .contentShape(Rectangle())
+    }
+}
+
+// MARK: - Boutons Lire / Aléatoire
+
+struct PlayShuffleButtons: View {
+    let ids: [UUID]
     @Environment(Player.self) private var player
 
     var body: some View {
         HStack(spacing: 12) {
-            ArtworkView(track: track, animated: isCurrent, small: !isCurrent, cornerRadius: 7)
-                .frame(width: 50, height: 50)
+            Button { player.play(ids: ids, shuffled: false) } label: {
+                Label("Lire", systemImage: "play.fill")
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 13)
+                    .glass(14, interactive: true)
+            }
+            Button { player.play(ids: ids, shuffled: true) } label: {
+                Label("Aléatoire", systemImage: "shuffle")
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 13)
+                    .glass(14, interactive: true)
+            }
+        }
+        .font(.body.weight(.semibold))
+        .foregroundStyle(.tint)
+        .buttonStyle(.plain)
+        .disabled(ids.isEmpty)
+    }
+}
+
+// MARK: - Lignes de morceaux
+
+/// Lignes de morceaux à placer dans une List : lecture, menus, balayages.
+struct TrackRows: View {
+    let tracks: [Track]
+    var numbered = false
+    var showArtwork = true
+    var onDelete: ((IndexSet) -> Void)? = nil
+    var onMove: ((IndexSet, Int) -> Void)? = nil
+    @Environment(Library.self) private var library
+    @Environment(Player.self) private var player
+    @Environment(AppSettings.self) private var settings
+    @Environment(UIState.self) private var ui
+
+    var body: some View {
+        ForEach(tracks.indices, id: \.self) { i in
+            let t = tracks[i]
+            let isCurrent = t.id == player.currentID
+            TrackRow(track: t, isCurrent: isCurrent,
+                     number: numbered ? (t.trackNumber > 0 ? t.trackNumber : i + 1) : nil,
+                     showArtwork: showArtwork)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    if isCurrent { ui.showPlayer = true } else { player.play(ids: tracks.map(\.id), startAt: t.id) }
+                }
+                .listRowBackground(isCurrent ? Color.white.opacity(0.08) : Color.clear)
+                .listRowSeparatorTint(.white.opacity(0.1))
+                .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                    Button { player.playNext([t.id]) } label: {
+                        Label("Lire ensuite", systemImage: "text.line.first.and.arrowtriangle.forward")
+                    }
+                    .tint(.orange)
+                }
+                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                    Button { ui.addToPlaylist = AddToPlaylistTarget(trackIDs: [t.id]) } label: {
+                        Label("Playlist", systemImage: "text.badge.plus")
+                    }
+                    .tint(.indigo)
+                    Button { library.toggleFavorite(t.id) } label: {
+                        Label(t.isFavorite ? "Retirer" : "Favori", systemImage: t.isFavorite ? "heart.slash" : "heart")
+                    }
+                    .tint(.pink)
+                }
+                .contextMenu {
+                    TrackMenuItems(track: t)
+                } preview: {
+                    ArtworkView(track: t, cornerRadius: 0)
+                        .frame(width: 300, height: 300)
+                        .environment(library)
+                        .environment(settings)
+                }
+        }
+        .onDelete(perform: onDelete)
+        .onMove(perform: onMove)
+    }
+}
+
+/// Actions communes à un morceau (menu contextuel).
+struct TrackMenuItems: View {
+    let track: Track
+    @Environment(Library.self) private var library
+    @Environment(Player.self) private var player
+    @Environment(UIState.self) private var ui
+
+    var body: some View {
+        Button("Lire ensuite", systemImage: "text.line.first.and.arrowtriangle.forward") { player.playNext([track.id]) }
+        Button("Lire plus tard", systemImage: "text.line.last.and.arrowtriangle.forward") { player.playLater([track.id]) }
+        Button("Ajouter à une playlist", systemImage: "text.badge.plus") {
+            ui.addToPlaylist = AddToPlaylistTarget(trackIDs: [track.id])
+        }
+        Button(track.isFavorite ? "Retirer des favoris" : "Ajouter aux favoris",
+               systemImage: track.isFavorite ? "heart.slash" : "heart") {
+            library.toggleFavorite(track.id)
+        }
+        Button("Changer la pochette", systemImage: "photo.on.rectangle") { ui.editing = EditTarget(id: track.id) }
+        Button("Modifier les infos", systemImage: "pencil") { ui.editingInfo = EditTarget(id: track.id) }
+        Divider()
+        Button("Retirer de la bibliothèque", systemImage: "trash", role: .destructive) {
+            library.remove([track.id])
+            player.removed([track.id])
+            library.message = "« \(track.title) » retiré"
+        }
+    }
+}
+
+struct TrackRow: View {
+    let track: Track
+    let isCurrent: Bool
+    var number: Int? = nil
+    var showArtwork = true
+    @Environment(Player.self) private var player
+
+    var body: some View {
+        HStack(spacing: 12) {
+            if let number {
+                ZStack {
+                    if isCurrent {
+                        Image(systemName: "waveform")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.tint)
+                            .symbolEffect(.variableColor.iterative, isActive: player.isPlaying)
+                    } else {
+                        Text("\(number)")
+                            .font(.subheadline)
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .frame(width: 26)
+            }
+            if showArtwork {
+                ArtworkView(track: track, animated: isCurrent, small: !isCurrent, cornerRadius: 7)
+                    .frame(width: 50, height: 50)
+            }
             VStack(alignment: .leading, spacing: 2) {
                 Text(track.title)
                     .font(.body.weight(isCurrent ? .semibold : .regular))
+                    .foregroundStyle(isCurrent ? AnyShapeStyle(.tint) : AnyShapeStyle(.primary))
                     .lineLimit(1)
-                Text(track.subtitle)
-                    .font(.subheadline)
-                    .foregroundStyle(.white.opacity(0.55))
-                    .lineLimit(1)
+                if showArtwork || number == nil {
+                    Text(track.subtitle)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
             }
             Spacer(minLength: 8)
-            if isCurrent {
+            if track.isFavorite {
+                Image(systemName: "heart.fill")
+                    .font(.caption2)
+                    .foregroundStyle(.tint)
+            }
+            if isCurrent && number == nil {
                 Image(systemName: "waveform")
                     .font(.body.weight(.semibold))
+                    .foregroundStyle(.tint)
                     .symbolEffect(.variableColor.iterative, isActive: player.isPlaying)
                     .transition(.scale.combined(with: .opacity))
             } else {
                 Text(formatTime(track.duration))
                     .font(.footnote)
                     .monospacedDigit()
-                    .foregroundStyle(.white.opacity(0.4))
+                    .foregroundStyle(.tertiary)
             }
         }
         .padding(.vertical, 2)
         .animation(.smooth, value: isCurrent)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(isCurrent ? AccessibilityTraits([.isSelected, .isButton]) : AccessibilityTraits.isButton)
+    }
+}
+
+extension View {
+    /// Liste transparente, posée sur le fond liquide.
+    func plainList() -> some View {
+        self.listStyle(.plain).scrollContentBackground(.hidden)
     }
 }
 
@@ -265,6 +385,17 @@ struct MiniPlayer: View {
             .padding(.leading, 8)
             .padding(.trailing, 6)
             .padding(.vertical, 8)
+            .overlay(alignment: .bottom) {
+                // Fine barre de progression, comme dans Musique.
+                GeometryReader { geo in
+                    Capsule()
+                        .fill(.white.opacity(0.7))
+                        .frame(width: geo.size.width * min(1, player.currentTime / max(player.duration, 0.01)), height: 2)
+                }
+                .frame(height: 2)
+                .padding(.horizontal, 24)
+                .padding(.bottom, 2)
+            }
             .contentShape(Rectangle())
             .onTapGesture(perform: onOpen)
             .glass(30, interactive: true)

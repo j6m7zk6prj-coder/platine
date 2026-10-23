@@ -95,6 +95,7 @@ struct ArtworkView: View {
     var small = false
     var cornerRadius: CGFloat = 12
     @Environment(Library.self) private var library
+    @Environment(AppSettings.self) private var settings
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
@@ -111,9 +112,9 @@ struct ArtworkView: View {
         if let t = track, let url = library.artworkURL(t) {
             let kind = library.artworkKind(t)
             Group {
-                if animated && kind == .video {
+                if animated && settings.animatedArtwork && kind == .video {
                     LoopingVideoView(url: url)
-                } else if animated && kind == .gif {
+                } else if animated && settings.animatedArtwork && kind == .gif {
                     AnimatedImageView(url: url)
                 } else if let img = small ? library.thumbnail(for: t) : library.image(for: t) {
                     Image(uiImage: img).resizable().scaledToFill()
@@ -271,15 +272,16 @@ struct AmbientBackground: View {
     let track: Track?
     var dim: Double = 0.3
     @Environment(Library.self) private var library
+    @Environment(AppSettings.self) private var settings
     @State private var drift = false
 
     var body: some View {
-        let colors = track.map { library.palette(for: $0) } ?? Palette.defaults
+        let colors = settings.dynamicBackground ? (track.map { library.palette(for: $0) } ?? Palette.defaults) : Palette.defaults
         GeometryReader { geo in
             let side = max(geo.size.width, geo.size.height)
             ZStack {
                 colors[0]
-                if let t = track, let img = library.thumbnail(for: t) {
+                if settings.dynamicBackground, let t = track, let img = library.thumbnail(for: t) {
                     Image(uiImage: img)
                         .resizable()
                         .scaledToFill()
