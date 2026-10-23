@@ -26,7 +26,8 @@ struct ShelfView: View {
     /// Sous-section de la Collection : albums (CD et cassettes) ou bandes-son de jeux.
     @State private var section = 0
 
-    private static let quick = Animation.smooth(duration: 0.22)
+    /// Ouverture et fermeture : un ressort court, comme les transitions d'iOS.
+    private static let quick = Animation.spring(response: 0.42, dampingFraction: 0.88)
 
     var body: some View {
         let _ = library.artworkRevision
@@ -46,6 +47,8 @@ struct ShelfView: View {
                                onOpen: { i in open(albums[i]) },
                                onLongPress: { i in stickerAlbum = albums[i] })
                     .ignoresSafeArea()
+                    // L'étagère recule légèrement quand tu prends un album en main.
+                    .scaleEffect(isOpen ? 0.92 : 1)
                     .opacity(isOpen ? 0 : 1)
                     .allowsHitTesting(!isOpen)
             }
@@ -200,6 +203,8 @@ struct ShelfView: View {
     private func caption(_ album: AlbumInfo) -> some View {
         let badges = library.badges(for: album)
         return VStack(spacing: 14) {
+            // Superposés pendant le fondu (l'ancien titre ne pousse jamais le nouveau).
+            ZStack {
             VStack(spacing: 4) {
                 Text(album.title)
                     .font(.title2.bold())
@@ -217,8 +222,13 @@ struct ShelfView: View {
                     .padding(.top, 6)
                 }
             }
-            // Le texte change en fondu, sans que l'ancien et le nouveau se superposent.
-            .contentTransition(.opacity)
+            // Le titre change en fondu rapide : l'ancien part tout de suite, le nouveau arrive en glissant à peine.
+            .id(album.id)
+            .transition(.asymmetric(
+                insertion: .opacity.combined(with: .offset(y: 6)).animation(.smooth(duration: 0.28).delay(0.06)),
+                removal: .opacity.animation(.easeOut(duration: 0.1))))
+            }
+            .frame(maxWidth: .infinity)
 
             HStack(spacing: 12) {
                 Button { player.play(ids: album.tracks.map(\.id), shuffled: false) } label: {
@@ -240,7 +250,7 @@ struct ShelfView: View {
             .buttonStyle(PressStyle(circle: false))
         }
         .padding(.horizontal, 20)
-        .animation(.smooth(duration: 0.3), value: album.id)
+        .animation(.smooth(duration: 0.28), value: album.id)
     }
 }
 
@@ -385,8 +395,10 @@ final class ShelfSceneController: NSObject, UIGestureRecognizerDelegate {
         camera.fieldOfView = 30
         camera.zNear = 0.1
         cameraNode.camera = camera
-        cameraNode.position = SCNVector3(0, 1.45, 9.4)
-        cameraNode.look(at: SCNVector3(0, -0.05, 0))
+        // Caméra presque à hauteur des pochettes, comme Cover Flow : l'objet est grand, centré,
+        // et son reflet occupe le sol en dessous.
+        cameraNode.position = SCNVector3(0, 0.95, 8.6)
+        cameraNode.look(at: SCNVector3(0, 0.16, 0))
         scene.rootNode.addChildNode(cameraNode)
 
         view.scene = scene
@@ -488,6 +500,21 @@ final class ShelfSceneController: NSObject, UIGestureRecognizerDelegate {
         shadowNode.eulerAngles.x = -.pi / 2
         shadowNode.position = SCNVector3(0, -n.shownSize.y / 2 + 0.004, 0.05)
         n.root.addChildNode(shadowNode)
+        if let r = n.reflection {
+            // Reflet sur le sol brillant : une simple image retournée, préparée à l'avance (zéro calcul en plus).
+            let fit = CGFloat(n.fit)
+            let plane = SCNPlane(width: r.width * fit, height: r.height * fit)
+            let rm = SCNMaterial()
+            rm.lightingModel = .constant
+            rm.diffuse.contents = r.image
+            rm.blendMode = .alpha
+            rm.writesToDepthBuffer = false
+            plane.materials = [rm]
+            let reflect = SCNNode(geometry: plane)
+            let bottom = -n.shownSize.y / 2
+            reflect.position = SCNVector3(r.x * n.fit, bottom - Float(r.height * fit) / 2 - 0.006, r.z * n.fit)
+            n.root.addChildNode(reflect)
+        }
         n.root.opacity = 0
         scene.rootNode.addChildNode(n.root)
         SCNTransaction.begin()
@@ -507,8 +534,8 @@ final class ShelfSceneController: NSObject, UIGestureRecognizerDelegate {
         lastTime = now
         if !dragging {
             // Ressort amorti façon UIKit : le CD glisse puis se pose, sans rebond.
-            let k = 190.0
-            let damping = 2 * k.squareRoot() * 0.95
+            let k = 230.0
+            let damping = 2 * k.squareRoot()
             vel += (k * (target - pos) - damping * vel) * dt
             pos += vel * dt
             if abs(vel) < 0.003 && abs(target - pos) < 0.0005 { pos = target; vel = 0 }
@@ -531,22 +558,7 @@ final class ShelfSceneController: NSObject, UIGestureRecognizerDelegate {
             }
             guard let n = node(at: i, force: ad < 0.6) else { continue }
             n.root.isHidden = false
-            if n.format == .game {
-                placeOnShelf(n, d: d, ad: ad, isFocus: i == focus && ad < 0.5, tiltX: tiltX, tiltY: tiltY)
-                continue
-            }
-            let s = d < 0 ? -1.0 : 1.0
-            let e = min(ad, 1)
-            let ease = e * e * (3 - 2 * e)
-            let x = d * 0.55 + s * ease * 1.0
-            let z = -ease * 1.1 - max(0, ad - 1) * 0.25
-            let rotY = -s * ease * 1.0
-            let scale = 1 - ease * 0.05
-            let h = Double(n.shownSize.y)
-            n.root.position = SCNVector3(Float(x), Float(h / 2 + 0.001), Float(z))
-            n.root.scale = SCNVector3(Float(scale), Float(scale), Float(scale))
-            let isFocus = i == focus && ad < 0.5
-            n.root.eulerAngles = SCNVector3(Float(isFocus ? -tiltY * 0.05 : 0), Float(rotY + (isFocus ? tiltX * 0.1 : 0)), 0)
+            coverFlow(n, d: d, ad: ad, isFocus: i == focus && ad < 0.5, tiltX: tiltX, tiltY: tiltY)
         }
         if focus != lastFocus {
             lastFocus = focus
@@ -556,21 +568,29 @@ final class ShelfSceneController: NSObject, UIGestureRecognizerDelegate {
         }
     }
 
-    /// Jeux rangés comme sur une étagère : on voit leurs tranches côte à côte ;
-    /// celui du centre sort du rang et se tourne vers toi.
-    private func placeOnShelf(_ n: AlbumNode, d: Double, ad: Double, isFocus: Bool, tiltX: Double, tiltY: Double) {
+    /// Mise en page façon Cover Flow, pour les CD comme pour les jaquettes : l'objet du centre est de face
+    /// et avance vers toi ; les autres se tournent vers lui et s'empilent serrés de chaque côté.
+    /// Tout est continu (position, vitesse, angle) : aucun à-coup en passant d'un objet à l'autre.
+    private func coverFlow(_ n: AlbumNode, d: Double, ad: Double, isFocus: Bool, tiltX: Double, tiltY: Double) {
         let s = d < 0 ? -1.0 : 1.0
         let e = min(ad, 1)
         let ease = e * e * (3 - 2 * e)
-        let spine = Double(n.shownSize.z) + 0.035
-        let x = s * (ease * 0.78 + max(0, ad - 1) * spine)
-        let z = -ease * 0.55
-        // De face (0) quand il est au centre, de profil (tranche vers toi) dans le rang.
-        let rotY = ease * Double.pi / 2
+        let game = n.format == .game
+        let gap = game ? 0.24 : 0.27
+        let x = d * gap + s * ease * (game ? 0.7 : 0.66)
+        let z = (1 - ease) * 0.22 - ease * 0.8 - max(0, ad - 1) * 0.05
+        let rotY = -s * ease * 1.12
         let h = Double(n.shownSize.y)
         n.root.position = SCNVector3(Float(x), Float(h / 2 + 0.001), Float(z))
         n.root.scale = SCNVector3(1, 1, 1)
-        n.root.eulerAngles = SCNVector3(Float(isFocus ? -tiltY * 0.05 : 0), Float(rotY + (isFocus ? tiltX * 0.1 : 0)), 0)
+        // Les derniers s'effacent doucement au lieu de disparaître d'un coup.
+        let fade = ad > 3 ? max(0, 1 - (ad - 3) / 1.5) : 1
+        if abs(Double(n.root.opacity) - fade) > 0.01, n.root.action(forKey: "appear") == nil { n.root.opacity = CGFloat(fade) }
+        // L'inclinaison de l'iPhone ne joue que sur l'objet du centre, en douceur (pas de saut).
+        let w = 1 - ease
+        let tx = -tiltY * 0.05 * w
+        let ty = rotY + tiltX * 0.1 * w
+        n.root.eulerAngles = SCNVector3(Float(tx), Float(ty), 0)
     }
 
     private func updateSpot(for album: AlbumInfo) {
@@ -585,7 +605,7 @@ final class ShelfSceneController: NSObject, UIGestureRecognizerDelegate {
 
     @objc private func handlePan(_ g: UIPanGestureRecognizer) {
         let width = max(view.bounds.width, 1)
-        let unit = Double(width) * 0.5
+        let unit = Double(width) * 0.42
         switch g.state {
         case .began:
             dragging = true
@@ -602,9 +622,10 @@ final class ShelfSceneController: NSObject, UIGestureRecognizerDelegate {
             dragging = false
             // L'élan du doigt est conservé : le carrousel continue puis se pose en douceur.
             let v = -Double(g.velocity(in: view).x) / unit
-            let projected = pos + v * 0.2
+            // Projection comme UIScrollView : un petit coup avance d'un album, un grand lancer en fait défiler plusieurs.
+            let projected = pos + v * 0.3
             target = projected.rounded().clamped(0, Double(albums.count - 1))
-            vel = max(-14, min(14, v))
+            vel = max(-18, min(18, v))
         }
     }
 
@@ -812,7 +833,12 @@ struct InspectorSceneView: UIViewRepresentable {
 
     private func apply(_ c: InspectorSceneController) {
         let builder = AlbumNodeBuilder(library: library, settings: settings)
-        c.show(album: album, format: format, badges: badges, builder: builder, animated: active)
+        if active {
+            c.show(album: album, format: format, badges: badges, builder: builder, animated: true)
+        } else {
+            // Pendant que tu fais défiler : rien n'est fabriqué. L'album est préparé une fois le carrousel posé.
+            c.prepare(album: album, format: format, badges: badges, builder: builder)
+        }
         c.setActive(active)
         if discOut { c.ensureDisc() }
         c.node?.setDiscOut(discOut && active)
@@ -873,6 +899,20 @@ final class InspectorSceneController: NSObject, UIGestureRecognizerDelegate {
     private var active = false
     private var builder: AlbumNodeBuilder?
     private var album: AlbumInfo?
+    private var lastTime: CFTimeInterval = 0
+    private var zoomV = 0.0
+    private var prepareTask: Task<Void, Never>?
+
+    /// Prépare l'album du centre en arrière-plan, seulement quand le carrousel s'est arrêté dessus.
+    func prepare(album: AlbumInfo, format: AlbumFormat, badges: [AlbumBadge], builder: AlbumNodeBuilder) {
+        guard node?.signature != builder.signature(album, format, badges) else { return }
+        prepareTask?.cancel()
+        prepareTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(450))
+            guard let self, !Task.isCancelled, !self.active else { return }
+            self.show(album: album, format: format, badges: badges, builder: builder, animated: false)
+        }
+    }
 
     override init() {
         super.init()
@@ -937,9 +977,10 @@ final class InspectorSceneController: NSObject, UIGestureRecognizerDelegate {
 
     func start() {
         guard link == nil else { return }
-        let l = CADisplayLink(target: self, selector: #selector(tick))
-        l.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 120, preferred: 120)
+        let l = CADisplayLink(target: self, selector: #selector(tick(_:)))
+        l.preferredFrameRateRange = CAFrameRateRange(minimum: 80, maximum: 120, preferred: 120)
         l.add(to: .main, forMode: .common)
+        lastTime = 0
         link = l
     }
 
@@ -956,10 +997,12 @@ final class InspectorSceneController: NSObject, UIGestureRecognizerDelegate {
         active = on
         if on {
             // L'objet arrive en pivotant légèrement, comme quand on le prend en main.
-            rx = restX; tx = restX
-            ry = restY + 0.55; ty = restY
+            prepareTask?.cancel()
+            // On « soulève » l'objet : il grandit, pivote et se pose avec un très léger rebond.
+            rx = restX + 0.12; tx = restX
+            ry = restY + 0.7; ty = restY
             vx = 0; vy = 0
-            zoom = 0.9; zoomTarget = 1
+            zoom = 0.8; zoomTarget = 1; zoomV = 0
             start()
             view.rendersContinuously = true
             view.isPlaying = true
@@ -1043,15 +1086,22 @@ final class InspectorSceneController: NSObject, UIGestureRecognizerDelegate {
         zoomTarget = 1
     }
 
-    @objc private func tick() {
+    @objc private func tick(_ link: CADisplayLink) {
+        // Ressorts calés sur le temps réel (comme les animations d'iOS) : identiques à 60 ou 120 images/s.
+        let now = link.targetTimestamp
+        let dt = lastTime == 0 ? 1.0 / 120 : min(max(now - lastTime, 1.0 / 240), 1.0 / 30)
+        lastTime = now
         if !dragging {
-            // Ressort doux et amorti : l'objet se pose sans à-coup.
-            vx = (vx + (tx - rx) * 0.07) * 0.78
-            vy = (vy + (ty - ry) * 0.07) * 0.78
-            rx += vx
-            ry += vy
+            let k = 150.0
+            let c = 2 * k.squareRoot() * 0.86
+            vx += (k * (tx - rx) - c * vx) * dt
+            vy += (k * (ty - ry) - c * vy) * dt
+            rx += vx * dt
+            ry += vy * dt
         }
-        zoom += (zoomTarget - zoom) * 0.18
+        let kz = 230.0
+        zoomV += (kz * (zoomTarget - zoom) - 2 * kz.squareRoot() * 0.8 * zoomV) * dt
+        zoom += zoomV * dt
         let mx = motion?.x ?? 0
         let my = motion?.y ?? 0
         holder.eulerAngles = SCNVector3(Float(rx - my * 0.05), Float(ry + mx * 0.08), 0)
@@ -1080,12 +1130,14 @@ final class InspectorSceneController: NSObject, UIGestureRecognizerDelegate {
         default:
             dragging = false
             // L'élan du geste choisit la face sur laquelle l'objet se pose (avant ou arrière).
-            let projected = ry + Double(g.velocity(in: view).x) * 0.0095 * 0.22
+            // L'élan du doigt est gardé : l'objet continue de tourner puis se pose.
+            let spin = (Double(g.velocity(in: view).x) * 0.0095).clamped(-22, 22)
+            let projected = ry + spin * 0.22
             let face = ((projected - restY) / .pi).rounded()
             ty = restY + face * .pi
             tx = restX
             vx = 0
-            vy = 0
+            vy = spin
         }
     }
 

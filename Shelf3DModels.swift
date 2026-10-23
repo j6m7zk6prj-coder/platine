@@ -28,6 +28,15 @@ enum Physical {
 
 // MARK: - Un album en 3D
 
+/// Face avant d'un objet, retournée pour son reflet (unités du modèle, avant mise à l'échelle).
+struct ReflectionFace {
+    let image: UIImage
+    let x: Float
+    let width: CGFloat
+    let height: CGFloat
+    let z: Float
+}
+
 final class AlbumNode {
     let albumID: String
     let format: AlbumFormat
@@ -46,6 +55,8 @@ final class AlbumNode {
     var spineNodes: [SCNNode] = []
     private(set) var spinning = false
     private(set) var discOut = false
+    /// Image déjà retournée et fondue, pour le reflet sur le sol de la Collection.
+    var reflection: ReflectionFace?
 
     var size: SCNVector3 { Physical.size(format) }
     /// Échelle d'affichage (le boîtier de jeu est réduit pour avoir la même présence qu'un CD).
@@ -295,8 +306,15 @@ struct AlbumNodeBuilder {
             parts.append(k)
         }
 
-        return AlbumNode(albumID: album.id, format: .cd, signature: signature, parts: parts,
-                         discPivot: extras ? makeDisc(album) : nil, reels: [])
+        let cdNode = AlbumNode(albumID: album.id, format: .cd, signature: signature, parts: parts,
+                               discPivot: extras ? makeDisc(album) : nil, reels: [])
+        if !extras, let coverImage {
+            let key: String = "reflect|" + signature
+            if let img = cached(key, { Self.reflectionImage(coverImage, frame: nil, inset: 0) }) {
+                cdNode.reflection = ReflectionFace(image: img, x: Float(W / 2 - 0.62), width: 1.2, height: 1.2, z: Float(D / 2))
+            }
+        }
+        return cdNode
     }
 
     /// Le CD lui-même, rangé (invisible) dans le boîtier : un vrai disque de 120 mm,
@@ -955,7 +973,50 @@ struct AlbumNodeBuilder {
         let node = AlbumNode(albumID: album.id, format: .game, signature: signature, parts: parts,
                              discPivot: extras ? makeDisc(album) : nil, reels: [], lidPivot: lidPivot)
         node.spineNodes = [spineNode, spineFilmNode]
+        if !extras {
+            let key: String = "reflect|" + signature
+            let frame: UIColor = platform.plastic.withAlphaComponent(1)
+            let inset: CGFloat = (W - insert.width) / 2 / W
+            if let img = cached(key, { Self.reflectionImage(cover, frame: frame, inset: inset) }) {
+                node.reflection = ReflectionFace(image: img, x: 0, width: W, height: H, z: 0.07)
+            }
+        }
         return node
+    }
+
+    /// Reflet façon Cover Flow : l'image retournée, qui s'efface en descendant. Calculé une seule fois.
+    static func reflectionImage(_ image: UIImage, frame: UIColor?, inset: CGFloat) -> UIImage? {
+        let w: CGFloat = 220
+        let ratio: CGFloat = image.size.width > 0 ? image.size.height / image.size.width : 1
+        let h: CGFloat = frame == nil ? w : w * 1.152
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = false
+        let size = CGSize(width: w, height: h)
+        return UIGraphicsImageRenderer(size: size, format: format).image { ctx in
+            let cg = ctx.cgContext
+            // Retourné de haut en bas, comme dans un sol brillant.
+            cg.translateBy(x: 0, y: h)
+            cg.scaleBy(x: 1, y: -1)
+            if let frame {
+                frame.setFill()
+                UIBezierPath(roundedRect: CGRect(origin: .zero, size: size), cornerRadius: 6).fill()
+                let ix = w * inset
+                let iw = w - 2 * ix
+                let ih = min(h - 2 * ix, iw * ratio)
+                image.draw(in: CGRect(x: ix, y: (h - ih) / 2, width: iw, height: ih))
+            } else {
+                image.draw(in: CGRect(origin: .zero, size: size))
+            }
+            cg.scaleBy(x: 1, y: -1)
+            cg.translateBy(x: 0, y: -h)
+            // Fondu : bien visible au pied de l'objet, invisible à mi-hauteur.
+            let colors = [UIColor(white: 0, alpha: 0.30).cgColor, UIColor(white: 0, alpha: 0.10).cgColor, UIColor(white: 0, alpha: 0).cgColor] as CFArray
+            if let g = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors, locations: [0, 0.28, 0.62]) {
+                cg.setBlendMode(.destinationIn)
+                cg.drawLinearGradient(g, start: .zero, end: CGPoint(x: 0, y: h), options: [.drawsAfterEndLocation])
+            }
+        }
     }
 
     /// Film plastique : reflets sur toute la surface, et un bord un peu plus brillant (surépaisseur).
@@ -1661,19 +1722,7 @@ enum Studio {
             spotNode.look(at: SCNVector3(0, 0, 0))
             scene.rootNode.addChildNode(spotNode)
 
-            let floor = SCNFloor()
-            // Pas de reflet calculé (il redessinait toute la scène une seconde fois) : bien plus fluide.
-            floor.reflectivity = 0
-            floor.reflectionFalloffEnd = 0.9
-            floor.reflectionResolutionScaleFactor = 0.3
-            floor.reflectionCategoryBitMask = 1
-            let m = SCNMaterial()
-            m.lightingModel = .physicallyBased
-            m.diffuse.contents = UIColor(white: 0.025, alpha: 1)
-            m.roughness.contents = 0.8
-            floor.materials = [m]
-            scene.rootNode.addChildNode(SCNNode(geometry: floor))
-
+            // Pas de sol 3D : le reflet de chaque objet est une image préparée à l'avance (bien plus léger).
             let bg = UIColor(red: 0.03, green: 0.03, blue: 0.04, alpha: 1)
             scene.background.contents = bg
             scene.fogColor = bg
