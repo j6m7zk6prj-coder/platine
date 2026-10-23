@@ -350,6 +350,8 @@ struct MiniPlayer: View {
     var onOpen: () -> Void
     @Environment(Player.self) private var player
     @Environment(Library.self) private var library
+    @Environment(AppSettings.self) private var settings
+    @State private var dragY: CGFloat = 0
 
     var body: some View {
         if let id = player.currentID, let t = library.track(id) {
@@ -399,9 +401,35 @@ struct MiniPlayer: View {
             .contentShape(Rectangle())
             .onTapGesture(perform: onOpen)
             .glass(30, interactive: true)
+            .contextMenu {
+                Button(player.isPlaying ? "Pause" : "Lecture", systemImage: player.isPlaying ? "pause.fill" : "play.fill") {
+                    player.togglePlay()
+                }
+                Button("Arrêter la lecture", systemImage: "stop.fill") { player.quit() }
+            }
+            // Glisse le mini-lecteur vers le bas pour quitter la lecture.
+            .offset(y: max(0, dragY))
+            .opacity(1 - Double(min(max(0, dragY), 120)) / 160)
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 12)
+                    .onChanged { value in
+                        if value.translation.height > 0 { dragY = value.translation.height }
+                    }
+                    .onEnded { value in
+                        if value.translation.height > 70 || value.predictedEndTranslation.height > 180 {
+                            withAnimation(.smooth(duration: 0.3)) { dragY = 160 }
+                            player.quit()
+                        }
+                        withAnimation(.spring(response: 0.4, dampingFraction: 0.8).delay(0.3)) { dragY = 0 }
+                    }
+            )
+            .sensoryFeedback(trigger: player.currentID == nil) { _, stopped in
+                stopped && settings.haptics ? .impact(weight: .light) : nil
+            }
             .animation(.smooth(duration: 0.4), value: t.id)
             .transition(.move(edge: .bottom).combined(with: .opacity))
             .accessibilityAction(named: "Ouvrir le lecteur", onOpen)
+            .accessibilityAction(named: "Arrêter la lecture") { player.quit() }
         }
     }
 }

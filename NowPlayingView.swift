@@ -161,6 +161,9 @@ struct NowPlayingView: View {
                         Label("Vitesse : " + AppSettings.speedLabel(settings.playbackSpeed), systemImage: "speedometer")
                     }
                     Divider()
+                    Button("Arrêter la lecture", systemImage: "stop.fill") {
+                        player.quit()
+                    }
                     Button("Retirer de la bibliothèque", systemImage: "trash", role: .destructive) {
                         library.remove([t.id])
                         player.removed([t.id])

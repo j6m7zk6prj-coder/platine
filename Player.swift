@@ -224,6 +224,25 @@ final class Player {
         updateNowPlaying()
     }
 
+    /// Quitte la lecture : fondu de sortie, puis le mini-lecteur et l'écran verrouillé disparaissent,
+    /// et les autres apps (Spotify, vidéos…) peuvent reprendre leur son.
+    func quit() {
+        sleepTask?.cancel()
+        sleepEndDate = nil
+        sleepAtTrackEnd = false
+        isPlaying = false
+        fadeTask?.cancel()
+        manualFade = true
+        fadeTask = Task { [weak self] in
+            guard let self else { return }
+            if self.player.rate > 0 { await self.fade(to: 0, duration: 0.25) }
+            if Task.isCancelled { return }
+            self.stopAll()
+            self.manualFade = false
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        }
+    }
+
     // MARK: Minuterie de sommeil
 
     func setSleepTimer(minutes: Int?) {
