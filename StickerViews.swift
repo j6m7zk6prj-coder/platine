@@ -560,10 +560,11 @@ struct CaseCustomizer: View {
     @State private var cropping: CropSource?
 
     enum Slot: String, Identifiable {
-        case cover, back, spine, disc
+        case wrap, cover, back, spine, disc
         var id: String { rawValue }
         var title: String {
             switch self {
+            case .wrap: return "Jaquette complète"
             case .cover: return "Jaquette"
             case .back: return "Dos du boîtier"
             case .spine: return "Tranche"
@@ -572,6 +573,7 @@ struct CaseCustomizer: View {
         }
         var detail: String {
             switch self {
+            case .wrap: return "Dos + tranche + face en une image : tout se place d’un coup"
             case .cover: return "La face avant, sous le film"
             case .back: return "L’arrière du boîtier"
             case .spine: return "Le côté, visible sur l’étagère"
@@ -580,6 +582,7 @@ struct CaseCustomizer: View {
         }
         var symbol: String {
             switch self {
+            case .wrap: return "book.pages"
             case .cover: return "rectangle.portrait"
             case .back: return "rectangle.portrait.on.rectangle.portrait"
             case .spine: return "rectangle.split.3x1"
@@ -588,7 +591,7 @@ struct CaseCustomizer: View {
         }
     }
 
-    private var slots: [Slot] { game == nil ? [.disc] : [.cover, .back, .spine, .disc] }
+    private var slots: [Slot] { game == nil ? [.disc] : [.wrap, .cover, .back, .spine, .disc] }
 
     var body: some View {
         NavigationStack {
@@ -667,12 +670,22 @@ struct CaseCustomizer: View {
                 Image(systemName: slot.symbol).foregroundStyle(.secondary)
             }
         }
-        .frame(width: slot == .spine ? 18 : (slot == .disc ? 52 : 44), height: 52)
+        .frame(width: thumbWidth(slot), height: 52)
         .clipShape(shape)
+    }
+
+    private func thumbWidth(_ slot: Slot) -> CGFloat {
+        switch slot {
+        case .spine: return 10
+        case .disc: return 52
+        case .wrap: return 92
+        default: return 45
+        }
     }
 
     private func current(_ slot: Slot) -> UIImage? {
         switch slot {
+        case .wrap: return nil
         case .cover: return game.flatMap { library.gameCoverImage($0) }
         case .back: return game.flatMap { library.extraImage("back", $0) }
         case .spine: return game.flatMap { library.extraImage("spine", $0) }
@@ -680,21 +693,43 @@ struct CaseCustomizer: View {
         }
     }
 
-    private func isCustom(_ slot: Slot) -> Bool { current(slot) != nil }
+    private func isCustom(_ slot: Slot) -> Bool {
+        if slot == .wrap { return [Slot.cover, .back, .spine].contains { current($0) != nil } }
+        return current(slot) != nil
+    }
+
+    /// Une bande verticale de l'image, de `from` à `to` (fractions de la largeur).
+    static func slice(_ image: UIImage, _ from: CGFloat, _ to: CGFloat) -> UIImage {
+        let w = image.size.width, h = image.size.height
+        let rect = CGRect(x: w * from, y: 0, width: w * (to - from), height: h)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = image.scale
+        return UIGraphicsImageRenderer(size: rect.size, format: format).image { _ in
+            image.draw(at: CGPoint(x: -rect.minX, y: 0))
+        }
+    }
 
     private func aspect(_ slot: Slot) -> CGFloat {
-        let s = Physical.size(.game)
-        let w = CGFloat(s.x), h = CGFloat(s.y)
+        let insert = Physical.insert
         switch slot {
-        case .cover: return (w - 0.06) / (h - 0.06)
-        case .back: return (w - 0.05) / (h - 0.05)
-        case .spine: return 0.112 / (h - 0.13)
+        case .wrap: return Physical.wrapAspect
+        case .cover, .back: return insert.width / insert.height
+        case .spine: return Physical.insertSpine / insert.height
         case .disc: return 1
         }
     }
 
     private func save(_ image: UIImage, in slot: Slot) {
         switch slot {
+        case .wrap:
+            // Découpe selon les vraies proportions : dos 128 mm | tranche 14 mm | face 128 mm.
+            guard let game else { return }
+            let total = Physical.insert.width * 2 + Physical.insertSpine
+            let backEnd = Physical.insert.width / total
+            let spineEnd = (Physical.insert.width + Physical.insertSpine) / total
+            library.setExtraImage(Self.slice(image, 0, backEnd), kind: "back", key: game)
+            library.setExtraImage(Self.slice(image, backEnd, spineEnd), kind: "spine", key: game)
+            library.setGameCover(Self.slice(image, spineEnd, 1), for: game)
         case .cover: if let game { library.setGameCover(image, for: game) }
         case .back: if let game { library.setExtraImage(image, kind: "back", key: game) }
         case .spine: if let game { library.setExtraImage(image, kind: "spine", key: game) }
@@ -704,6 +739,12 @@ struct CaseCustomizer: View {
 
     private func reset(_ slot: Slot) {
         switch slot {
+        case .wrap:
+            if let game {
+                library.resetGameCover(game)
+                library.resetExtraImage("back", game)
+                library.resetExtraImage("spine", game)
+            }
         case .cover: if let game { library.resetGameCover(game) }
         case .back: if let game { library.resetExtraImage("back", game) }
         case .spine: if let game { library.resetExtraImage("spine", game) }

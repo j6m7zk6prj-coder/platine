@@ -42,7 +42,6 @@ struct RootView: View {
                 ShelfView(visible: ui.showShelf, onClose: { ui.showShelf = false })
                     .environment(\.colorScheme, .dark)
                     .opacity(ui.showShelf ? 1 : 0)
-                    .scaleEffect(ui.showShelf ? 1 : 1.06)
                     .allowsHitTesting(ui.showShelf)
                     .accessibilityHidden(!ui.showShelf)
                     .animation(.smooth(duration: 0.32), value: ui.showShelf)

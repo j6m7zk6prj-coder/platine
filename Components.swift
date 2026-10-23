@@ -313,13 +313,13 @@ struct AmbientBackground: View {
             let side = max(geo.size.width, geo.size.height)
             ZStack {
                 if light { Color(white: 0.97) } else { colors[0] }
-                if settings.dynamicBackground, let t = track, let img = library.thumbnail(for: t) {
+                if settings.dynamicBackground, let t = track, let img = library.backdrop(for: t) {
                     Image(uiImage: img)
                         .resizable()
+                        .interpolation(.medium)
                         .scaledToFill()
                         .frame(width: geo.size.width, height: geo.size.height)
                         .scaleEffect(1.4)
-                        .blur(radius: 60)
                         .opacity(light ? 0.22 : 0.55)
                         .id(library.artworkURL(t))
                         .transition(.opacity)
@@ -338,6 +338,8 @@ struct AmbientBackground: View {
             }
             .frame(width: geo.size.width, height: geo.size.height)
             .clipped()
+            // Tout le fond est dessiné d'un bloc par le processeur graphique : défilement plus fluide.
+            .drawingGroup()
         }
         .animation(.easeInOut(duration: 1.3), value: colors)
         .animation(.easeInOut(duration: 1.0), value: track.flatMap { library.artworkURL($0) })

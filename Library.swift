@@ -1,6 +1,7 @@
 import Foundation
 import AVFoundation
 import ImageIO
+import CoreImage
 import UIKit
 import SwiftUI
 import Observation
@@ -295,6 +296,22 @@ final class Library {
         }
         return best?.0
     }
+
+    /// Fond flou déjà calculé une fois (bien plus léger qu'un flou recalculé à chaque image).
+    func backdrop(for t: Track) -> UIImage? {
+        guard let url = artworkURL(t) else { return nil }
+        let key = ("blur-" + url.lastPathComponent) as NSString
+        if let cached = images.object(forKey: key) { return cached }
+        guard let thumb = thumbnail(for: t), let cg = thumb.cgImage else { return nil }
+        let source = CIImage(cgImage: cg)
+        let blurred = source.clampedToExtent().applyingGaussianBlur(sigma: 9).cropped(to: source.extent)
+        guard let out = Self.ciContext.createCGImage(blurred, from: source.extent) else { return nil }
+        let img = UIImage(cgImage: out)
+        images.setObject(img, forKey: key)
+        return img
+    }
+
+    static let ciContext = CIContext(options: [.useSoftwareRenderer: false])
 
     func thumbnail(for t: Track) -> UIImage? {
         guard let url = artworkURL(t) else { return nil }

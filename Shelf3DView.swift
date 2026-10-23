@@ -217,8 +217,8 @@ struct ShelfView: View {
                     .padding(.top, 6)
                 }
             }
-            .id(album.id)
-            .transition(.opacity)
+            // Le texte change en fondu, sans que l'ancien et le nouveau se superposent.
+            .contentTransition(.opacity)
 
             HStack(spacing: 12) {
                 Button { player.play(ids: album.tracks.map(\.id), shuffled: false) } label: {
@@ -314,7 +314,7 @@ final class ShelfSceneController: NSObject, UIGestureRecognizerDelegate {
         let c = obtain(builder: builder, start: start)
         c.update(albums: albums, library: library, settings: settings)
         let order = albums.indices.sorted { abs($0 - start) < abs($1 - start) }
-        for i in order.prefix(9) {
+        for i in order.prefix(40) {
             _ = c.node(at: i, force: true)
             // Une pochette à la fois, pour ne jamais ralentir l'app.
             try? await Task.sleep(for: .milliseconds(40))
@@ -472,7 +472,8 @@ final class ShelfSceneController: NSObject, UIGestureRecognizerDelegate {
     fileprivate func node(at i: Int, force: Bool = false) -> AlbumNode? {
         let album = albums[i]
         if let n = nodes[album.id] { return n }
-        guard force || !builtThisFrame else { return nil }
+        // Un modèle neuf n'est fabriqué qu'à l'arrêt (jamais pendant que tu fais défiler) : zéro à-coup.
+        guard force || (!builtThisFrame && !dragging && abs(vel) < 0.05) else { return nil }
         builtThisFrame = true
         let n = builder.make(album, format: formats[i], badges: badges[i], extras: false)
         // Ombre douce posée au sol.
@@ -998,16 +999,19 @@ final class InspectorSceneController: NSObject, UIGestureRecognizerDelegate {
         guard node?.signature != sig else { return }
         let old = node
         let fresh = builder.make(album, format: format, badges: badges, extras: false)
+        let wasOpen = old?.discOut ?? false
         guard animated else {
             old?.root.removeFromParentNode()
             holder.addChildNode(fresh.root)
             node = fresh
+            if wasOpen { keepOpen(fresh) }
             return
         }
         fresh.root.opacity = 0
         fresh.root.scale = SCNVector3(0.92, 0.92, 0.92)
         holder.addChildNode(fresh.root)
         node = fresh
+        if wasOpen { keepOpen(fresh) }
         SCNTransaction.begin()
         SCNTransaction.animationDuration = 0.3
         SCNTransaction.animationTimingFunction = CAMediaTimingFunction(name: .easeOut)
@@ -1017,6 +1021,12 @@ final class InspectorSceneController: NSObject, UIGestureRecognizerDelegate {
         old?.root.scale = SCNVector3(1.05, 1.05, 1.05)
         SCNTransaction.completionBlock = { old?.root.removeFromParentNode() }
         SCNTransaction.commit()
+    }
+
+    /// Un modèle reconstruit (nouvelle image, nouveau sticker…) reste ouvert s'il l'était, disque compris.
+    private func keepOpen(_ fresh: AlbumNode) {
+        ensureDisc()
+        fresh.setDiscOut(true, animated: false)
     }
 
     /// Demi-tour vers l'autre face.
@@ -1122,8 +1132,7 @@ struct StickerPicker: View {
 
     private var placerAspect: CGFloat {
         guard library.gameName(album.id) != nil else { return 1 }
-        let s = Physical.size(.game)
-        return (CGFloat(s.x) - 0.06) / (CGFloat(s.y) - 0.06)
+        return Physical.insert.width / Physical.insert.height
     }
 
     var body: some View {
@@ -1293,19 +1302,34 @@ struct CoverCropper: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            // Barre du haut bien en dessous de l'heure et de la Dynamic Island, gros boutons faciles à toucher.
             HStack {
-                Button("Annuler") { dismiss() }
+                Button { dismiss() } label: {
+                    Text("Annuler")
+                        .font(.body.weight(.medium))
+                        .padding(.horizontal, 16)
+                        .frame(height: 40)
+                        .background(Capsule().fill(Color.white.opacity(0.14)))
+                }
                 Spacer()
                 Text(title).font(.headline)
                 Spacer()
-                Button("Utiliser") {
+                Button {
                     onDone(crop(frame: lastFrame))
                     dismiss()
+                } label: {
+                    Text("Utiliser")
+                        .font(.body.weight(.bold))
+                        .foregroundStyle(.black)
+                        .padding(.horizontal, 18)
+                        .frame(height: 40)
+                        .background(Capsule().fill(Color.white))
                 }
-                .fontWeight(.semibold)
             }
-            .padding(.horizontal, 20)
-            .frame(height: 52)
+            .buttonStyle(PressStyle(circle: false))
+            .padding(.horizontal, 16)
+            .padding(.top, topInset + 8)
+            .padding(.bottom, 8)
 
             // Zone de recadrage : sa taille ne dépend jamais de l'image (rien ne saute quand on zoome).
             GeometryReader { geo in
@@ -1371,12 +1395,26 @@ struct CoverCropper: View {
                 .foregroundStyle(.white.opacity(0.7))
                 .frame(height: 50)
         }
+        .padding(.bottom, bottomInset)
         .foregroundStyle(.white)
-        .background(Color.black.ignoresSafeArea())
+        .background(Color.black)
+        .ignoresSafeArea()
     }
 
+    /// Marges de l'écran (heure, Dynamic Island, barre du bas), lues sur la fenêtre elle-même.
+    private var windowInsets: UIEdgeInsets {
+        let window = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap(\.windows)
+            .first { $0.isKeyWindow }
+        return window?.safeAreaInsets ?? UIEdgeInsets(top: 54, left: 0, bottom: 34, right: 0)
+    }
+    private var topInset: CGFloat { max(windowInsets.top, 47) }
+    private var bottomInset: CGFloat { max(windowInsets.bottom, 20) }
+
     private func frameSize(in size: CGSize) -> CGSize {
-        let w = max(100, min(size.width - 48, (size.height - 40) * aspect))
+        // Même un cadre très fin (la tranche) tient en entier à l'écran.
+        let w = max(12, min(size.width - 48, (size.height - 40) * aspect))
         return CGSize(width: w, height: w / aspect)
     }
 

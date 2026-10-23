@@ -11,9 +11,16 @@ enum Physical {
         switch format {
         case .cd: return SCNVector3(1.42, 1.25, 0.1)
         case .cassette: return SCNVector3(1.42, 0.899, 0.17)
-        case .game: return SCNVector3(1.35, 1.715, 0.14)
+        case .game: return SCNVector3(1.35, 1.555, 0.14)
         }
     }
+
+    /// Jaquette des jeux PS3, PS4 et PS5 : face et dos de 128 × 148 mm, tranche de 14 mm
+    /// (jaquette complète : 270 × 148 mm). Le boîtier fait 135 × 155,5 × 14 mm.
+    static let insert = CGSize(width: 1.28, height: 1.48)
+    static let insertSpine: CGFloat = 0.14
+    /// Jaquette complète (dos + tranche + face), largeur ÷ hauteur.
+    static var wrapAspect: CGFloat { (insert.width * 2 + insertSpine) / insert.height }
 
     /// Profondeur du disque rangé dans le boîtier de jeu (posé sur le plateau).
     static let gameDiscZ: Float = -0.023
@@ -35,6 +42,8 @@ final class AlbumNode {
     let reels: [SCNNode]
     /// Couvercle du boîtier de jeu, qui s'ouvre comme un livre.
     let lidPivot: SCNNode?
+    /// Tranche imprimée et son film : cachées boîtier ouvert à plat.
+    var spineNodes: [SCNNode] = []
     private(set) var spinning = false
     private(set) var discOut = false
 
@@ -72,7 +81,7 @@ final class AlbumNode {
     }
     private var outDisc: SCNVector3 {
         // Boîtier de jeu : le disque reste dans son plateau, juste soulevé sur son ergot.
-        format == .game ? SCNVector3(0, 0.02, Physical.gameDiscZ + 0.012) : SCNVector3(0.05, 0.72, 0.02)
+        format == .game ? SCNVector3(0, 0.02, Physical.gameDiscZ + 0.006) : SCNVector3(0.05, 0.72, 0.02)
     }
     private var outBody: SCNVector3 { SCNVector3(0, -0.32, 0) }
 
@@ -93,6 +102,7 @@ final class AlbumNode {
     func settle() {
         discOut = false
         lidPivot?.eulerAngles = SCNVector3(0, 0, 0)
+        for n in spineNodes { n.opacity = 1 }
         content.scale = SCNVector3(fit, fit, fit)
         content.position = SCNVector3(0, 0, 0)
         guard let discPivot else { return }
@@ -129,21 +139,14 @@ final class AlbumNode {
             SCNTransaction.animationDuration = animated ? 0.75 : 0
             SCNTransaction.animationTimingFunction = CAMediaTimingFunction(controlPoints: 0.3, 0.8, 0.25, 1)
             lidPivot.eulerAngles = out ? SCNVector3(0, -Float.pi, 0) : SCNVector3(0, 0, 0)
+            for n in spineNodes { n.opacity = out ? 0 : 1 }
             content.scale = out ? SCNVector3(openScale, openScale, openScale) : SCNVector3(fit, fit, fit)
             content.position = out ? SCNVector3(halfWidth * openScale, 0, 0) : SCNVector3(0, 0, 0)
             discPivot.position = out ? outDisc : restDisc
             SCNTransaction.completionBlock = { [weak self] in
-                if self?.discOut == false { discPivot.opacity = 0 }
+                if let self, !self.discOut { discPivot.opacity = 0 } else { discPivot.opacity = 1 }
             }
             SCNTransaction.commit()
-            if out && animated {
-                // Le disque se détache de l'ergot avec un petit rebond.
-                let up = SCNAction.moveBy(x: 0, y: 0, z: 0.05, duration: 0.16)
-                up.timingMode = .easeOut
-                let down = SCNAction.moveBy(x: 0, y: 0, z: -0.05, duration: 0.24)
-                down.timingMode = .easeIn
-                discPivot.runAction(.sequence([.wait(duration: 0.55), up, down]), forKey: "pop")
-            }
             return
         }
         SCNTransaction.begin()
@@ -788,7 +791,8 @@ struct AlbumNodeBuilder {
         let W = CGFloat(size.x), H = CGFloat(size.y)
         let game = library.gameName(album.id) ?? album.title
         var parts: [SCNNode] = []
-        let corner: CGFloat = 0.06   // coins bien arrondis, comme les vrais boîtiers
+        let corner: CGFloat = 0.035   // coins arrondis de 3,5 mm, comme les vrais boîtiers
+        let insert = Physical.insert
         let platform = library.platform(of: game)
 
         // Plastique translucide : transparent (PS3), bleu foncé (PS4) ou bleu vif (PS5).
@@ -815,7 +819,7 @@ struct AlbumNodeBuilder {
         let trayImage = cached("gametray|" + platform.rawValue) { Self.gameTray(platform) }
 
         // Un seul bloc : seules les arêtes extérieures sont arrondies, les pièces se touchent sans jour.
-        let backPlate = Self.roundedSlab(width: W, height: H, corner: corner, depth: 0.04, chamfer: 0.012, mode: .back)
+        let backPlate = Self.roundedSlab(width: W, height: H, corner: corner, depth: 0.04, chamfer: 0.007, mode: .back)
         backPlate.materials = [plastic]
         let backNode = SCNNode(geometry: backPlate)
         backNode.position.z = -0.051
@@ -848,7 +852,7 @@ struct AlbumNodeBuilder {
         hingeNode.position = SCNVector3(Float(-W / 2) + 0.012, 0, -0.004)
         parts.append(hingeNode)
         // Dos imprimé, sous le film arrière.
-        let backPrint = SCNPlane(width: W - 0.05, height: H - 0.05)
+        let backPrint = SCNPlane(width: insert.width, height: insert.height)
         backPrint.cornerRadius = 0.02
         backPrint.materials = [Self.printed(back ?? UIColor.darkGray)]
         let backPrintNode = SCNNode(geometry: backPrint)
@@ -877,14 +881,15 @@ struct AlbumNodeBuilder {
             parts.append(t)
         }
         // Tranche gauche : la jaquette en papier qui s'enroule, sous un film brillant.
-        let spineHeight = H - 2 * corner - 0.01
-        let spinePlane = SCNPlane(width: 0.112, height: spineHeight)
+        // Tranche de 14 mm × 148 mm : exactement la bande du milieu d'une vraie jaquette.
+        let spineHeight = insert.height
+        let spinePlane = SCNPlane(width: Physical.insertSpine - 0.004, height: spineHeight)
         spinePlane.materials = [Self.printed(spine ?? UIColor.white)]
         let spineNode = SCNNode(geometry: spinePlane)
         spineNode.eulerAngles.y = -.pi / 2
         spineNode.position = SCNVector3(Float(-W / 2) - 0.0015, 0, -0.0015)
         parts.append(spineNode)
-        let spineFilm = SCNPlane(width: 0.118, height: spineHeight + 0.01)
+        let spineFilm = SCNPlane(width: Physical.insertSpine, height: spineHeight + 0.01)
         spineFilm.materials = [Self.glassy(strength: 0.55)]
         let spineFilmNode = SCNNode(geometry: spineFilm)
         spineFilmNode.eulerAngles.y = -.pi / 2
@@ -895,7 +900,7 @@ struct AlbumNodeBuilder {
         // Couvercle : il tourne autour de la charnière, à gauche, comme un livre.
         let lidPivot = SCNNode()
         lidPivot.position = SCNVector3(Float(-W / 2), 0, -0.004)
-        let lid = Self.roundedSlab(width: W, height: H, corner: corner, depth: 0.074, chamfer: 0.014, mode: .front)
+        let lid = Self.roundedSlab(width: W, height: H, corner: corner, depth: 0.074, chamfer: 0.007, mode: .front)
         lid.materials = [plastic]
         let lidNode = SCNNode(geometry: lid)
         lidNode.position = SCNVector3(Float(W / 2), 0, 0.037)
@@ -922,14 +927,14 @@ struct AlbumNodeBuilder {
             lidPivot.addChildNode(d)
         }
         // La jaquette glissée sous le film transparent.
-        let coverPlane = SCNPlane(width: W - 0.06, height: H - 0.06)
+        let coverPlane = SCNPlane(width: insert.width, height: insert.height)
         coverPlane.cornerRadius = 0.018
         coverPlane.materials = [Self.printed(cover)]
         let coverNode = SCNNode(geometry: coverPlane)
         coverNode.position = SCNVector3(Float(W / 2), 0, 0.0745)
         lidPivot.addChildNode(coverNode)
         if let stickers = placedStickerLayer(album, badges: badges, signature: signature,
-                                             width: W - 0.06, height: H - 0.06) {
+                                             width: insert.width, height: insert.height) {
             stickers.position = SCNVector3(Float(W / 2), 0, 0.0751)
             lidPivot.addChildNode(stickers)
         }
@@ -947,8 +952,10 @@ struct AlbumNodeBuilder {
         lidPivot.addChildNode(innerNode)
         parts.append(lidPivot)
 
-        return AlbumNode(albumID: album.id, format: .game, signature: signature, parts: parts,
-                         discPivot: extras ? makeDisc(album) : nil, reels: [], lidPivot: lidPivot)
+        let node = AlbumNode(albumID: album.id, format: .game, signature: signature, parts: parts,
+                             discPivot: extras ? makeDisc(album) : nil, reels: [], lidPivot: lidPivot)
+        node.spineNodes = [spineNode, spineFilmNode]
+        return node
     }
 
     /// Film plastique : reflets sur toute la surface, et un bord un peu plus brillant (surépaisseur).
@@ -1655,7 +1662,8 @@ enum Studio {
             scene.rootNode.addChildNode(spotNode)
 
             let floor = SCNFloor()
-            floor.reflectivity = 0.1
+            // Pas de reflet calculé (il redessinait toute la scène une seconde fois) : bien plus fluide.
+            floor.reflectivity = 0
             floor.reflectionFalloffEnd = 0.9
             floor.reflectionResolutionScaleFactor = 0.3
             floor.reflectionCategoryBitMask = 1
