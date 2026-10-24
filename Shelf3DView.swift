@@ -1206,6 +1206,10 @@ struct StickerPicker: View {
     }
 
     private var placerBackground: UIImage? {
+        if let object = CollectionObject(rawValue: album.id.replacingOccurrences(of: "object:", with: "")),
+           album.id.hasPrefix("object:") {
+            return object.backImage
+        }
         if let game = library.gameName(album.id) {
             return library.gameCoverImage(game)
                 ?? AlbumNodeBuilder.generatedGameCover(title: game, season: GameCatalog.season(game),
@@ -1215,6 +1219,10 @@ struct StickerPicker: View {
     }
 
     private var placerAspect: CGFloat {
+        if let object = CollectionObject(rawValue: album.id.replacingOccurrences(of: "object:", with: "")),
+           album.id.hasPrefix("object:") {
+            return object.backAspect
+        }
         guard library.gameName(album.id) != nil else { return 1 }
         return Physical.insert.width / Physical.insert.height
     }

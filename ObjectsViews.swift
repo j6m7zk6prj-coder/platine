@@ -25,6 +25,37 @@ enum CollectionObject: String, CaseIterable, Identifiable {
         }
     }
 
+    /// Largeur ÷ hauteur du dos (pour placer les stickers).
+    var backAspect: CGFloat { 67.3 / 138.4 }
+
+    /// Un « album » fictif qui sert à ranger les stickers collés au dos de l'objet.
+    var stickerAlbum: AlbumInfo {
+        let placeholder = Track(title: name, artist: "", album: "", duration: 0, audioFile: "", addedAt: .distantPast)
+        return AlbumInfo(id: "object:" + rawValue, title: name, artist: "", year: 0, tracks: [placeholder])
+    }
+
+    /// Le dos du téléphone, à plat (fond de l'écran de placement des stickers).
+    var backImage: UIImage {
+        let size = CGSize(width: 337, height: 692)
+        return UIGraphicsImageRenderer(size: size).image { ctx in
+            let rect = CGRect(origin: .zero, size: size)
+            UIColor(white: 0.07, alpha: 1).setFill()
+            UIBezierPath(roundedRect: rect, cornerRadius: 50).fill()
+            // Reflet du verre.
+            let colors = [UIColor(white: 1, alpha: 0.08).cgColor, UIColor(white: 1, alpha: 0).cgColor] as CFArray
+            if let g = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors, locations: [0, 1]) {
+                ctx.cgContext.drawLinearGradient(g, start: .zero, end: CGPoint(x: size.width, y: size.height * 0.6), options: [])
+            }
+            // Appareil photo et flash, en haut à gauche (vus de dos).
+            UIColor(white: 0.25, alpha: 1).setFill()
+            UIBezierPath(ovalIn: CGRect(x: 27, y: 27, width: 46, height: 46)).fill()
+            UIColor(white: 0.02, alpha: 1).setFill()
+            UIBezierPath(ovalIn: CGRect(x: 33, y: 33, width: 34, height: 34)).fill()
+            UIColor(red: 0.95, green: 0.9, blue: 0.75, alpha: 1).setFill()
+            UIBezierPath(ovalIn: CGRect(x: 92, y: 42, width: 16, height: 16)).fill()
+        }
+    }
+
     private static let key = "collectionObjects"
 
     static func loadOwned() -> [CollectionObject] {
@@ -45,11 +76,13 @@ struct ObjectsRoom: View {
     @State private var owned: [CollectionObject] = CollectionObject.loadOwned()
     @State private var showCatalog = false
     @State private var volume = VolumeModel()
+    @State private var stickerTarget: AlbumInfo?
+    @State private var flipToken = 0
 
     var body: some View {
         ZStack {
             if let object = owned.first {
-                PhoneSceneView(object: object, active: active, volume: volume)
+                PhoneSceneView(object: object, active: active, volume: volume, flipToken: flipToken)
                     .ignoresSafeArea()
                 VStack(spacing: 12) {
                     Spacer()
@@ -63,17 +96,28 @@ struct ObjectsRoom: View {
                             .padding(.horizontal, 30)
                             .padding(.top, 4)
                     }
-                    Button(role: .destructive) {
-                        withAnimation(.smooth) {
-                            owned.removeAll { $0 == object }
-                            CollectionObject.saveOwned(owned)
+                    HStack(spacing: 12) {
+                        Button {
+                            stickerTarget = object.stickerAlbum
+                        } label: {
+                            Label("Stickers au dos", systemImage: "seal.fill")
+                                .font(.subheadline.weight(.semibold))
+                                .padding(.horizontal, 18)
+                                .padding(.vertical, 11)
+                                .glassCapsule()
                         }
-                    } label: {
-                        Label("Retirer de la Collection", systemImage: "trash")
-                            .font(.subheadline.weight(.semibold))
-                            .padding(.horizontal, 20)
-                            .padding(.vertical, 11)
-                            .glassCapsule()
+                        Button(role: .destructive) {
+                            withAnimation(.smooth) {
+                                owned.removeAll { $0 == object }
+                                CollectionObject.saveOwned(owned)
+                            }
+                        } label: {
+                            Label("Retirer", systemImage: "trash")
+                                .font(.subheadline.weight(.semibold))
+                                .padding(.horizontal, 18)
+                                .padding(.vertical, 11)
+                                .glassCapsule()
+                        }
                     }
                     .buttonStyle(PressStyle(circle: false))
                 }
@@ -101,6 +145,13 @@ struct ObjectsRoom: View {
             }
         }
         .background { HiddenVolumeView(model: volume).frame(width: 1, height: 1).opacity(0.01) }
+        // En refermant les stickers, le téléphone se retourne pour montrer son dos.
+        .sheet(item: $stickerTarget, onDismiss: { flipToken += 1 }) { album in
+            StickerPicker(album: album)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+                .environment(\.colorScheme, .dark)
+        }
         .sheet(isPresented: $showCatalog) {
             ObjectCatalog(owned: owned) { object in
                 withAnimation(.smooth) {
@@ -160,10 +211,29 @@ struct PhoneSceneView: UIViewRepresentable {
     let object: CollectionObject
     var active: Bool
     let volume: VolumeModel
+    var flipToken = 0
     @Environment(Library.self) private var library
     @Environment(Player.self) private var player
 
     func makeCoordinator() -> PhoneSceneController { PhoneSceneController() }
+
+    /// Les stickers du dos, redessinés seulement quand ils changent.
+    private func updateStickers(_ c: PhoneSceneController) {
+        let album = object.stickerAlbum
+        let badges = library.badges(for: album)
+        let keys = library.stickerOrder(for: album, badges: badges)
+        let signature = keys.joined(separator: ",") + "|" + library.placementSignature(album.id)
+        guard signature != c.stickerSignature else { return }
+        c.stickerSignature = signature
+        guard !keys.isEmpty else { c.setBackStickers(nil); return }
+        let size = CGSize(width: 337, height: 692)
+        let layer = PlacedStickers(album: album, badges: badges, size: size)
+            .environment(library)
+        let renderer = ImageRenderer(content: layer)
+        renderer.scale = 2
+        renderer.isOpaque = false
+        c.setBackStickers(renderer.uiImage)
+    }
 
     func makeUIView(context: Context) -> SCNView {
         let c = context.coordinator
@@ -172,6 +242,8 @@ struct PhoneSceneView: UIViewRepresentable {
         c.volume = volume
         c.setActive(active)
         c.refreshScreen()
+        c.flipToken = flipToken
+        updateStickers(c)
         return c.view
     }
 
@@ -179,6 +251,11 @@ struct PhoneSceneView: UIViewRepresentable {
         let c = context.coordinator
         c.volume = volume
         c.setActive(active)
+        updateStickers(c)
+        if flipToken != c.flipToken {
+            c.flipToken = flipToken
+            c.showBack()
+        }
         // Nouveau morceau, lecture ou pause : l'écran se met à jour tout de suite.
         let state = (player.currentID?.uuidString ?? "-") + (player.isPlaying ? "▶︎" : "⏸")
         if state != c.lastState {
@@ -211,6 +288,10 @@ final class PhoneSceneController: NSObject, UIGestureRecognizerDelegate {
     weak var player: Player?
     var volume: VolumeModel?
     var lastState = ""
+    var stickerSignature = "-"
+    var flipToken = 0
+    private let stickerMaterial = SCNMaterial()
+    private var stickerNode: SCNNode?
 
     private let cameraNode = SCNNode()
     private let holder = SCNNode()
@@ -236,9 +317,10 @@ final class PhoneSceneController: NSObject, UIGestureRecognizerDelegate {
         let camera = SCNCamera()
         camera.fieldOfView = 30
         cameraNode.camera = camera
-        cameraNode.position = SCNVector3(0, 0, 4.4)
+        cameraNode.position = SCNVector3(0, 0, 5.8)
         scene.rootNode.addChildNode(cameraNode)
-        holder.position = SCNVector3(0, 0.18, 0)
+        // Bien centré entre le titre et les boutons du bas : on le voit en entier.
+        holder.position = SCNVector3(0, 0.2, 0)
         scene.rootNode.addChildNode(holder)
         holder.addChildNode(buildPhone())
 
@@ -308,16 +390,17 @@ final class PhoneSceneController: NSObject, UIGestureRecognizerDelegate {
         let path = UIBezierPath(roundedRect: CGRect(x: -W / 2, y: -H / 2, width: W, height: H), cornerRadius: Phone.corner)
         path.flatness = 0.001
         let body = SCNShape(path: path, extrusionDepth: D)
-        body.chamferRadius = 0.017
+        // Côtés bien arrondis : l'aluminium fait le tour en arrondi, le verre est à plat devant et derrière.
+        body.chamferRadius = 0.03
         body.chamferMode = .both
         let profile = UIBezierPath()
         profile.move(to: CGPoint(x: 0, y: 1))
         profile.addQuadCurve(to: CGPoint(x: 1, y: 0), controlPoint: CGPoint(x: 1, y: 1))
         body.chamferProfile = profile
         let front = Self.glass(white: 0.015)
-        let back = Self.glass(white: 0.06)
+        let back = Self.glass(white: 0.035)
         let band = Self.metal()
-        body.materials = [front, back, band, front, back]
+        body.materials = [front, back, band, band, band]
         phone.addChildNode(SCNNode(geometry: body))
 
         let fz = Float(D / 2)
@@ -333,8 +416,8 @@ final class PhoneSceneController: NSObject, UIGestureRecognizerDelegate {
         phone.addChildNode(screenNode)
 
         // Reflet du verre par-dessus l'écran.
-        let gloss = SCNPlane(width: W - 0.04, height: H - 0.04)
-        gloss.cornerRadius = Phone.corner - 0.02
+        let gloss = SCNPlane(width: W - 0.06, height: H - 0.06)
+        gloss.cornerRadius = Phone.corner - 0.03
         let gm = SCNMaterial()
         gm.lightingModel = .blinn
         gm.diffuse.contents = UIColor.black
@@ -366,23 +449,50 @@ final class PhoneSceneController: NSObject, UIGestureRecognizerDelegate {
         homeNode = SCNNode()
         homeNode.name = "home"
         homeNode.position = SCNVector3(0, Float(-H / 2 + 0.085), fz)
-        let ring = SCNTube(innerRadius: 0.05, outerRadius: 0.056, height: 0.003)
+        // Anneau arrondi en léger relief autour d'un disque de verre un peu creusé.
+        let ring = SCNTorus(ringRadius: 0.053, pipeRadius: 0.0032)
         ring.materials = [Self.metal()]
         let ringNode = SCNNode(geometry: ring)
         ringNode.eulerAngles.x = .pi / 2
+        ringNode.position.z = 0.0012
         ringNode.name = "home"
         homeNode.addChildNode(ringNode)
-        let disc = SCNCylinder(radius: 0.05, height: 0.002)
-        disc.materials = [Self.glass(white: 0.02)]
+        let disc = SCNCylinder(radius: 0.051, height: 0.002)
+        disc.materials = [Self.glass(white: 0.025)]
         let discNode = SCNNode(geometry: disc)
         discNode.eulerAngles.x = .pi / 2
-        discNode.position.z = -0.0005
+        discNode.position.z = -0.0006
         discNode.name = "home"
         homeNode.addChildNode(discNode)
         phone.addChildNode(homeNode)
 
-        // Dos : appareil photo (anneau en relief) et flash.
+        // Dos en verre : reflet brillant par-dessus, et les stickers collés au dos.
         let bz = Float(-D / 2)
+        let backW = W - 0.06, backH = H - 0.06
+        let stickers = SCNPlane(width: backW, height: backH)
+        stickers.cornerRadius = Phone.corner - 0.03
+        stickerMaterial.lightingModel = .physicallyBased
+        stickerMaterial.diffuse.contents = UIColor.clear
+        stickerMaterial.roughness.contents = 0.25
+        stickerMaterial.transparencyMode = .aOne
+        stickerMaterial.writesToDepthBuffer = false
+        stickers.materials = [stickerMaterial]
+        let sNode = SCNNode(geometry: stickers)
+        sNode.eulerAngles.y = .pi
+        sNode.position = SCNVector3(0, 0, bz - 0.0006)
+        sNode.isHidden = true
+        phone.addChildNode(sNode)
+        stickerNode = sNode
+        let backGloss = SCNPlane(width: backW, height: backH)
+        backGloss.cornerRadius = Phone.corner - 0.03
+        backGloss.materials = [gm]
+        let bgNode = SCNNode(geometry: backGloss)
+        bgNode.eulerAngles.y = .pi
+        bgNode.position = SCNVector3(0, 0, bz - 0.0012)
+        bgNode.renderingOrder = 10
+        phone.addChildNode(bgNode)
+
+        // Dos : appareil photo (anneau en relief) et flash.
         let bump = SCNCylinder(radius: 0.046, height: 0.012)
         bump.materials = [Self.metal()]
         let bumpNode = SCNNode(geometry: bump)
@@ -442,7 +552,7 @@ final class PhoneSceneController: NSObject, UIGestureRecognizerDelegate {
         let m = SCNMaterial()
         m.lightingModel = .physicallyBased
         m.diffuse.contents = UIColor(white: white, alpha: 1)
-        m.roughness.contents = 0.07
+        m.roughness.contents = 0.04
         m.metalness.contents = 0.0
         m.clearCoat.contents = 1.0
         m.clearCoatRoughness.contents = 0.02
@@ -507,7 +617,7 @@ final class PhoneSceneController: NSObject, UIGestureRecognizerDelegate {
         }
         zoom += (zoomTarget - zoom) * min(1, dt * 12)
         holder.eulerAngles = SCNVector3(Float(rx), Float(ry), 0)
-        cameraNode.position = SCNVector3(0, 0, Float(4.4 / zoom))
+        cameraNode.position = SCNVector3(0, 0, Float(5.8 / zoom))
         // La barre de progression avance chaque seconde.
         sinceRefresh += dt
         if sinceRefresh > 1, player?.isPlaying == true { refreshScreen() }
@@ -591,6 +701,19 @@ final class PhoneSceneController: NSObject, UIGestureRecognizerDelegate {
         default:
             break
         }
+    }
+
+    func setBackStickers(_ image: UIImage?) {
+        stickerMaterial.diffuse.contents = image ?? UIColor.clear
+        stickerNode?.isHidden = image == nil
+    }
+
+    /// Retourne le téléphone pour montrer son dos.
+    func showBack() {
+        let face = ((ty - restY) / .pi).rounded()
+        let isFront = Int(face) % 2 == 0
+        if isFront { ty = restY + (face + 1) * .pi }
+        tx = restX
     }
 
     private func wake() {
