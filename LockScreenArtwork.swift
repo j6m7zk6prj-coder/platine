@@ -110,6 +110,12 @@ final class LockScreenArtwork {
         #endif
     }
 
+    /// Vrai si le clip plein écran de cette pochette est déjà prêt.
+    static func isPrepared(source: URL) -> Bool {
+        let id = source.deletingPathExtension().lastPathComponent + "-3x4"
+        return FileManager.default.fileExists(atPath: folder.appendingPathComponent(id + ".mp4").path)
+    }
+
     /// Efface tous les clips (ils seront refaits au besoin).
     func clear() {
         artworks.removeAll()

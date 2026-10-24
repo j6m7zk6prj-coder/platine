@@ -14,6 +14,24 @@ struct SettingsView: View {
         @Bindable var settings = settings
         Form {
             Section {
+                NavigationLink {
+                    TravelModeView()
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: "airplane")
+                            .font(.body.weight(.semibold))
+                            .foregroundStyle(.white)
+                            .frame(width: 30, height: 30)
+                            .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(.orange))
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("Mode voyage").font(.body.weight(.semibold))
+                            Text("Écouter sans connexion").font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+
+            Section {
                 Toggle("Fondu entre les morceaux", isOn: $settings.fadeTransitions)
                 if settings.fadeTransitions {
                     VStack(alignment: .leading, spacing: 6) {
@@ -114,7 +132,7 @@ struct SettingsView: View {
             }
 
             Section {
-                LabeledContent("Version", value: "5.9")
+                LabeledContent("Version", value: "6.2")
             } footer: {
                 Text("Platine lit ta propre musique. Seule la recherche de paroles contacte internet (LRCLIB), et uniquement quand tu ouvres des paroles absentes ou lances la recherche.")
             }
@@ -153,6 +171,9 @@ struct AppearanceSettingsView: View {
     @Environment(Player.self) private var player
 
     private var lockFooter: String {
+        if !settings.lockScreenPlayer {
+            return "Lecteur caché : rien ne s’affiche sur l’écran verrouillé ni dans le Centre de contrôle. Les boutons des AirPods et du casque ne pilotent plus Platine, et la musique peut se mélanger au son des autres apps."
+        }
         if #available(iOS 26.0, *) {
             return "Les pochettes vidéo ou GIF s’animent en plein écran quand l’iPhone est verrouillé. La première fois, Platine prépare le clip en quelques secondes."
         }
@@ -255,7 +276,10 @@ struct AppearanceSettingsView: View {
             }
 
             Section {
+                Toggle("Lecteur sur l’écran verrouillé", isOn: $settings.lockScreenPlayer)
+                    .onChange(of: settings.lockScreenPlayer) { _, _ in player.applyLockScreenPlayer() }
                 Toggle("Pochette animée sur l’écran verrouillé", isOn: $settings.lockScreenAnimation)
+                    .disabled(!settings.lockScreenPlayer)
                     .onChange(of: settings.lockScreenAnimation) { _, _ in player.updateNowPlaying() }
             } header: {
                 Text("Écran verrouillé")

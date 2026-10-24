@@ -97,6 +97,7 @@ final class Player {
         SoundEffects.apply(effect, intensity: effectIntensity)
         configureSession()
         configureRemoteCommands()
+        if !settings.lockScreenPlayer { applyLockScreenPlayer() }
         observe()
     }
 
@@ -447,8 +448,27 @@ final class Player {
 
     private func configureSession() {
         let session = AVAudioSession.sharedInstance()
-        try? session.setCategory(.playback, mode: .default)
+        // Lecteur caché : en mode « mélange », iOS n'affiche pas de lecteur sur l'écran verrouillé.
+        try? session.setCategory(.playback, mode: .default, options: settings.lockScreenPlayer ? [] : [.mixWithOthers])
         try? session.setActive(true)
+    }
+
+    /// Affiche ou cache le lecteur de l'écran verrouillé (réglage), tout de suite.
+    func applyLockScreenPlayer() {
+        let show = settings.lockScreenPlayer
+        let c = MPRemoteCommandCenter.shared()
+        for command in [c.playCommand, c.pauseCommand, c.togglePlayPauseCommand, c.nextTrackCommand,
+                        c.previousTrackCommand, c.changePlaybackPositionCommand, c.likeCommand] {
+            command.isEnabled = show
+        }
+        let session = AVAudioSession.sharedInstance()
+        try? session.setCategory(.playback, mode: .default, options: show ? [] : [.mixWithOthers])
+        if show {
+            UIApplication.shared.beginReceivingRemoteControlEvents()
+        } else {
+            UIApplication.shared.endReceivingRemoteControlEvents()
+        }
+        updateNowPlaying()
     }
 
     private func observe() {
@@ -551,6 +571,11 @@ final class Player {
     /// Met à jour l'écran verrouillé, le Centre de contrôle et la Dynamic Island.
     func updateNowPlaying() {
         let center = MPNowPlayingInfoCenter.default()
+        guard settings.lockScreenPlayer else {
+            center.nowPlayingInfo = nil
+            center.playbackState = .stopped
+            return
+        }
         guard let id = currentID, let t = library.track(id) else {
             center.nowPlayingInfo = nil
             center.playbackState = .stopped

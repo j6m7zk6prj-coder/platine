@@ -733,15 +733,19 @@ final class Library {
 
     /// Crée un sticker à partir d'une image (déjà recadrée).
     @discardableResult
-    func addCustomSticker(_ image: UIImage, finish: StickerFinish, round: Bool) -> CustomSticker? {
+    func addCustomSticker(_ image: UIImage, finish: StickerFinish, round: Bool,
+                          bordered: Bool = true, cutout: Bool = false) -> CustomSticker? {
         let side: CGFloat = 600
-        let resized = UIGraphicsImageRenderer(size: CGSize(width: side, height: side)).image { _ in
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = false   // garde la transparence d'un sticker détouré
+        let resized = UIGraphicsImageRenderer(size: CGSize(width: side, height: side), format: format).image { _ in
             image.draw(in: CGRect(x: 0, y: 0, width: side, height: side))
         }
         guard let data = resized.pngData() else { return nil }
         let name = "sticker-" + UUID().uuidString + ".png"
         do { try data.write(to: Self.artDir.appendingPathComponent(name), options: .atomic) } catch { return nil }
-        let sticker = CustomSticker(file: name, finish: finish, round: round)
+        let sticker = CustomSticker(file: name, finish: finish, round: round, bordered: bordered, cutout: cutout)
         customStickers.append(sticker)
         saveCustomStickers()
         return sticker
@@ -837,7 +841,8 @@ final class Library {
     @discardableResult
     func duplicateCustomSticker(_ sticker: CustomSticker, for albumID: String) -> CustomSticker? {
         guard let img = customStickerImage(sticker),
-              let copy = addCustomSticker(img, finish: sticker.finish, round: sticker.round) else { return nil }
+              let copy = addCustomSticker(img, finish: sticker.finish, round: sticker.round,
+                                          bordered: sticker.bordered, cutout: sticker.cutout) else { return nil }
         toggleCustomSticker(copy, for: albumID)
         return copy
     }

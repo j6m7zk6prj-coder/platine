@@ -121,6 +121,8 @@ final class AppSettings {
     /// Page d'un album : la pochette (animée) prend toute la largeur en haut et se fond dans le fond.
     var extendedAlbumArtwork: Bool { didSet { UserDefaults.standard.set(extendedAlbumArtwork, forKey: "extendedAlbumArtwork") } }
     /// Liquid Glass activé (sinon surfaces pleines) et sa transparence (0 = sombre, 1 = très transparent).
+    /// Afficher le lecteur de Platine sur l'écran verrouillé et dans le Centre de contrôle.
+    var lockScreenPlayer: Bool { didSet { UserDefaults.standard.set(lockScreenPlayer, forKey: "lockScreenPlayer") } }
     var liquidGlass: Bool { didSet { UserDefaults.standard.set(liquidGlass, forKey: "liquidGlass") } }
     var glassIntensity: Double { didSet { UserDefaults.standard.set(glassIntensity, forKey: "glassIntensity") } }
 
@@ -147,6 +149,7 @@ final class AppSettings {
         showRecent = d.object(forKey: "showRecent") as? Bool ?? true
         lockScreenAnimation = d.object(forKey: "lockScreenAnimation") as? Bool ?? true
         extendedAlbumArtwork = d.object(forKey: "extendedAlbumArtwork") as? Bool ?? true
+        lockScreenPlayer = d.object(forKey: "lockScreenPlayer") as? Bool ?? true
         liquidGlass = d.object(forKey: "liquidGlass") as? Bool ?? true
         glassIntensity = d.object(forKey: "glassIntensity") as? Double ?? 0.6
     }

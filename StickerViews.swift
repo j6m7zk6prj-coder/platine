@@ -1,5 +1,7 @@
 import SwiftUI
 import PhotosUI
+import Vision
+import CoreImage
 
 // MARK: - Stickers faits à partir de tes images
 
@@ -11,6 +13,10 @@ struct FoilSticker: View {
     /// Position de la lumière, de -1 à 1 : fait tourner les reflets.
     var light: Double = -0.3
     var size: CGFloat = 44
+    /// Liseré blanc de découpe.
+    var bordered = true
+    /// Image détourée : le sticker suit la forme du dessin (pas de rond ni de carré).
+    var cutout = false
 
     private static let holo: [Color] = [
         Color(red: 1, green: 0.55, blue: 0.82), Color(red: 0.55, green: 0.88, blue: 1),
@@ -29,8 +35,47 @@ struct FoilSticker: View {
     ]
 
     var body: some View {
+        if cutout, let image {
+            cutoutBody(image)
+        } else {
+            shapedBody
+        }
+    }
+
+    /// Sticker détouré : le liseré blanc et les reflets suivent exactement le contour du dessin.
+    private func cutoutBody(_ image: UIImage) -> some View {
+        let border = max(1.5, size * 0.045)
+        let silhouette = Image(uiImage: image).resizable().scaledToFit()
+        return ZStack {
+            if bordered {
+                // Liseré : la silhouette en blanc, élargie tout autour.
+                ForEach(0..<12, id: \.self) { i in
+                    let a = Double(i) / 12 * 2 * .pi
+                    Image(uiImage: image).resizable().renderingMode(.template).scaledToFit()
+                        .foregroundStyle(Color.white.opacity(0.95))
+                        .offset(x: cos(a) * border, y: sin(a) * border)
+                }
+            }
+            foil(silhouette)
+                .overlay(
+                    LinearGradient(stops: [
+                        .init(color: .clear, location: 0),
+                        .init(color: .white.opacity(0.75), location: 0.5),
+                        .init(color: .clear, location: 1)
+                    ], startPoint: UnitPoint(x: -0.6 + (light + 1) * 0.6, y: 0), endPoint: UnitPoint(x: 0.1 + (light + 1) * 0.6, y: 1))
+                    .blendMode(.overlay)
+                )
+                .overlay(SparkleDots().blendMode(.overlay).opacity(finish == .color ? 0.35 : 0.65))
+                .mask(silhouette)
+        }
+        .frame(width: size, height: size)
+        .compositingGroup()
+        .shadow(color: .black.opacity(0.4), radius: size * 0.08, y: size * 0.04)
+    }
+
+    private var shapedBody: some View {
         let shape = round ? AnyShape(Circle()) : AnyShape(RoundedRectangle(cornerRadius: size * 0.22, style: .continuous))
-        ZStack {
+        return ZStack {
             if let image {
                 foil(Image(uiImage: image).resizable().scaledToFill())
             } else {
@@ -49,8 +94,8 @@ struct FoilSticker: View {
             .blendMode(.overlay)
         )
         .overlay(SparkleDots().clipShape(shape).blendMode(.overlay).opacity(finish == .color ? 0.35 : 0.65))
-        // Liseré blanc de découpe, comme un vrai sticker.
-        .overlay(shape.stroke(Color.white.opacity(0.92), lineWidth: max(1.5, size * 0.05)))
+        // Liseré blanc de découpe, comme un vrai sticker (optionnel).
+        .overlay(shape.stroke(Color.white.opacity(bordered ? 0.92 : 0), lineWidth: max(1.5, size * 0.05)))
         .shadow(color: .black.opacity(0.4), radius: size * 0.08, y: size * 0.04)
     }
 
@@ -87,7 +132,8 @@ struct CustomStickerBadge: View {
 
     var body: some View {
         FoilSticker(image: library.customStickerImage(sticker), finish: sticker.finish,
-                    round: sticker.round, light: light, size: size)
+                    round: sticker.round, light: light, size: size,
+                    bordered: sticker.bordered, cutout: sticker.cutout)
             .accessibilityLabel("Sticker " + sticker.finish.label)
     }
 }
@@ -109,69 +155,125 @@ struct StickerStack: View {
 
 // MARK: - Créer un sticker
 
-/// Choix de la finition et de la forme, avec un aperçu qui brille.
+/// Ce qu'on enregistre en validant un sticker.
+struct StickerChoice {
+    let image: UIImage
+    let finish: StickerFinish
+    let round: Bool
+    let bordered: Bool
+    let cutout: Bool
+}
+
+/// Détourage : retirer le fond pour ne garder que le dessin.
+enum StickerCutout: String, CaseIterable, Identifiable {
+    case none, auto, green, pink
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .none: return "Aucun"
+        case .auto: return "Auto"
+        case .green: return "Fond vert"
+        case .pink: return "Fond rose"
+        }
+    }
+}
+
+/// Choix de la finition, de la forme, du liseré et du détourage, avec un aperçu qui brille.
 struct StickerFinishSheet: View {
     let image: UIImage
-    var onCreate: (StickerFinish, Bool) -> Void
+    var onCreate: (StickerChoice) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var finish: StickerFinish = .holo
     @State private var round = true
+    @State private var bordered = true
+    @State private var cutoutMode: StickerCutout = .none
+    @State private var cutImage: UIImage?
+    @State private var working = false
+    @State private var failed = false
+
+    private var shown: UIImage { cutoutMode == .none ? image : (cutImage ?? image) }
+    private var isCut: Bool { cutoutMode != .none && cutImage != nil }
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 26) {
-                TimelineView(.animation(minimumInterval: 1.0 / 30)) { context in
-                    let light = sin(context.date.timeIntervalSinceReferenceDate * 0.9)
-                    FoilSticker(image: image, finish: finish, round: round, light: light, size: 200)
-                }
-                .frame(height: 220)
-                .padding(.top, 20)
-
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 100), spacing: 10)], spacing: 10) {
-                    ForEach(StickerFinish.allCases) { f in
-                        let on = f == finish
-                        Button {
-                            withAnimation(.smooth(duration: 0.3)) { finish = f }
-                        } label: {
-                            VStack(spacing: 8) {
-                                FoilSticker(image: image, finish: f, round: round, size: 46)
-                                Text(f.label).font(.caption.weight(.semibold)).lineLimit(1).minimumScaleFactor(0.8)
-                            }
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 12)
-                            .background(RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                .fill(Color.white.opacity(on ? 0.16 : 0.05)))
-                            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                .strokeBorder(Color.white.opacity(on ? 0.8 : 0.08), lineWidth: on ? 1.5 : 1))
-                        }
-                        .buttonStyle(PressStyle(circle: false))
-                        .sensoryFeedback(.selection, trigger: on)
+            ScrollView {
+                VStack(spacing: 22) {
+                    TimelineView(.animation(minimumInterval: 1.0 / 30)) { context in
+                        let light = sin(context.date.timeIntervalSinceReferenceDate * 0.9)
+                        FoilSticker(image: shown, finish: finish, round: round, light: light, size: 200,
+                                    bordered: bordered, cutout: isCut)
                     }
-                }
-                .padding(.horizontal, 20)
+                    .frame(height: 220)
+                    .overlay {
+                        if working {
+                            ProgressView().controlSize(.large).tint(.white)
+                        }
+                    }
+                    .padding(.top, 16)
 
-                Picker("Forme", selection: $round) {
-                    Text("Rond").tag(true)
-                    Text("Carré arrondi").tag(false)
-                }
-                .pickerStyle(.segmented)
-                .padding(.horizontal, 20)
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Détourage").font(.headline)
+                        Picker("Détourage", selection: $cutoutMode) {
+                            ForEach(StickerCutout.allCases) { Text($0.label).tag($0) }
+                        }
+                        .pickerStyle(.segmented)
+                        Text(cutoutHint)
+                            .font(.caption)
+                            .foregroundStyle(failed ? Color.orange : Color.secondary)
+                    }
+                    .padding(.horizontal, 20)
 
-                Spacer(minLength: 0)
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 100), spacing: 10)], spacing: 10) {
+                        ForEach(StickerFinish.allCases) { f in
+                            let on = f == finish
+                            Button {
+                                withAnimation(.smooth(duration: 0.3)) { finish = f }
+                            } label: {
+                                VStack(spacing: 8) {
+                                    FoilSticker(image: shown, finish: f, round: round, size: 46,
+                                                bordered: bordered, cutout: isCut)
+                                    Text(f.label).font(.caption.weight(.semibold)).lineLimit(1).minimumScaleFactor(0.8)
+                                }
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 12)
+                                .background(RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                    .fill(Color.white.opacity(on ? 0.16 : 0.05)))
+                                .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                    .strokeBorder(Color.white.opacity(on ? 0.8 : 0.08), lineWidth: on ? 1.5 : 1))
+                            }
+                            .buttonStyle(PressStyle(circle: false))
+                            .sensoryFeedback(.selection, trigger: on)
+                        }
+                    }
+                    .padding(.horizontal, 20)
 
-                Button {
-                    onCreate(finish, round)
-                    dismiss()
-                } label: {
-                    Text("Créer le sticker")
-                        .font(.headline)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 52)
+                    VStack(spacing: 14) {
+                        if !isCut {
+                            Picker("Forme", selection: $round) {
+                                Text("Rond").tag(true)
+                                Text("Carré arrondi").tag(false)
+                            }
+                            .pickerStyle(.segmented)
+                        }
+                        Toggle("Liseré blanc", isOn: $bordered.animation(.smooth))
+                    }
+                    .padding(.horizontal, 20)
+
+                    Button {
+                        onCreate(StickerChoice(image: shown, finish: finish, round: round, bordered: bordered, cutout: isCut))
+                        dismiss()
+                    } label: {
+                        Text("Créer le sticker")
+                            .font(.headline)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 52)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .buttonBorderShape(.capsule)
+                    .disabled(working)
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 12)
                 }
-                .buttonStyle(.borderedProminent)
-                .buttonBorderShape(.capsule)
-                .padding(.horizontal, 20)
-                .padding(.bottom, 12)
             }
             .navigationTitle("Nouveau sticker")
             .navigationBarTitleDisplayMode(.inline)
@@ -180,6 +282,114 @@ struct StickerFinishSheet: View {
             }
         }
         .environment(\.colorScheme, .dark)
+        .onChange(of: cutoutMode) { _, mode in
+            Task { await applyCutout(mode) }
+        }
+    }
+
+    private var cutoutHint: String {
+        if failed { return "Je n’ai pas trouvé de sujet à détourer sur cette image." }
+        switch cutoutMode {
+        case .none: return "L’image entière, découpée en rond ou en carré."
+        case .auto: return "Le sujet principal est détecté et détouré automatiquement."
+        case .green: return "Pour une image sur fond vert : tout le vert est retiré."
+        case .pink: return "Pour une image sur fond rose : tout le rose est retiré."
+        }
+    }
+
+    private func applyCutout(_ mode: StickerCutout) async {
+        failed = false
+        guard mode != .none else { cutImage = nil; return }
+        working = true
+        let source = image
+        let result = await Task.detached(priority: .userInitiated) {
+            StickerCutter.cut(source, mode: mode)
+        }.value
+        // Ignore un résultat arrivé après un autre choix.
+        guard mode == cutoutMode else { return }
+        working = false
+        withAnimation(.smooth(duration: 0.35)) {
+            cutImage = result
+            failed = result == nil
+        }
+    }
+}
+
+/// Retire le fond d'une image (sujet automatique, fond vert ou fond rose).
+enum StickerCutter {
+    static func cut(_ image: UIImage, mode: StickerCutout) -> UIImage? {
+        guard let cg = normalized(image) else { return nil }
+        switch mode {
+        case .none: return image
+        case .auto: return subject(cg)
+        case .green, .pink: return chromaKey(cg, pink: mode == .pink)
+        }
+    }
+
+    /// Image redessinée à l'endroit, en 600 × 600 maximum.
+    private static func normalized(_ image: UIImage) -> CGImage? {
+        let side: CGFloat = 600
+        let scale = min(1, side / max(image.size.width, image.size.height, 1))
+        let size = CGSize(width: image.size.width * scale, height: image.size.height * scale)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = false
+        return UIGraphicsImageRenderer(size: size, format: format).image { _ in
+            image.draw(in: CGRect(origin: .zero, size: size))
+        }.cgImage
+    }
+
+    /// Détourage automatique du sujet (le même que « Détourer le sujet » dans Photos).
+    private static func subject(_ cg: CGImage) -> UIImage? {
+        let request = VNGenerateForegroundInstanceMaskRequest()
+        let handler = VNImageRequestHandler(cgImage: cg, orientation: .up)
+        do {
+            try handler.perform([request])
+            guard let result = request.results?.first, !result.allInstances.isEmpty else { return nil }
+            let buffer = try result.generateMaskedImage(ofInstances: result.allInstances, from: handler,
+                                                        croppedToInstancesExtent: false)
+            let ci = CIImage(cvPixelBuffer: buffer)
+            guard let out = CIContext().createCGImage(ci, from: ci.extent) else { return nil }
+            return UIImage(cgImage: out)
+        } catch {
+            return nil
+        }
+    }
+
+    /// Fond vert ou rose : chaque pixel proche de cette couleur devient transparent, avec un bord doux.
+    private static func chromaKey(_ cg: CGImage, pink: Bool) -> UIImage? {
+        let w = cg.width, h = cg.height
+        guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
+                                  space: CGColorSpaceCreateDeviceRGB(),
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue),
+              let raw = ctx.data else { return nil }
+        ctx.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
+        let p = raw.bindMemory(to: UInt8.self, capacity: w * h * 4)
+        let low: Float = pink ? 0.2 : 0.1
+        let high: Float = pink ? 0.38 : 0.28
+        for i in 0..<(w * h) {
+            let o = i * 4
+            let a = Float(p[o + 3]) / 255
+            guard a > 0 else { continue }
+            var r = Float(p[o]) / 255 / a, g = Float(p[o + 1]) / 255 / a, b = Float(p[o + 2]) / 255 / a
+            // À quel point ce pixel ressemble à la couleur du fond.
+            let key = pink ? min(r, b + 0.25) - g : g - max(r, b)
+            let keep = 1 - min(1, max(0, (key - low) / (high - low)))
+            // Retire le reflet coloré du fond sur les bords du dessin.
+            if pink {
+                let cap = g + 0.25
+                if r > cap && b > g { r = max(cap, r - key * 0.5); b = max(g, b - key * 0.5) }
+            } else if g > max(r, b) {
+                g = max(r, b)
+            }
+            let na = a * keep
+            p[o] = UInt8(max(0, min(255, r * na * 255)))
+            p[o + 1] = UInt8(max(0, min(255, g * na * 255)))
+            p[o + 2] = UInt8(max(0, min(255, b * na * 255)))
+            p[o + 3] = UInt8(max(0, min(255, na * 255)))
+        }
+        guard let out = ctx.makeImage() else { return nil }
+        return UIImage(cgImage: out)
     }
 }
 
@@ -238,7 +448,7 @@ struct MyStickersSection: View {
                     }
                 }
             }
-            Text("Choisis une image, recadre-la, puis choisis sa finition. Appui long sur un de tes stickers pour le supprimer.")
+            Text("Choisis une image, recadre-la, puis choisis sa finition, son liseré et son détourage (automatique, fond vert ou fond rose). Appui long sur un de tes stickers pour le supprimer.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -261,8 +471,9 @@ struct MyStickersSection: View {
             }
         }
         .sheet(item: $finishing) { source in
-            StickerFinishSheet(image: source.image) { finish, round in
-                if let sticker = library.addCustomSticker(source.image, finish: finish, round: round) {
+            StickerFinishSheet(image: source.image) { choice in
+                if let sticker = library.addCustomSticker(choice.image, finish: choice.finish, round: choice.round,
+                                                          bordered: choice.bordered, cutout: choice.cutout) {
                     library.toggleCustomSticker(sticker, for: album.id)
                 }
             }

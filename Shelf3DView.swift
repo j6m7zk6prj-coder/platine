@@ -36,10 +36,14 @@ struct ShelfView: View {
         // La vue « en main » est déjà prête avec l'album au centre : l'ouverture est instantanée.
         let handAlbum = inspected ?? focused
         let isOpen = inspected != nil && visible
+        let objects = section == 2
         ZStack {
             Color(red: 0.03, green: 0.03, blue: 0.04).ignoresSafeArea()
 
-            if albums.isEmpty {
+            if objects {
+                ObjectsRoom(active: visible && objects)
+                    .transition(.opacity)
+            } else if albums.isEmpty {
                 emptyState
             } else {
                 ShelfSceneView(albums: albums, startIndex: startIndex ?? initialIndex(albums), motion: motion, paused: isOpen || !visible,
@@ -56,7 +60,7 @@ struct ShelfView: View {
             VStack(spacing: 0) {
                 topBar
                 Spacer(minLength: 0)
-                if let focused { caption(focused) }
+                if let focused, !objects { caption(focused) }
             }
             .padding(.bottom, 30)
             .opacity(isOpen ? 0 : 1)
@@ -185,7 +189,8 @@ struct ShelfView: View {
                 Text("Collection").font(.largeTitle.bold())
                 SectionSwitch(section: $section,
                               albums: library.albums.count,
-                              games: library.gameAlbums.count)
+                              games: library.gameAlbums.count,
+                              objects: CollectionObject.loadOwned().count)
             }
             Spacer()
             Button { onClose() } label: {
@@ -1318,12 +1323,14 @@ private struct SectionSwitch: View {
     @Binding var section: Int
     let albums: Int
     let games: Int
+    var objects: Int = 0
     @Namespace private var pill
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 2) {
             tab(0, "Albums", "\(albums)", "opticaldisc")
             tab(1, "Jeux", "\(games)", "gamecontroller.fill")
+            tab(2, "Objets", "\(objects)", "iphone.gen1")
         }
         .padding(4)
         .glassCapsule()
@@ -1336,14 +1343,13 @@ private struct SectionSwitch: View {
         return Button {
             section = index
         } label: {
-            HStack(spacing: 6) {
-                Image(systemName: symbol)
+            HStack(spacing: 5) {
                 Text(title)
                 Text(count).opacity(0.55)
             }
             .font(.subheadline.weight(.semibold))
             .foregroundStyle(on ? Color.black : Color.white.opacity(0.85))
-            .padding(.horizontal, 14)
+            .padding(.horizontal, 11)
             .frame(height: 34)
             .background {
                 if on { Capsule().fill(.white).matchedGeometryEffect(id: "pill", in: pill) }

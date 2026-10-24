@@ -270,9 +270,35 @@ struct CustomSticker: Codable, Identifiable, Hashable {
     var name: String = "Mon sticker"
     /// Forme découpée : rond ou carré arrondi.
     var round: Bool = true
+    /// Liseré blanc de découpe autour du sticker.
+    var bordered: Bool = true
+    /// Image détourée (fond transparent) : le sticker suit la forme du dessin.
+    var cutout: Bool = false
 
     static let prefix = "custom:"
     var key: String { Self.prefix + id.uuidString }
+
+    init(file: String, finish: StickerFinish, round: Bool = true, bordered: Bool = true, cutout: Bool = false) {
+        self.file = file
+        self.finish = finish
+        self.round = round
+        self.bordered = bordered
+        self.cutout = cutout
+    }
+
+    // Décodage tolérant : les stickers créés avant gardent leurs réglages.
+    enum CodingKeys: String, CodingKey { case id, file, finish, name, round, bordered, cutout }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        file = try c.decode(String.self, forKey: .file)
+        finish = try c.decodeIfPresent(StickerFinish.self, forKey: .finish) ?? .holo
+        name = try c.decodeIfPresent(String.self, forKey: .name) ?? "Mon sticker"
+        round = try c.decodeIfPresent(Bool.self, forKey: .round) ?? true
+        bordered = try c.decodeIfPresent(Bool.self, forKey: .bordered) ?? true
+        cutout = try c.decodeIfPresent(Bool.self, forKey: .cutout) ?? false
+    }
 }
 
 
