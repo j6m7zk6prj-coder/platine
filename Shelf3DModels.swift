@@ -205,7 +205,8 @@ struct AlbumNodeBuilder {
         let mine: String = library.stickerKeys(for: album.id).joined(separator: ",")
         let placed: String = library.placementSignature(album.id)
         let discName: String = library.extraImageName("disc", album.id) ?? "-"
-        let badgeList: String = earned + ";" + mine + ";" + placed + ";" + discName
+        let frontName: String = library.extraImageName("front", album.id) ?? "-"
+        let badgeList: String = earned + ";" + mine + ";" + placed + ";" + discName + ";" + frontName
         let parts: [String] = [album.id, format.rawValue, art, badgeList, album.title, album.artist]
         return parts.joined(separator: "|")
     }
@@ -1669,7 +1670,14 @@ struct CoverFace: View {
     var body: some View {
         GeometryReader { geo in
             ZStack(alignment: .topTrailing) {
-                ArtworkView(track: album.first, animated: false, cornerRadius: 0)
+                // Ta pochette avant si tu en as choisi une (dans la Collection seulement), sinon celle du son.
+                if let front = library.extraImage("front", album.id) {
+                    Image(uiImage: front).resizable().scaledToFill()
+                        .frame(width: geo.size.width, height: geo.size.height)
+                        .clipped()
+                } else {
+                    ArtworkView(track: album.first, animated: false, cornerRadius: 0)
+                }
                 if badges.contains(.platinum) { HoloSheen(light: -0.2) }
                 PlacedStickers(album: album, badges: badges, size: geo.size)
             }

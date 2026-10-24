@@ -27,7 +27,7 @@ struct ShelfView: View {
     @State private var section = 0
 
     /// Ouverture et fermeture : un ressort court, comme les transitions d'iOS.
-    private static let quick = Animation.spring(response: 0.42, dampingFraction: 0.88)
+    private static let quick = Animation.smooth(duration: 0.38)
 
     var body: some View {
         let _ = library.artworkRevision
@@ -48,7 +48,7 @@ struct ShelfView: View {
                                onLongPress: { i in stickerAlbum = albums[i] })
                     .ignoresSafeArea()
                     // L'étagère recule légèrement quand tu prends un album en main.
-                    .scaleEffect(isOpen ? 0.92 : 1)
+                    .scaleEffect(isOpen ? 0.97 : 1)
                     .opacity(isOpen ? 0 : 1)
                     .allowsHitTesting(!isOpen)
             }
@@ -1023,8 +1023,10 @@ final class InspectorSceneController: NSObject, UIGestureRecognizerDelegate {
                 self.ensureDisc()
             }
         } else {
-            // On ne fige pas tout de suite : l'objet continue de bouger pendant qu'il s'efface,
-            // puis se remet en place une fois invisible (plus de petit saut en refermant).
+            // On ne fige pas tout de suite : l'objet recule doucement pendant qu'il s'efface,
+            // puis se remet en place une fois invisible (plus de zoom brusque en le reposant).
+            zoomTarget = 0.86
+            tx = restX; ty = (((ty - restY) / (2 * .pi)).rounded()) * 2 * .pi + restY
             sleepTask?.cancel()
             sleepTask = Task { @MainActor [weak self] in
                 try? await Task.sleep(for: .milliseconds(450))
@@ -1204,7 +1206,7 @@ struct StickerPicker: View {
                 ?? AlbumNodeBuilder.generatedGameCover(title: game, season: GameCatalog.season(game),
                                                        count: album.tracks.count, platform: library.platform(of: game))
         }
-        return library.image(for: album.first)
+        return library.extraImage("front", album.id) ?? library.image(for: album.first)
     }
 
     private var placerAspect: CGFloat {

@@ -8,51 +8,16 @@ import UIKit
 // iOS 26 : le vrai Liquid Glass d'Apple. Avant : un verre dépoli avec un liseré lumineux.
 
 extension View {
-    @ViewBuilder
     func glass(_ radius: CGFloat = 24, interactive: Bool = false) -> some View {
-        #if compiler(>=6.2)
-        if #available(iOS 26.0, *) {
-            if interactive {
-                self.glassEffect(.regular.interactive(), in: .rect(cornerRadius: radius))
-            } else {
-                self.glassEffect(.regular, in: .rect(cornerRadius: radius))
-            }
-        } else {
-            self.frostedGlass(RoundedRectangle(cornerRadius: radius, style: .continuous))
-        }
-        #else
-        self.frostedGlass(RoundedRectangle(cornerRadius: radius, style: .continuous))
-        #endif
+        modifier(GlassStyle(shape: RoundedRectangle(cornerRadius: radius, style: .continuous), interactive: interactive))
     }
 
-    @ViewBuilder
     func glassCapsule(interactive: Bool = false) -> some View {
-        #if compiler(>=6.2)
-        if #available(iOS 26.0, *) {
-            if interactive {
-                self.glassEffect(.regular.interactive(), in: .capsule)
-            } else {
-                self.glassEffect(.regular, in: .capsule)
-            }
-        } else {
-            self.frostedGlass(Capsule())
-        }
-        #else
-        self.frostedGlass(Capsule())
-        #endif
+        modifier(GlassStyle(shape: Capsule(), interactive: interactive))
     }
 
-    @ViewBuilder
     func glassCircle() -> some View {
-        #if compiler(>=6.2)
-        if #available(iOS 26.0, *) {
-            self.glassEffect(.regular.interactive(), in: .circle)
-        } else {
-            self.frostedGlass(Circle())
-        }
-        #else
-        self.frostedGlass(Circle())
-        #endif
+        modifier(GlassStyle(shape: Circle(), interactive: true))
     }
 
     func frostedGlass<S: InsettableShape>(_ shape: S) -> some View {
@@ -65,6 +30,51 @@ extension View {
                     lineWidth: 1)
             }
             .shadow(color: .black.opacity(0.25), radius: 18, y: 10)
+    }
+}
+
+/// Le verre de l'app, réglable dans Réglages → Apparence :
+/// Liquid Glass plus ou moins transparent, ou désactivé (surfaces pleines, plus sobres).
+struct GlassStyle<S: InsettableShape>: ViewModifier {
+    let shape: S
+    var interactive = false
+    @Environment(AppSettings.self) private var settings: AppSettings?
+
+    func body(content: Content) -> some View {
+        let enabled = settings?.liquidGlass ?? true
+        // 0 = verre presque opaque et sombre, 1 = verre très transparent.
+        let intensity = settings?.glassIntensity ?? 0.6
+        if !enabled {
+            content
+                .background(shape.fill(Color(white: 0.13)))
+                .overlay { shape.strokeBorder(.white.opacity(0.1), lineWidth: 0.75) }
+                .shadow(color: .black.opacity(0.25), radius: 12, y: 6)
+        } else {
+            liquid(content, intensity: intensity)
+        }
+    }
+
+    @ViewBuilder private func liquid(_ content: Content, intensity: Double) -> some View {
+        let tint = Color.black.opacity((1 - intensity) * 0.55)
+        #if compiler(>=6.2)
+        if #available(iOS 26.0, *) {
+            let base: Glass = intensity > 0.85 ? .clear : .regular
+            let glass = base.tint(tint)
+            if interactive {
+                content.glassEffect(glass.interactive(), in: shape)
+            } else {
+                content.glassEffect(glass, in: shape)
+            }
+        } else {
+            content
+                .background(shape.fill(tint))
+                .frostedGlass(shape)
+        }
+        #else
+        content
+            .background(shape.fill(tint))
+            .frostedGlass(shape)
+        #endif
     }
 }
 
@@ -106,10 +116,17 @@ struct ArtworkView: View {
         shape
             .fill(LinearGradient(colors: [.white.opacity(0.16), .white.opacity(0.05)],
                                  startPoint: .topLeading, endPoint: .bottomTrailing))
-            .overlay { placeholder }
+            // La note de musique n'apparaît que s'il n'y a vraiment aucune pochette
+            // (jamais en transparence derrière une pochette animée).
+            .overlay { if !hasArtwork { placeholder } }
             .overlay { content }
             .clipShape(shape)
             .overlay { if bordered { shape.strokeBorder(.white.opacity(0.08), lineWidth: 0.5) } }
+    }
+
+    private var hasArtwork: Bool {
+        guard let t = track else { return false }
+        return library.artworkURL(t) != nil
     }
 
     @ViewBuilder private var content: some View {

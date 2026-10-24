@@ -18,7 +18,7 @@ struct NowPlayingView: View {
     /// Paroles en plein écran : les commandes se cachent après quelques secondes, comme dans Musique.
     @State private var controlsHidden = false
     @State private var hideTask: Task<Void, Never>?
-    @State private var showSing = false
+    @State private var showEffects = false
 
     var body: some View {
         let track = player.currentID.flatMap { library.track($0) }
@@ -33,11 +33,7 @@ struct NowPlayingView: View {
                     .padding(.top, 20)
                     .padding(.bottom, 4)
                     .transition(.opacity.combined(with: .offset(y: -10)))
-                ZStack(alignment: .bottomTrailing) {
-                    LyricsPane(track: t, onInteract: pokeControls)
-                    singControl
-                        .padding(.bottom, 10)
-                }
+                LyricsPane(track: t, onInteract: pokeControls)
                 .transition(.opacity.combined(with: .scale(scale: 0.98)))
                 .simultaneousGesture(TapGesture().onEnded { pokeControls() })
             } else if fullBleed {
@@ -79,9 +75,9 @@ struct NowPlayingView: View {
         .background {
             ZStack(alignment: .top) {
                 AmbientBackground(track: track, dim: fullBleed ? 0.55 : 0.3, forceDark: true)
-                if fullBleed, let t = track {
+                // Comme Musique : derrière les paroles, seulement les couleurs floues de la pochette.
+                if fullBleed && !showLyrics, let t = track {
                     FullBleedArtwork(track: t)
-                        .opacity(showLyrics ? 0.3 : 1)
                         .id(t.id)
                         .transition(.opacity)
                 }
@@ -92,7 +88,6 @@ struct NowPlayingView: View {
         .animation(.spring(response: 0.5, dampingFraction: 0.86), value: showLyrics)
         .animation(.spring(response: 0.5, dampingFraction: 0.9), value: controlsHidden)
         .onChange(of: showLyrics) { _, on in
-            showSing = false
             if on { pokeControls() } else { controlsHidden = false; hideTask?.cancel() }
         }
         .onChange(of: player.isPlaying) { _, _ in pokeControls() }
@@ -108,6 +103,13 @@ struct NowPlayingView: View {
         .sheet(isPresented: $showQueue) {
             QueueView()
         }
+        .sheet(isPresented: $showEffects) {
+            EffectsSheet()
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+                .environment(\.colorScheme, .dark)
+        }
+        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: player.effect)
         .onChange(of: player.currentID) { _, id in
             if id == nil { dismiss() }
         }
@@ -120,7 +122,7 @@ struct NowPlayingView: View {
         guard showLyrics else { return }
         hideTask = Task { @MainActor in
             try? await Task.sleep(for: .seconds(3.5))
-            guard !Task.isCancelled, showLyrics, player.isPlaying, !showSing else { return }
+            guard !Task.isCancelled, showLyrics, player.isPlaying, !showEffects else { return }
             controlsHidden = true
         }
     }
@@ -133,31 +135,6 @@ struct NowPlayingView: View {
                 .shadow(color: .black.opacity(0.35), radius: 8, y: 4)
             header(t)
         }
-    }
-
-    /// Mode instrumental : un micro, et un curseur vertical pour baisser la voix (comme « Apple Music Sing »).
-    private var singControl: some View {
-        VStack(spacing: 10) {
-            if showSing {
-                VocalSlider(value: Binding(get: { player.vocalReduction }, set: { player.vocalReduction = $0 }))
-                    .frame(width: 44, height: 160)
-                    .transition(.scale(scale: 0.4, anchor: .bottom).combined(with: .opacity))
-            }
-            Button {
-                showSing.toggle()
-                pokeControls()
-            } label: {
-                Image(systemName: player.vocalReduction > 0.01 ? "music.mic.circle.fill" : "music.mic.circle")
-                    .font(.system(size: 30, weight: .regular))
-                    .symbolRenderingMode(.hierarchical)
-                    .foregroundStyle(.white.opacity(player.vocalReduction > 0.01 || showSing ? 1 : 0.6))
-                    .frame(width: 44, height: 44)
-            }
-            .buttonStyle(PressStyle())
-            .accessibilityLabel("Instrumental")
-            .accessibilityValue("Voix réduite de \(Int(player.vocalReduction * 100)) %")
-        }
-        .animation(.spring(response: 0.4, dampingFraction: 0.75), value: showSing)
     }
 
     private func isAnimated(_ t: Track) -> Bool {
@@ -221,6 +198,19 @@ struct NowPlayingView: View {
                     .font(.title2)
                     .foregroundStyle(.white.opacity(0.55))
                     .lineLimit(1)
+                if player.effect != .original {
+                    // L'effet en cours, toujours visible : un toucher pour le changer.
+                    Button { showEffects = true } label: {
+                        Label(player.effect.title, systemImage: player.effect.symbol)
+                            .font(.caption.weight(.semibold))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(Capsule().fill(.white.opacity(0.16)))
+                    }
+                    .buttonStyle(PressStyle(circle: false))
+                    .padding(.top, 6)
+                    .transition(.scale(scale: 0.8, anchor: .leading).combined(with: .opacity))
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .id(t?.id)
@@ -252,9 +242,8 @@ struct NowPlayingView: View {
                     Button(repeatLabel, systemImage: player.repeatMode == .one ? "repeat.1" : "repeat") {
                         player.cycleRepeat()
                     }
-                    Button(player.vocalReduction > 0.5 ? "Remettre la voix" : "Instrumental (sans la voix)",
-                           systemImage: "music.mic") {
-                        player.vocalReduction = player.vocalReduction > 0.5 ? 0 : 1
+                    Button("Effets : " + player.effect.title, systemImage: "dial.medium") {
+                        showEffects = true
                     }
                     Divider()
                     Button("Changer la pochette", systemImage: "photo.on.rectangle") {
@@ -551,50 +540,86 @@ struct OutputName: View {
 }
 
 
-// MARK: - Curseur de la voix (mode instrumental)
+// MARK: - Effets d'écoute
 
-/// Curseur vertical : en haut = voix normale, en bas = voix presque retirée.
-struct VocalSlider: View {
-    @Binding var value: Double
-    @State private var start: Double?
+/// Choix de l'effet : slowed, sped up, réverbe… avec l'intensité de l'écho.
+struct EffectsSheet: View {
+    @Environment(Player.self) private var player
+    @Environment(AppSettings.self) private var settings
+    @Environment(\.dismiss) private var dismiss
+
+    private let columns = [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)]
 
     var body: some View {
-        GeometryReader { geo in
-            let h = max(geo.size.height, 1)
-            // Partie claire = la voix qui reste.
-            let voice = 1 - value
-            ZStack(alignment: .bottom) {
-                Capsule().fill(.white.opacity(0.16))
-                Capsule().fill(.white.opacity(0.9))
-                    .frame(height: max(geo.size.width, h * voice))
-                    .opacity(voice > 0.02 ? 1 : 0.25)
-                Image(systemName: "waveform")
-                    .font(.system(size: 15, weight: .bold))
-                    .foregroundStyle(voice > 0.2 ? Color.black.opacity(0.6) : Color.white.opacity(0.7))
-                    .padding(.bottom, 14)
-            }
-            .contentShape(Capsule())
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { g in
-                        if start == nil { start = value }
-                        let moved = Double(g.translation.height / h)
-                        value = min(1, max(0, (start ?? 0) + moved))
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    card(.original)
+                    section("Vitesse", SoundEffect.speedGroup)
+                    section("Réverbe", SoundEffect.reverbGroup)
+                    if player.effect.reverb != nil {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("Intensité de l’écho").font(.headline)
+                            HStack(spacing: 12) {
+                                Image(systemName: "drop").foregroundStyle(.secondary)
+                                Slider(value: Binding(get: { player.effectIntensity },
+                                                      set: { player.setEffectIntensity($0) }), in: 0...1)
+                                    .tint(.white)
+                                Image(systemName: "drop.fill").foregroundStyle(.secondary)
+                            }
+                        }
+                        .transition(.opacity.combined(with: .move(edge: .bottom)))
                     }
-                    .onEnded { _ in start = nil }
-            )
-        }
-        .background(.ultraThinMaterial, in: Capsule())
-        .sensoryFeedback(.selection, trigger: value == 0 || value == 1)
-        .accessibilityElement()
-        .accessibilityLabel("Volume de la voix")
-        .accessibilityValue("\(Int((1 - value) * 100)) %")
-        .accessibilityAdjustableAction { direction in
-            switch direction {
-            case .increment: value = max(0, value - 0.1)
-            case .decrement: value = min(1, value + 0.1)
-            @unknown default: break
+                    Text("Ton fichier n’est jamais modifié : l’effet est ajouté seulement pendant l’écoute, et reste choisi pour les morceaux suivants jusqu’à ce que tu reviennes à « Original ».")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(20)
+                .animation(.spring(response: 0.4, dampingFraction: 0.85), value: player.effect)
+            }
+            .navigationTitle("Effets")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("OK") { dismiss() }.fontWeight(.semibold)
+                }
             }
         }
+    }
+
+    private func section(_ title: String, _ effects: [SoundEffect]) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title).font(.headline)
+            LazyVGrid(columns: columns, spacing: 12) {
+                ForEach(effects) { card($0) }
+            }
+        }
+    }
+
+    private func card(_ effect: SoundEffect) -> some View {
+        let selected = player.effect == effect
+        return Button {
+            player.setEffect(effect)
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: effect.symbol)
+                    .font(.system(size: 18, weight: .semibold))
+                    .frame(width: 38, height: 38)
+                    .background(Circle().fill(selected ? Color.black.opacity(0.12) : Color.white.opacity(0.1)))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(effect.title).font(.subheadline.weight(.semibold)).lineLimit(1)
+                    Text(effect.subtitle).font(.caption).lineLimit(2)
+                        .foregroundStyle(selected ? Color.black.opacity(0.6) : Color.white.opacity(0.55))
+                }
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(selected ? Color.black : Color.white)
+            .padding(12)
+            .frame(maxWidth: .infinity, minHeight: 64, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(selected ? Color.white : Color.white.opacity(0.08)))
+        }
+        .buttonStyle(PressStyle(circle: false))
+        .sensoryFeedback(.selection, trigger: selected)
     }
 }

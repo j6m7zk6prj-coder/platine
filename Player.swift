@@ -25,9 +25,48 @@ final class Player {
     var repeatMode: RepeatMode = RepeatMode(rawValue: UserDefaults.standard.integer(forKey: "repeat")) ?? .off {
         didSet { UserDefaults.standard.set(repeatMode.rawValue, forKey: "repeat") }
     }
-    /// Mode instrumental : 0 = voix normale, 1 = voix retirée au maximum (le fichier n'est jamais modifié).
-    var vocalReduction: Double = 0 {
-        didSet { VocalRemover.setLevel(vocalReduction) }
+    /// Effet d'écoute (slowed, sped up, réverbe…). Le fichier n'est jamais modifié.
+    private(set) var effect: SoundEffect = SoundEffect(rawValue: UserDefaults.standard.string(forKey: "soundEffect") ?? "") ?? .original
+    /// Intensité de la réverbe de l'effet (0,5 = réglage d'origine).
+    private(set) var effectIntensity: Double = UserDefaults.standard.object(forKey: "effectIntensity") as? Double ?? 0.5
+    @ObservationIgnored private var rateTask: Task<Void, Never>?
+
+    /// Vitesse réelle : ta vitesse habituelle × celle de l'effet.
+    private var effectiveRate: Float { Float(settings.playbackSpeed * effect.rate) }
+
+    func setEffect(_ newEffect: SoundEffect) {
+        guard newEffect != effect else { return }
+        let from = player.rate > 0 ? player.rate : effectiveRate
+        effect = newEffect
+        UserDefaults.standard.set(newEffect.rawValue, forKey: "soundEffect")
+        SoundEffects.apply(newEffect, intensity: effectIntensity)
+        player.currentItem?.audioTimePitchAlgorithm = newEffect.changesPitch ? .varispeed : .timeDomain
+        glideRate(from: from)
+        updateNowPlaying()
+    }
+
+    func setEffectIntensity(_ value: Double) {
+        effectIntensity = min(1, max(0, value))
+        UserDefaults.standard.set(effectIntensity, forKey: "effectIntensity")
+        SoundEffects.apply(effect, intensity: effectIntensity)
+    }
+
+    /// La vitesse glisse en douceur vers la nouvelle valeur (comme un vinyle qui ralentit), sans à-coup.
+    private func glideRate(from: Float) {
+        let to = effectiveRate
+        player.defaultRate = to
+        rateTask?.cancel()
+        guard isPlaying else { return }
+        rateTask = Task { [weak self] in
+            let steps = 14
+            for i in 1...steps {
+                guard let self, !Task.isCancelled, self.isPlaying else { return }
+                let t = Float(i) / Float(steps)
+                let eased = t * t * (3 - 2 * t)
+                self.player.rate = from + (to - from) * eased
+                try? await Task.sleep(for: .milliseconds(35))
+            }
+        }
     }
     private(set) var sleepEndDate: Date?
     private(set) var sleepAtTrackEnd = false
@@ -54,7 +93,8 @@ final class Player {
         self.library = library
         self.settings = settings
         player.automaticallyWaitsToMinimizeStalling = false
-        player.defaultRate = Float(settings.playbackSpeed)
+        player.defaultRate = Float(settings.playbackSpeed * effect.rate)
+        SoundEffects.apply(effect, intensity: effectIntensity)
         configureSession()
         configureRemoteCommands()
         observe()
@@ -155,8 +195,8 @@ final class Player {
 
     func setSpeed(_ speed: Double) {
         settings.playbackSpeed = speed
-        player.defaultRate = Float(speed)
-        if isPlaying { player.rate = Float(speed) }
+        player.defaultRate = effectiveRate
+        if isPlaying { player.rate = effectiveRate }
         updateNowPlaying()
     }
 
@@ -293,8 +333,8 @@ final class Player {
             if fadeOut { await self.fade(to: 0, duration: 0.18) }
             if Task.isCancelled { return }
             let item = AVPlayerItem(url: self.library.audioURL(track))
-            item.audioTimePitchAlgorithm = .timeDomain
-            VocalRemover.attach(to: item)
+            item.audioTimePitchAlgorithm = self.effect.changesPitch ? .varispeed : .timeDomain
+            SoundEffects.attach(to: item)
             self.player.replaceCurrentItem(with: item)
             self.warmUpcomingLockArtwork()
             self.currentTime = 0
@@ -318,7 +358,7 @@ final class Player {
         isPlaying = true
         try? AVAudioSession.sharedInstance().setActive(true)
         player.volume = 0
-        player.defaultRate = Float(settings.playbackSpeed)
+        player.defaultRate = effectiveRate
         player.play()
         updateNowPlaying()
         manualFade = true
@@ -523,8 +563,8 @@ final class Player {
             MPMediaItemPropertyAlbumTitle: t.album,
             MPMediaItemPropertyPlaybackDuration: duration,
             MPNowPlayingInfoPropertyElapsedPlaybackTime: elapsed.isFinite ? elapsed : 0,
-            MPNowPlayingInfoPropertyPlaybackRate: isPlaying ? settings.playbackSpeed : 0.0,
-            MPNowPlayingInfoPropertyDefaultPlaybackRate: settings.playbackSpeed
+            MPNowPlayingInfoPropertyPlaybackRate: isPlaying ? Double(effectiveRate) : 0.0,
+            MPNowPlayingInfoPropertyDefaultPlaybackRate: Double(effectiveRate)
         ]
         info[MPMediaItemPropertyIsExplicit] = t.explicit
         MPRemoteCommandCenter.shared().likeCommand.isActive = t.isFavorite

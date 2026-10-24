@@ -560,7 +560,7 @@ struct CaseCustomizer: View {
     @State private var cropping: CropSource?
 
     enum Slot: String, Identifiable {
-        case wrap, cover, back, spine, disc
+        case wrap, cover, back, spine, front, disc
         var id: String { rawValue }
         var title: String {
             switch self {
@@ -568,6 +568,7 @@ struct CaseCustomizer: View {
             case .cover: return "Jaquette"
             case .back: return "Dos du boîtier"
             case .spine: return "Tranche"
+            case .front: return "Pochette avant"
             case .disc: return "Disque"
             }
         }
@@ -577,6 +578,7 @@ struct CaseCustomizer: View {
             case .cover: return "La face avant, sous le film"
             case .back: return "L’arrière du boîtier"
             case .spine: return "Le côté, visible sur l’étagère"
+            case .front: return "L’image carrée sous le couvercle du boîtier"
             case .disc: return "Recadrée en cercle, comme une photo de profil"
             }
         }
@@ -586,12 +588,13 @@ struct CaseCustomizer: View {
             case .cover: return "rectangle.portrait"
             case .back: return "rectangle.portrait.on.rectangle.portrait"
             case .spine: return "rectangle.split.3x1"
+            case .front: return "square"
             case .disc: return "opticaldisc"
             }
         }
     }
 
-    private var slots: [Slot] { game == nil ? [.disc] : [.wrap, .cover, .back, .spine, .disc] }
+    private var slots: [Slot] { game == nil ? [.front, .disc] : [.wrap, .cover, .back, .spine, .disc] }
 
     var body: some View {
         NavigationStack {
@@ -689,6 +692,7 @@ struct CaseCustomizer: View {
         case .cover: return game.flatMap { library.gameCoverImage($0) }
         case .back: return game.flatMap { library.extraImage("back", $0) }
         case .spine: return game.flatMap { library.extraImage("spine", $0) }
+        case .front: return library.extraImage("front", album.id)
         case .disc: return library.extraImage("disc", album.id)
         }
     }
@@ -715,7 +719,7 @@ struct CaseCustomizer: View {
         case .wrap: return Physical.wrapAspect
         case .cover, .back: return insert.width / insert.height
         case .spine: return Physical.insertSpine / insert.height
-        case .disc: return 1
+        case .front, .disc: return 1
         }
     }
 
@@ -733,6 +737,7 @@ struct CaseCustomizer: View {
         case .cover: if let game { library.setGameCover(image, for: game) }
         case .back: if let game { library.setExtraImage(image, kind: "back", key: game) }
         case .spine: if let game { library.setExtraImage(image, kind: "spine", key: game) }
+        case .front: library.setExtraImage(image, kind: "front", key: album.id)
         case .disc: library.setExtraImage(image, kind: "disc", key: album.id)
         }
     }
@@ -748,6 +753,7 @@ struct CaseCustomizer: View {
         case .cover: if let game { library.resetGameCover(game) }
         case .back: if let game { library.resetExtraImage("back", game) }
         case .spine: if let game { library.resetExtraImage("spine", game) }
+        case .front: library.resetExtraImage("front", album.id)
         case .disc: library.resetExtraImage("disc", album.id)
         }
     }

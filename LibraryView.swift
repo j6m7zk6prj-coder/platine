@@ -361,12 +361,12 @@ struct MiniPlayer: View {
         if let id = player.currentID, let t = library.track(id) {
             HStack(spacing: 12) {
                 ArtworkView(track: t, animated: false, small: true, cornerRadius: 9)
-                    .frame(width: 46, height: 46)
+                    .frame(width: 44, height: 44)
                     .id(t.id)
                     .transition(.opacity)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(t.title).font(.subheadline.weight(.semibold)).lineLimit(1)
-                    Text(t.displayArtist).font(.footnote).foregroundStyle(.secondary).lineLimit(1)
+                    Text(t.title).font(.body.weight(.semibold)).lineLimit(1)
+                    Text(t.displayArtist).font(.subheadline).foregroundStyle(.primary.opacity(0.75)).lineLimit(1)
                 }
                 .id(t.id)
                 .transition(.opacity)
@@ -374,37 +374,28 @@ struct MiniPlayer: View {
 
                 Button { player.togglePlay() } label: {
                     Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                        .font(.title2)
+                        .font(.system(size: 24))
                         .contentTransition(.symbolEffect(.replace))
-                        .frame(width: 42, height: 42)
+                        .frame(width: 44, height: 44)
                 }
                 .accessibilityLabel(player.isPlaying ? "Pause" : "Lecture")
                 Button { player.next() } label: {
                     Image(systemName: "forward.fill")
-                        .font(.title3)
-                        .frame(width: 42, height: 42)
+                        .font(.system(size: 22))
+                        .frame(width: 48, height: 44)
                 }
                 .accessibilityLabel("Suivant")
             }
             .buttonStyle(PressStyle())
             .foregroundStyle(.primary)
-            .padding(.leading, 8)
-            .padding(.trailing, 6)
-            .padding(.vertical, 8)
-            .overlay(alignment: .bottom) {
-                // Fine barre de progression, comme dans Musique.
-                GeometryReader { geo in
-                    Capsule()
-                        .fill(.primary.opacity(0.7))
-                        .frame(width: geo.size.width * min(1, player.currentTime / max(player.duration, 0.01)), height: 2)
-                }
-                .frame(height: 2)
-                .padding(.horizontal, 24)
-                .padding(.bottom, 2)
-            }
-            .contentShape(Rectangle())
+            .padding(.leading, 10)
+            .padding(.trailing, 12)
+            .padding(.vertical, 9)
+            .contentShape(Capsule())
             .onTapGesture(perform: onOpen)
-            .glass(30, interactive: true)
+            // Comme Musique : une pilule en Liquid Glass (verre dépoli sur les iOS plus anciens).
+            .glassCapsule(interactive: true)
+            .modifier(PlayerZoomSource())
             .contextMenu {
                 Button(player.isPlaying ? "Pause" : "Lecture", systemImage: player.isPlaying ? "pause.fill" : "play.fill") {
                     player.togglePlay()

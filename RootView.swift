@@ -10,6 +10,8 @@ struct RootView: View {
     @Environment(\.scenePhase) private var phase
     /// La Collection est chargée (cachée) peu après le lancement, pour s'ouvrir sans attendre.
     @State private var shelfMounted = false
+    /// Le mini-lecteur s'agrandit en lecteur plein écran (et s'y referme en glissant vers le bas).
+    @Namespace private var playerZoom
 
     var body: some View {
         @Bindable var ui = ui
@@ -27,13 +29,8 @@ struct RootView: View {
                 .tag(2)
         }
         .overlay(alignment: .top) { Banner() }
-        .sheet(isPresented: $ui.showPlayer) {
-            NowPlayingView()
-                .environment(\.colorScheme, .dark)
-                .presentationDragIndicator(.visible)
-                .presentationCornerRadius(40)
-                .presentationBackground(.black)
-        }
+        .modifier(PlayerPresenter(isPresented: $ui.showPlayer, namespace: playerZoom))
+        .environment(\.playerZoomNamespace, playerZoom)
         .sheet(item: $ui.editing) { target in
             ArtworkEditor(trackID: target.id)
         }
@@ -136,5 +133,71 @@ struct Banner: View {
         .animation(.spring(response: 0.45, dampingFraction: 0.8), value: library.message)
         .animation(.spring(response: 0.45, dampingFraction: 0.8), value: library.isImporting)
         .allowsHitTesting(false)
+    }
+}
+
+
+// MARK: - Ouverture du lecteur façon Musique
+
+private struct PlayerZoomNamespaceKey: EnvironmentKey {
+    static let defaultValue: Namespace.ID? = nil
+}
+
+extension EnvironmentValues {
+    var playerZoomNamespace: Namespace.ID? {
+        get { self[PlayerZoomNamespaceKey.self] }
+        set { self[PlayerZoomNamespaceKey.self] = newValue }
+    }
+}
+
+/// Le mini-lecteur sert de point de départ : le lecteur en sort en s'agrandissant.
+struct PlayerZoomSource: ViewModifier {
+    @Environment(\.playerZoomNamespace) private var namespace
+
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, *), let namespace {
+            content.matchedTransitionSource(id: "miniPlayer", in: namespace) { source in
+                source.clipShape(Capsule())
+            }
+        } else {
+            content
+        }
+    }
+}
+
+/// iOS 18 et plus : le lecteur sort du mini-lecteur et y rentre quand tu le glisses vers le bas,
+/// en suivant ton doigt (comme Musique). Avant iOS 18 : feuille classique.
+struct PlayerPresenter: ViewModifier {
+    @Binding var isPresented: Bool
+    let namespace: Namespace.ID
+
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, *) {
+            content.fullScreenCover(isPresented: $isPresented) {
+                NowPlayingView()
+                    .environment(\.colorScheme, .dark)
+                    .overlay(alignment: .top) { Grabber() }
+                    .navigationTransition(.zoom(sourceID: "miniPlayer", in: namespace))
+            }
+        } else {
+            content.sheet(isPresented: $isPresented) {
+                NowPlayingView()
+                    .environment(\.colorScheme, .dark)
+                    .presentationDragIndicator(.visible)
+                    .presentationCornerRadius(40)
+                    .presentationBackground(.black)
+            }
+        }
+    }
+}
+
+/// La petite barre en haut du lecteur : on le referme en glissant vers le bas.
+struct Grabber: View {
+    var body: some View {
+        Capsule()
+            .fill(.white.opacity(0.4))
+            .frame(width: 38, height: 5)
+            .padding(.top, 8)
+            .allowsHitTesting(false)
     }
 }
