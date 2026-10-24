@@ -46,6 +46,7 @@ struct FoilSticker: View {
     private func cutoutBody(_ image: UIImage) -> some View {
         let border = max(1.5, size * 0.045)
         let silhouette = Image(uiImage: image).resizable().scaledToFit()
+        // Le dessin est un peu rentré : le liseré blanc ne dépasse jamais du cadre (rien n'est coupé).
         return ZStack {
             if bordered {
                 // Liseré : la silhouette en blanc, élargie tout autour.
@@ -60,14 +61,15 @@ struct FoilSticker: View {
                 .overlay(
                     LinearGradient(stops: [
                         .init(color: .clear, location: 0),
-                        .init(color: .white.opacity(0.75), location: 0.5),
+                        .init(color: .white.opacity(finish.isPlain ? 0.18 : 0.75), location: 0.5),
                         .init(color: .clear, location: 1)
                     ], startPoint: UnitPoint(x: -0.6 + (light + 1) * 0.6, y: 0), endPoint: UnitPoint(x: 0.1 + (light + 1) * 0.6, y: 1))
                     .blendMode(.overlay)
                 )
-                .overlay(SparkleDots().blendMode(.overlay).opacity(finish == .color ? 0.35 : 0.65))
+                .overlay(SparkleDots().blendMode(.overlay).opacity(finish.isPlain ? 0 : (finish == .color ? 0.35 : 0.65)))
                 .mask(silhouette)
         }
+        .padding(bordered ? border + 1 : 1)
         .frame(width: size, height: size)
         .compositingGroup()
         .shadow(color: .black.opacity(0.4), radius: size * 0.08, y: size * 0.04)
@@ -88,12 +90,12 @@ struct FoilSticker: View {
         .overlay(
             shape.fill(LinearGradient(stops: [
                 .init(color: .clear, location: 0),
-                .init(color: .white.opacity(0.75), location: 0.5),
+                .init(color: .white.opacity(finish.isPlain ? 0.18 : 0.75), location: 0.5),
                 .init(color: .clear, location: 1)
             ], startPoint: UnitPoint(x: -0.6 + (light + 1) * 0.6, y: 0), endPoint: UnitPoint(x: 0.1 + (light + 1) * 0.6, y: 1)))
             .blendMode(.overlay)
         )
-        .overlay(SparkleDots().clipShape(shape).blendMode(.overlay).opacity(finish == .color ? 0.35 : 0.65))
+        .overlay(SparkleDots().clipShape(shape).blendMode(.overlay).opacity(finish.isPlain ? 0 : (finish == .color ? 0.35 : 0.65)))
         // Liseré blanc de découpe, comme un vrai sticker (optionnel).
         .overlay(shape.stroke(Color.white.opacity(bordered ? 0.92 : 0), lineWidth: max(1.5, size * 0.05)))
         .shadow(color: .black.opacity(0.4), radius: size * 0.08, y: size * 0.04)
@@ -104,6 +106,11 @@ struct FoilSticker: View {
         switch finish {
         case .color:
             picture
+        case .frosted:
+            // Verre mat : couleurs adoucies, voile blanc dépoli, aucun effet holographique.
+            picture.saturation(0.9).blur(radius: size * 0.006)
+                .overlay(LinearGradient(colors: [.white.opacity(0.28), .white.opacity(0.1), .white.opacity(0.2)],
+                                        startPoint: .topLeading, endPoint: .bottomTrailing))
         case .holo:
             picture.grayscale(1).contrast(1.15)
                 .overlay(AngularGradient(colors: Self.holo, center: .center, angle: angle).blendMode(.color))
@@ -166,16 +173,21 @@ struct StickerChoice {
 
 /// Détourage : retirer le fond pour ne garder que le dessin.
 enum StickerCutout: String, CaseIterable, Identifiable {
-    case none, auto, green, pink
+    case none, auto, plain, green, pink, black, white
     var id: String { rawValue }
     var label: String {
         switch self {
         case .none: return "Aucun"
-        case .auto: return "Auto"
-        case .green: return "Fond vert"
-        case .pink: return "Fond rose"
+        case .auto: return "Sujet auto"
+        case .plain: return "Fond uni"
+        case .green: return "Vert"
+        case .pink: return "Rose"
+        case .black: return "Noir"
+        case .white: return "Blanc"
         }
     }
+    /// Retire une couleur de fond (réglable avec la précision).
+    var isColor: Bool { self != .none && self != .auto }
 }
 
 /// Choix de la finition, de la forme, du liseré et du détourage, avec un aperçu qui brille.
@@ -190,6 +202,8 @@ struct StickerFinishSheet: View {
     @State private var cutImage: UIImage?
     @State private var working = false
     @State private var failed = false
+    /// Précision du détourage par couleur : plus haut = retire plus de fond.
+    @State private var tolerance: Double = 0.5
 
     private var shown: UIImage { cutoutMode == .none ? image : (cutImage ?? image) }
     private var isCut: Bool { cutoutMode != .none && cutImage != nil }
@@ -213,10 +227,30 @@ struct StickerFinishSheet: View {
 
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Détourage").font(.headline)
-                        Picker("Détourage", selection: $cutoutMode) {
-                            ForEach(StickerCutout.allCases) { Text($0.label).tag($0) }
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 8) {
+                                ForEach(StickerCutout.allCases) { mode in
+                                    let on = mode == cutoutMode
+                                    Button { cutoutMode = mode } label: {
+                                        Text(mode.label)
+                                            .font(.subheadline.weight(.semibold))
+                                            .foregroundStyle(on ? Color.black : Color.white)
+                                            .padding(.horizontal, 14)
+                                            .frame(height: 34)
+                                            .background(Capsule().fill(on ? Color.white : Color.white.opacity(0.12)))
+                                    }
+                                    .buttonStyle(PressStyle(circle: false))
+                                }
+                            }
                         }
-                        .pickerStyle(.segmented)
+                        if cutoutMode.isColor {
+                            HStack(spacing: 10) {
+                                Text("Précision").font(.subheadline)
+                                Slider(value: $tolerance, in: 0...1, onEditingChanged: { editing in
+                                    if !editing { Task { await applyCutout(cutoutMode) } }
+                                })
+                            }
+                        }
                         Text(cutoutHint)
                             .font(.caption)
                             .foregroundStyle(failed ? Color.orange : Color.secondary)
@@ -292,8 +326,11 @@ struct StickerFinishSheet: View {
         switch cutoutMode {
         case .none: return "L’image entière, découpée en rond ou en carré."
         case .auto: return "Le sujet principal est détecté et détouré automatiquement."
+        case .plain: return "La couleur du fond est détectée dans les coins de l’image, puis retirée."
         case .green: return "Pour une image sur fond vert : tout le vert est retiré."
         case .pink: return "Pour une image sur fond rose : tout le rose est retiré."
+        case .black: return "Pour une image sur fond noir."
+        case .white: return "Pour une image sur fond blanc."
         }
     }
 
@@ -302,8 +339,9 @@ struct StickerFinishSheet: View {
         guard mode != .none else { cutImage = nil; return }
         working = true
         let source = image
+        let tol = tolerance
         let result = await Task.detached(priority: .userInitiated) {
-            StickerCutter.cut(source, mode: mode)
+            StickerCutter.cut(source, mode: mode, tolerance: tol)
         }.value
         // Ignore un résultat arrivé après un autre choix.
         guard mode == cutoutMode else { return }
@@ -317,13 +355,103 @@ struct StickerFinishSheet: View {
 
 /// Retire le fond d'une image (sujet automatique, fond vert ou fond rose).
 enum StickerCutter {
-    static func cut(_ image: UIImage, mode: StickerCutout) -> UIImage? {
+    static func cut(_ image: UIImage, mode: StickerCutout, tolerance: Double = 0.5) -> UIImage? {
         guard let cg = normalized(image) else { return nil }
+        let result: UIImage?
         switch mode {
         case .none: return image
-        case .auto: return subject(cg)
-        case .green, .pink: return chromaKey(cg, pink: mode == .pink)
+        case .auto: result = subject(cg)
+        case .green, .pink: result = chromaKey(cg, pink: mode == .pink, tolerance: Float(tolerance))
+        case .black: result = colorKey(cg, key: (0, 0, 0), tolerance: Float(tolerance))
+        case .white: result = colorKey(cg, key: (1, 1, 1), tolerance: Float(tolerance))
+        case .plain: result = colorKey(cg, key: cornerColor(cg), tolerance: Float(tolerance))
         }
+        return result.flatMap { trimmed($0) }
+    }
+
+    /// Recadre au plus près du dessin (sur un carré), pour qu'il remplisse bien le sticker sans être coupé.
+    private static func trimmed(_ image: UIImage) -> UIImage? {
+        guard let cg = image.cgImage else { return image }
+        let w = cg.width, h = cg.height
+        guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
+                                  space: CGColorSpaceCreateDeviceRGB(),
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue),
+              let raw = ctx.data else { return image }
+        ctx.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
+        let p = raw.bindMemory(to: UInt8.self, capacity: w * h * 4)
+        var minX = w, minY = h, maxX = -1, maxY = -1
+        for y in 0..<h {
+            for x in 0..<w where p[(y * w + x) * 4 + 3] > 12 {
+                if x < minX { minX = x }
+                if x > maxX { maxX = x }
+                if y < minY { minY = y }
+                if y > maxY { maxY = y }
+            }
+        }
+        // Rien de gardé : le détourage a tout retiré.
+        guard maxX >= minX, maxY >= minY else { return nil }
+        let boxW = CGFloat(maxX - minX + 1), boxH = CGFloat(maxY - minY + 1)
+        let side = max(boxW, boxH) * 1.06
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = false
+        // La première ligne en mémoire est le haut de l'image, comme pour le recadrage.
+        let crop = CGRect(x: CGFloat(minX), y: CGFloat(minY), width: boxW, height: boxH)
+        guard let piece = cg.cropping(to: crop) else { return image }
+        return UIGraphicsImageRenderer(size: CGSize(width: side, height: side), format: format).image { _ in
+            UIImage(cgImage: piece).draw(in: CGRect(x: (side - boxW) / 2, y: (side - boxH) / 2, width: boxW, height: boxH))
+        }
+    }
+
+    /// Couleur moyenne des quatre coins (le fond, sur une image à fond uni).
+    private static func cornerColor(_ cg: CGImage) -> (Float, Float, Float) {
+        let w = cg.width, h = cg.height
+        guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
+                                  space: CGColorSpaceCreateDeviceRGB(),
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue),
+              let raw = ctx.data else { return (0, 0, 0) }
+        ctx.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
+        let p = raw.bindMemory(to: UInt8.self, capacity: w * h * 4)
+        var r: Float = 0, g: Float = 0, b: Float = 0, n: Float = 0
+        let k = max(2, min(w, h) / 40)
+        for (cx, cy) in [(0, 0), (w - k, 0), (0, h - k), (w - k, h - k)] {
+            for y in cy..<(cy + k) {
+                for x in cx..<(cx + k) {
+                    let o = (y * w + x) * 4
+                    r += Float(p[o]); g += Float(p[o + 1]); b += Float(p[o + 2]); n += 1
+                }
+            }
+        }
+        return (r / n / 255, g / n / 255, b / n / 255)
+    }
+
+    /// Retire tout ce qui est proche d'une couleur (noir, blanc, ou la couleur du fond détectée).
+    private static func colorKey(_ cg: CGImage, key: (Float, Float, Float), tolerance: Float) -> UIImage? {
+        let w = cg.width, h = cg.height
+        guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
+                                  space: CGColorSpaceCreateDeviceRGB(),
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue),
+              let raw = ctx.data else { return nil }
+        ctx.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
+        let p = raw.bindMemory(to: UInt8.self, capacity: w * h * 4)
+        let low: Float = 0.04 + tolerance * 0.22
+        let high: Float = low + 0.1
+        for i in 0..<(w * h) {
+            let o = i * 4
+            let a = Float(p[o + 3]) / 255
+            guard a > 0 else { continue }
+            let r = Float(p[o]) / 255 / a, g = Float(p[o + 1]) / 255 / a, b = Float(p[o + 2]) / 255 / a
+            let dr = r - key.0, dg = g - key.1, db = b - key.2
+            let distance = (dr * dr + dg * dg + db * db).squareRoot() / 1.732
+            let keep = min(1, max(0, (distance - low) / (high - low)))
+            let na = a * keep
+            p[o] = UInt8(max(0, min(255, r * na * 255)))
+            p[o + 1] = UInt8(max(0, min(255, g * na * 255)))
+            p[o + 2] = UInt8(max(0, min(255, b * na * 255)))
+            p[o + 3] = UInt8(max(0, min(255, na * 255)))
+        }
+        guard let out = ctx.makeImage() else { return nil }
+        return UIImage(cgImage: out)
     }
 
     /// Image redessinée à l'endroit, en 600 × 600 maximum.
@@ -357,7 +485,7 @@ enum StickerCutter {
     }
 
     /// Fond vert ou rose : chaque pixel proche de cette couleur devient transparent, avec un bord doux.
-    private static func chromaKey(_ cg: CGImage, pink: Bool) -> UIImage? {
+    private static func chromaKey(_ cg: CGImage, pink: Bool, tolerance: Float) -> UIImage? {
         let w = cg.width, h = cg.height
         guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
                                   space: CGColorSpaceCreateDeviceRGB(),
@@ -365,8 +493,10 @@ enum StickerCutter {
               let raw = ctx.data else { return nil }
         ctx.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
         let p = raw.bindMemory(to: UInt8.self, capacity: w * h * 4)
-        let low: Float = pink ? 0.2 : 0.1
-        let high: Float = pink ? 0.38 : 0.28
+        // Plus la précision est haute, plus les teintes proches du fond sont retirées.
+        let shift = (0.5 - tolerance) * 0.16
+        let low: Float = (pink ? 0.2 : 0.1) + shift
+        let high: Float = (pink ? 0.38 : 0.28) + shift
         for i in 0..<(w * h) {
             let o = i * 4
             let a = Float(p[o + 3]) / 255
@@ -401,6 +531,8 @@ struct MyStickersSection: View {
     @State private var photoItem: PhotosPickerItem?
     @State private var cropping: CropSource?
     @State private var finishing: CropSource?
+    /// Image recadrée en attente : la fiche des finitions s'ouvre dès que le recadrage est fermé.
+    @State private var pendingCrop: UIImage?
 
     var body: some View {
         let chosen = Set(library.stickerKeys(for: album.id))
@@ -461,13 +593,15 @@ struct MyStickersSection: View {
                 photoItem = nil
             }
         }
-        .fullScreenCover(item: $cropping) { source in
-            CoverCropper(image: source.image, aspect: 1, title: "Sticker") { cropped in
-                // On laisse le recadrage se fermer avant d'ouvrir le choix de la finition.
-                Task {
-                    try? await Task.sleep(for: .milliseconds(450))
-                    finishing = CropSource(image: cropped)
-                }
+        .fullScreenCover(item: $cropping, onDismiss: {
+            // Le recadrage est bien fermé : on ouvre le choix de la finition (plus de bug d'enchaînement).
+            if let image = pendingCrop {
+                pendingCrop = nil
+                finishing = CropSource(image: image)
+            }
+        }) { source in
+            CoverCropper(image: source.image, aspect: 1, title: "Sticker", fullImageOption: true) { cropped in
+                pendingCrop = cropped
             }
         }
         .sheet(item: $finishing) { source in

@@ -1379,12 +1379,26 @@ struct CropSource: Identifiable {
 
 /// Place ta photo dans le cadre de la jaquette : glisse pour la déplacer, pince pour zoomer.
 struct CoverCropper: View {
+    /// Toute l'image posée dans un carré transparent (rien n'est coupé).
+    static func fitted(_ image: UIImage) -> UIImage {
+        let side = max(image.size.width, image.size.height, 1)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = false
+        return UIGraphicsImageRenderer(size: CGSize(width: side, height: side), format: format).image { _ in
+            image.draw(in: CGRect(x: (side - image.size.width) / 2, y: (side - image.size.height) / 2,
+                                  width: image.size.width, height: image.size.height))
+        }
+    }
+
     let image: UIImage
     /// Largeur ÷ hauteur du cadre (jaquette PS5 : 135 ÷ 170).
     let aspect: CGFloat
     var title = "Jaquette"
     /// Cadre rond (pour un sticker rond).
     var round = false
+    /// Bouton « Image entière » : garde toute l'image, sans rien couper (stickers).
+    var fullImageOption = false
     var onDone: (UIImage) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var lastFrame: CGSize = CGSize(width: 300, height: 300)
@@ -1423,6 +1437,21 @@ struct CoverCropper: View {
             .padding(.horizontal, 16)
             .padding(.top, topInset + 8)
             .padding(.bottom, 8)
+
+            if fullImageOption {
+                Button {
+                    onDone(Self.fitted(image))
+                    dismiss()
+                } label: {
+                    Label("Image entière, sans recadrer", systemImage: "arrow.up.left.and.arrow.down.right")
+                        .font(.subheadline.weight(.semibold))
+                        .padding(.horizontal, 16)
+                        .frame(height: 36)
+                        .background(Capsule().fill(Color.white.opacity(0.14)))
+                }
+                .buttonStyle(PressStyle(circle: false))
+                .padding(.bottom, 6)
+            }
 
             // Zone de recadrage : sa taille ne dépend jamais de l'image (rien ne saute quand on zoome).
             GeometryReader { geo in

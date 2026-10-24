@@ -56,6 +56,19 @@ enum CollectionObject: String, CaseIterable, Identifiable {
         }
     }
 
+    /// Le nom que tu lui as donné (sinon son nom d'origine).
+    var displayName: String {
+        let names = UserDefaults.standard.dictionary(forKey: "objectNames") as? [String: String] ?? [:]
+        return names[rawValue] ?? name
+    }
+
+    func rename(_ newName: String) {
+        var names = UserDefaults.standard.dictionary(forKey: "objectNames") as? [String: String] ?? [:]
+        let clean = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        names[rawValue] = clean.isEmpty ? nil : clean
+        UserDefaults.standard.set(names, forKey: "objectNames")
+    }
+
     private static let key = "collectionObjects"
 
     static func loadOwned() -> [CollectionObject] {
@@ -78,6 +91,9 @@ struct ObjectsRoom: View {
     @State private var volume = VolumeModel()
     @State private var stickerTarget: AlbumInfo?
     @State private var flipToken = 0
+    @State private var renaming: CollectionObject?
+    @State private var newName = ""
+    @State private var nameVersion = 0
 
     var body: some View {
         ZStack {
@@ -87,7 +103,18 @@ struct ObjectsRoom: View {
                 VStack(spacing: 12) {
                     Spacer()
                     VStack(spacing: 4) {
-                        Text(object.name).font(.title2.bold())
+                        let _ = nameVersion
+                        Button {
+                            newName = object.displayName
+                            renaming = object
+                        } label: {
+                            HStack(spacing: 6) {
+                                Text(object.displayName).font(.title2.bold())
+                                Image(systemName: "pencil").font(.subheadline.weight(.semibold)).opacity(0.5)
+                            }
+                        }
+                        .buttonStyle(PressStyle(circle: false))
+                        .accessibilityHint("Renommer")
                         Text(object.finish).font(.headline).foregroundStyle(.white.opacity(0.6))
                         Text("Touche l’écran pour lire ou mettre en pause · ◀︎ ▶︎ pour changer de son · bouton du bas, volume et verrouillage marchent aussi")
                             .font(.caption)
@@ -145,6 +172,22 @@ struct ObjectsRoom: View {
             }
         }
         .background { HiddenVolumeView(model: volume).frame(width: 1, height: 1).opacity(0.01) }
+        .alert("Renommer", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
+            TextField("Nom", text: $newName)
+            Button("Enregistrer") {
+                renaming?.rename(newName)
+                nameVersion += 1
+                renaming = nil
+            }
+            Button("Nom d’origine") {
+                renaming?.rename("")
+                nameVersion += 1
+                renaming = nil
+            }
+            Button("Annuler", role: .cancel) { renaming = nil }
+        } message: {
+            Text("Donne un nom à cet objet, par exemple « Mon premier iPhone ».")
+        }
         // En refermant les stickers, le téléphone se retourne pour montrer son dos.
         .sheet(item: $stickerTarget, onDismiss: { flipToken += 1 }) { album in
             StickerPicker(album: album)
@@ -401,10 +444,35 @@ final class PhoneSceneController: NSObject, UIGestureRecognizerDelegate {
         // Dos en verre gris sidéral (gris foncé, pas noir), comme sur la photo.
         let back = Self.glass(white: 0.11)
         let band = Self.metal()
-        body.materials = [front, back, band, band, band]
+        body.materials = [band, band, band, band, band]
         phone.addChildNode(SCNNode(geometry: body))
 
-        let fz = Float(D / 2)
+        // Verres avant et arrière : ils vont presque jusqu'au bord (liseré d'aluminium très fin,
+        // comme sur le vrai), avec un bord légèrement arrondi.
+        let glassInset: CGFloat = 0.005
+        let glassPath = UIBezierPath(roundedRect: CGRect(x: -W / 2 + glassInset, y: -H / 2 + glassInset,
+                                                         width: W - 2 * glassInset, height: H - 2 * glassInset),
+                                     cornerRadius: Phone.corner - glassInset)
+        glassPath.flatness = 0.001
+        let glassThickness: CGFloat = 0.006
+        let frontGlass = SCNShape(path: glassPath, extrusionDepth: glassThickness)
+        frontGlass.chamferRadius = 0.004
+        frontGlass.chamferMode = .front
+        frontGlass.chamferProfile = profile
+        frontGlass.materials = [front, front, front, front, front]
+        let frontNode = SCNNode(geometry: frontGlass)
+        frontNode.position.z = Float(D / 2 - glassThickness / 2 + 0.0006)
+        phone.addChildNode(frontNode)
+        let backGlass = SCNShape(path: glassPath, extrusionDepth: glassThickness)
+        backGlass.chamferRadius = 0.004
+        backGlass.chamferMode = .back
+        backGlass.chamferProfile = profile
+        backGlass.materials = [back, back, back, back, back]
+        let backNode = SCNNode(geometry: backGlass)
+        backNode.position.z = Float(-D / 2 + glassThickness / 2 - 0.0006)
+        phone.addChildNode(backNode)
+
+        let fz = Float(D / 2 + 0.0006)
 
         // Écran : la musique en cours, en direct.
         let screen = SCNPlane(width: Phone.screen.width, height: Phone.screen.height)
@@ -417,8 +485,8 @@ final class PhoneSceneController: NSObject, UIGestureRecognizerDelegate {
         phone.addChildNode(screenNode)
 
         // Reflet du verre par-dessus l'écran.
-        let gloss = SCNPlane(width: W - 0.06, height: H - 0.06)
-        gloss.cornerRadius = Phone.corner - 0.03
+        let gloss = SCNPlane(width: W - 0.02, height: H - 0.02)
+        gloss.cornerRadius = Phone.corner - 0.01
         let gm = SCNMaterial()
         gm.lightingModel = .blinn
         gm.diffuse.contents = UIColor.black
@@ -488,10 +556,10 @@ final class PhoneSceneController: NSObject, UIGestureRecognizerDelegate {
         phone.addChildNode(homeNode)
 
         // Dos en verre : reflet brillant par-dessus, et les stickers collés au dos.
-        let bz = Float(-D / 2)
-        let backW = W - 0.06, backH = H - 0.06
+        let bz = Float(-D / 2 - 0.0006)
+        let backW = W - 0.02, backH = H - 0.02
         let stickers = SCNPlane(width: backW, height: backH)
-        stickers.cornerRadius = Phone.corner - 0.03
+        stickers.cornerRadius = Phone.corner - 0.01
         stickerMaterial.lightingModel = .physicallyBased
         stickerMaterial.diffuse.contents = UIColor.clear
         stickerMaterial.roughness.contents = 0.25
@@ -505,7 +573,7 @@ final class PhoneSceneController: NSObject, UIGestureRecognizerDelegate {
         phone.addChildNode(sNode)
         stickerNode = sNode
         let backGloss = SCNPlane(width: backW, height: backH)
-        backGloss.cornerRadius = Phone.corner - 0.03
+        backGloss.cornerRadius = Phone.corner - 0.01
         backGloss.materials = [gm]
         let bgNode = SCNNode(geometry: backGloss)
         bgNode.eulerAngles.y = .pi
@@ -513,12 +581,12 @@ final class PhoneSceneController: NSObject, UIGestureRecognizerDelegate {
         bgNode.renderingOrder = 10
         phone.addChildNode(bgNode)
 
-        // Dos : appareil photo (anneau en relief) et flash.
+        // Dos : appareil photo (anneau en relief) et flash, en haut à gauche quand on regarde le dos.
         let bump = SCNCylinder(radius: 0.046, height: 0.012)
         bump.materials = [Self.metal()]
         let bumpNode = SCNNode(geometry: bump)
         bumpNode.eulerAngles.x = .pi / 2
-        bumpNode.position = SCNVector3(Float(-W / 2 + 0.1), Float(H / 2 - 0.1), bz - 0.004)
+        bumpNode.position = SCNVector3(Float(W / 2 - 0.1), Float(H / 2 - 0.1), bz - 0.004)
         phone.addChildNode(bumpNode)
         let lens = SCNCylinder(radius: 0.034, height: 0.013)
         let lm = Self.glass(white: 0.01)
@@ -533,7 +601,7 @@ final class PhoneSceneController: NSObject, UIGestureRecognizerDelegate {
         flash.materials = [Self.flat(UIColor(red: 0.95, green: 0.9, blue: 0.75, alpha: 1))]
         let flashNode = SCNNode(geometry: flash)
         flashNode.eulerAngles.y = .pi
-        flashNode.position = SCNVector3(Float(-W / 2 + 0.2), Float(H / 2 - 0.1), bz - 0.0008)
+        flashNode.position = SCNVector3(Float(W / 2 - 0.2), Float(H / 2 - 0.1), bz - 0.0008)
         phone.addChildNode(flashNode)
 
         // Boutons sur les côtés : silencieux et volume à gauche, verrouillage à droite.
@@ -598,7 +666,7 @@ final class PhoneSceneController: NSObject, UIGestureRecognizerDelegate {
         mic.materials = [holeMaterial]
         let micNode = SCNNode(geometry: mic)
         micNode.eulerAngles.y = .pi
-        micNode.position = SCNVector3(Float(-W / 2 + 0.152), Float(H / 2 - 0.1), Float(-D / 2) - 0.0008)
+        micNode.position = SCNVector3(Float(W / 2 - 0.152), Float(H / 2 - 0.1), bz - 0.0004)
         phone.addChildNode(micNode)
         return phone
     }

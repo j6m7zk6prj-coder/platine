@@ -249,8 +249,10 @@ func songCount(_ n: Int) -> String { n == 1 ? "1 morceau" : "\(n) morceaux" }
 
 /// Finition d'un sticker fait à partir de ta propre image.
 enum StickerFinish: String, Codable, CaseIterable, Identifiable {
-    case holo, silver, gold, rose, color
+    case holo, silver, gold, rose, color, frosted
     var id: String { rawValue }
+    /// Sans paillettes ni reflet holographique.
+    var isPlain: Bool { self == .frosted }
     var label: String {
         switch self {
         case .holo: return "Holographique"
@@ -258,6 +260,7 @@ enum StickerFinish: String, Codable, CaseIterable, Identifiable {
         case .gold: return "Or"
         case .rose: return "Or rose"
         case .color: return "Couleurs + reflet"
+        case .frosted: return "Verre mat"
         }
     }
 }
