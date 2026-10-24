@@ -18,6 +18,50 @@ final class LockScreenArtwork {
 
     private var artworks: [String: AnyObject] = [:]
     private var working: Set<String> = []
+    /// Clips à préparer, un à la fois. iOS interdit l'encodage vidéo quand l'app est en arrière-plan
+    /// (écran verrouillé) : la préparation se fait donc pendant que l'app est ouverte.
+    private var queue: [Job] = []
+    private var running = false
+    private var observer: NSObjectProtocol?
+
+    private struct Job {
+        let id: String
+        let source: URL
+        let kind: ArtworkKind
+        let shape: Shape
+        let clip: URL
+    }
+
+    private init() {
+        observer = NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification,
+                                                          object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated {
+                let me = LockScreenArtwork.shared
+                // Les échecs dus à l'arrière-plan sont réessayés dès que l'app revient.
+                me.failed.removeAll()
+                me.pump()
+                me.onReady()
+            }
+        }
+    }
+
+    /// Prépare à l'avance les clips d'une pochette animée (morceaux suivants, bibliothèque…).
+    func warm(source: URL, kind: ArtworkKind) {
+        #if compiler(>=6.2)
+        guard #available(iOS 26.0, *), kind == .video || kind == .gif else { return }
+        for key in MPNowPlayingInfoCenter.supportedAnimatedArtworkKeys {
+            let shape: Shape
+            if key == MPNowPlayingInfoProperty3x4AnimatedArtwork { shape = .tall }
+            else if key == MPNowPlayingInfoProperty1x1AnimatedArtwork { shape = .square }
+            else { continue }
+            let id = source.deletingPathExtension().lastPathComponent + "-" + shape.rawValue
+            let clip = Self.folder.appendingPathComponent(id + ".mp4")
+            if !FileManager.default.fileExists(atPath: clip.path) {
+                prepare(id: id, source: source, kind: kind, shape: shape, clip: clip, urgent: false)
+            }
+        }
+        #endif
+    }
     /// Clips qui n'ont pas pu être préparés, avec l'heure de l'échec (on réessaie plus tard).
     private var failed: [String: Date] = [:]
 
@@ -57,7 +101,7 @@ final class LockScreenArtwork {
                 artworks[id] = art
                 result[key] = art
             } else {
-                prepare(id: id, source: source, kind: kind, shape: shape, clip: clip)
+                prepare(id: id, source: source, kind: kind, shape: shape, clip: clip, urgent: true)
             }
         }
         return result
@@ -79,31 +123,53 @@ final class LockScreenArtwork {
         return items.reduce(0) { $0 + Int64((try? $1.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) }
     }
 
-    private func prepare(id: String, source: URL, kind: ArtworkKind, shape: Shape, clip: URL) {
+    private func prepare(id: String, source: URL, kind: ArtworkKind, shape: Shape, clip: URL, urgent: Bool) {
         guard !working.contains(id) else { return }
         if let when = failed[id], Date().timeIntervalSince(when) < 90 { return }
-        working.insert(id)
-        let size = shape.size
+        let job = Job(id: id, source: source, kind: kind, shape: shape, clip: clip)
+        if let i = queue.firstIndex(where: { $0.id == id }) {
+            // Déjà prévu : le morceau en cours passe devant.
+            if urgent { queue.remove(at: i); queue.insert(job, at: 0) }
+        } else if urgent {
+            queue.insert(job, at: 0)
+        } else {
+            queue.append(job)
+        }
+        pump()
+    }
+
+    private func pump() {
+        guard !running, !queue.isEmpty, UIApplication.shared.applicationState == .active else { return }
+        let job = queue.removeFirst()
+        if FileManager.default.fileExists(atPath: job.clip.path) { pump(); return }
+        running = true
+        working.insert(job.id)
+        let size = job.shape.size
+        // Un peu de temps en plus si tu verrouilles l'iPhone pile pendant la préparation.
+        let background = UIApplication.shared.beginBackgroundTask(withName: "LockArtwork")
         Task.detached(priority: .utility) {
-            let temp = clip.deletingLastPathComponent().appendingPathComponent(id + "-tmp.mp4")
+            let temp = job.clip.deletingLastPathComponent().appendingPathComponent(job.id + "-tmp.mp4")
             try? FileManager.default.removeItem(at: temp)
             var ok = false
             do {
-                if kind == .gif {
-                    try await Self.encodeGIF(source, to: temp, size: size)
+                if job.kind == .gif {
+                    try await Self.encodeGIF(job.source, to: temp, size: size)
                 } else {
-                    try await Self.cropVideo(source, to: temp, size: size)
+                    try await Self.cropVideo(job.source, to: temp, size: size)
                 }
-                try? FileManager.default.removeItem(at: clip)
-                try FileManager.default.moveItem(at: temp, to: clip)
+                try? FileManager.default.removeItem(at: job.clip)
+                try FileManager.default.moveItem(at: temp, to: job.clip)
                 ok = true
             } catch {
                 try? FileManager.default.removeItem(at: temp)
             }
             await MainActor.run {
                 let me = LockScreenArtwork.shared
-                me.working.remove(id)
-                if ok { me.failed[id] = nil; me.onReady() } else { me.failed[id] = Date() }
+                me.working.remove(job.id)
+                me.running = false
+                if ok { me.failed[job.id] = nil; me.onReady() } else { me.failed[job.id] = Date() }
+                if background != .invalid { UIApplication.shared.endBackgroundTask(background) }
+                me.pump()
             }
         }
     }
@@ -128,8 +194,8 @@ final class LockScreenArtwork {
         guard let track = try await asset.loadTracks(withMediaType: .video).first else { throw ClipError() }
         let transform = try await track.load(.preferredTransform)
         let duration = try await asset.load(.duration)
-        // 30 secondes au plus : le clip tourne en boucle.
-        let length = CMTimeMinimum(duration, CMTime(seconds: 30, preferredTimescale: 600))
+        // 20 secondes au plus : le clip tourne en boucle (et se prépare plus vite).
+        let length = CMTimeMinimum(duration, CMTime(seconds: 20, preferredTimescale: 600))
 
         let composition = AVMutableComposition()
         guard let videoTrack = composition.addMutableTrack(withMediaType: .video,

@@ -13,6 +13,7 @@ struct TrackInfoEditor: View {
     @State private var year = ""
     @State private var lyrics = ""
     @State private var games: [String] = []
+    @State private var explicit = false
     @State private var loaded = false
     @State private var searching = false
     @State private var showLRCImporter = false
@@ -35,6 +36,12 @@ struct TrackInfoEditor: View {
                     TextField("Titre", text: $title)
                     TextField("Artiste", text: $artist)
                     TextField("Album", text: $album)
+                    Toggle(isOn: $explicit) {
+                        HStack(spacing: 8) {
+                            Text("Contenu explicite")
+                            ExplicitBadge()
+                        }
+                    }
                 }
                 Section("Détails") {
                     LabeledContent("N° de piste") {
@@ -110,6 +117,7 @@ struct TrackInfoEditor: View {
                         library.updateInfo(trackID, title: title, artist: artist, album: album,
                                            trackNumber: Int(number) ?? 0, year: Int(year) ?? 0, lyrics: lyrics)
                         library.setGames(trackID, games)
+                        library.setExplicit(trackID, explicit)
                         dismiss()
                     }
                     .fontWeight(.semibold)
@@ -133,6 +141,7 @@ struct TrackInfoEditor: View {
                 year = t.year > 0 ? "\(t.year)" : ""
                 lyrics = t.lyrics ?? ""
                 games = t.games
+                explicit = t.explicit
             }
         }
         .presentationDragIndicator(.visible)

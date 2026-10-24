@@ -301,10 +301,13 @@ struct TrackRow: View {
                     .frame(width: 50, height: 50)
             }
             VStack(alignment: .leading, spacing: 2) {
-                Text(track.title)
-                    .font(.body.weight(isCurrent ? .semibold : .regular))
-                    .foregroundStyle(isCurrent ? AnyShapeStyle(.tint) : AnyShapeStyle(.primary))
-                    .lineLimit(1)
+                HStack(spacing: 5) {
+                    Text(track.title)
+                        .font(.body.weight(isCurrent ? .semibold : .regular))
+                        .foregroundStyle(isCurrent ? AnyShapeStyle(.tint) : AnyShapeStyle(.primary))
+                        .lineLimit(1)
+                    if track.explicit { ExplicitBadge(size: 13) }
+                }
                 if showArtwork || number == nil {
                     Text(track.subtitle)
                         .font(.subheadline)

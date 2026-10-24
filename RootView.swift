@@ -69,6 +69,15 @@ struct RootView: View {
             let start = library.albums.firstIndex { $0.id == playing } ?? 0
             await ShelfSceneController.warmUp(library: library, settings: settings, start: start)
             shelfMounted = true
+            // Les pochettes animées de l'écran verrouillé sont préparées pendant que l'app est ouverte
+            // (iOS ne permet pas de le faire une fois l'iPhone verrouillé).
+            if settings.lockScreenAnimation {
+                for t in library.tracks {
+                    let kind = library.artworkKind(t)
+                    guard kind == .video || kind == .gif, let url = library.artworkURL(t) else { continue }
+                    LockScreenArtwork.shared.warm(source: url, kind: kind)
+                }
+            }
         }
         .onChange(of: phase) { _, newPhase in
             if newPhase == .active, settings.autoImport { Task { await library.scanInbox() } }

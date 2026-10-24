@@ -15,6 +15,10 @@ struct NowPlayingView: View {
     @State private var showLyrics = false
     @State private var bounceNext = 0
     @State private var bouncePrev = 0
+    /// Paroles en plein écran : les commandes se cachent après quelques secondes, comme dans Musique.
+    @State private var controlsHidden = false
+    @State private var hideTask: Task<Void, Never>?
+    @State private var showSing = false
 
     var body: some View {
         let track = player.currentID.flatMap { library.track($0) }
@@ -25,10 +29,17 @@ struct NowPlayingView: View {
                 sleepBadge.padding(.top, 14)
             }
             if showLyrics, let t = track {
-                Spacer(minLength: 12)
-                LyricsPane(track: t)
-                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
-                Spacer(minLength: 12)
+                lyricsHeader(t)
+                    .padding(.top, 20)
+                    .padding(.bottom, 4)
+                    .transition(.opacity.combined(with: .offset(y: -10)))
+                ZStack(alignment: .bottomTrailing) {
+                    LyricsPane(track: t, onInteract: pokeControls)
+                    singControl
+                        .padding(.bottom, 10)
+                }
+                .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                .simultaneousGesture(TapGesture().onEnded { pokeControls() })
             } else if fullBleed {
                 // L'image est derrière : on laisse juste l'espace pour la voir.
                 Color.clear
@@ -40,9 +51,13 @@ struct NowPlayingView: View {
                 artwork(track)
                 Spacer(minLength: 24)
             }
+            if !(showLyrics && controlsHidden) {
             VStack(spacing: 0) {
-                header(track)
-                    .padding(.bottom, 22)
+                if !showLyrics {
+                    header(track)
+                        .padding(.bottom, 22)
+                        .transition(.opacity)
+                }
                 Scrubber()
                     .padding(.bottom, 18)
                 transport
@@ -53,6 +68,9 @@ struct NowPlayingView: View {
                         .transition(.opacity)
                 }
                 bottomBar
+            }
+            .padding(.top, showLyrics ? 14 : 0)
+            .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
         .padding(.horizontal, 30)
@@ -71,7 +89,13 @@ struct NowPlayingView: View {
             .ignoresSafeArea()
         }
         .animation(.smooth(duration: 0.45), value: player.currentID)
-        .animation(.smooth(duration: 0.4), value: showLyrics)
+        .animation(.spring(response: 0.5, dampingFraction: 0.86), value: showLyrics)
+        .animation(.spring(response: 0.5, dampingFraction: 0.9), value: controlsHidden)
+        .onChange(of: showLyrics) { _, on in
+            showSing = false
+            if on { pokeControls() } else { controlsHidden = false; hideTask?.cancel() }
+        }
+        .onChange(of: player.isPlaying) { _, _ in pokeControls() }
         .sheet(item: $editing) { target in
             ArtworkEditor(trackID: target.id)
         }
@@ -87,6 +111,53 @@ struct NowPlayingView: View {
         .onChange(of: player.currentID) { _, id in
             if id == nil { dismiss() }
         }
+    }
+
+    /// Réaffiche les commandes, puis les cache de nouveau après 3,5 s si les paroles sont affichées.
+    private func pokeControls() {
+        controlsHidden = false
+        hideTask?.cancel()
+        guard showLyrics else { return }
+        hideTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3.5))
+            guard !Task.isCancelled, showLyrics, player.isPlaying, !showSing else { return }
+            controlsHidden = true
+        }
+    }
+
+    /// En haut des paroles : petite pochette, titre et artiste (comme Musique).
+    private func lyricsHeader(_ t: Track) -> some View {
+        HStack(spacing: 12) {
+            ArtworkView(track: t, animated: false, small: true, cornerRadius: 8)
+                .frame(width: 50, height: 50)
+                .shadow(color: .black.opacity(0.35), radius: 8, y: 4)
+            header(t)
+        }
+    }
+
+    /// Mode instrumental : un micro, et un curseur vertical pour baisser la voix (comme « Apple Music Sing »).
+    private var singControl: some View {
+        VStack(spacing: 10) {
+            if showSing {
+                VocalSlider(value: Binding(get: { player.vocalReduction }, set: { player.vocalReduction = $0 }))
+                    .frame(width: 44, height: 160)
+                    .transition(.scale(scale: 0.4, anchor: .bottom).combined(with: .opacity))
+            }
+            Button {
+                showSing.toggle()
+                pokeControls()
+            } label: {
+                Image(systemName: player.vocalReduction > 0.01 ? "music.mic.circle.fill" : "music.mic.circle")
+                    .font(.system(size: 30, weight: .regular))
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(.white.opacity(player.vocalReduction > 0.01 || showSing ? 1 : 0.6))
+                    .frame(width: 44, height: 44)
+            }
+            .buttonStyle(PressStyle())
+            .accessibilityLabel("Instrumental")
+            .accessibilityValue("Voix réduite de \(Int(player.vocalReduction * 100)) %")
+        }
+        .animation(.spring(response: 0.4, dampingFraction: 0.75), value: showSing)
     }
 
     private func isAnimated(_ t: Track) -> Bool {
@@ -140,9 +211,12 @@ struct NowPlayingView: View {
     private func header(_ t: Track?) -> some View {
         HStack(alignment: .center, spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(t?.title ?? "Aucun morceau")
-                    .font(.title2.weight(.semibold))
-                    .lineLimit(1)
+                HStack(spacing: 7) {
+                    Text(t?.title ?? "Aucun morceau")
+                        .font(.title2.weight(.semibold))
+                        .lineLimit(1)
+                    if t?.explicit == true { ExplicitBadge(size: 18) }
+                }
                 Text(t?.displayArtist ?? "")
                     .font(.title2)
                     .foregroundStyle(.white.opacity(0.55))
@@ -177,6 +251,10 @@ struct NowPlayingView: View {
                     }
                     Button(repeatLabel, systemImage: player.repeatMode == .one ? "repeat.1" : "repeat") {
                         player.cycleRepeat()
+                    }
+                    Button(player.vocalReduction > 0.5 ? "Remettre la voix" : "Instrumental (sans la voix)",
+                           systemImage: "music.mic") {
+                        player.vocalReduction = player.vocalReduction > 0.5 ? 0 : 1
                     }
                     Divider()
                     Button("Changer la pochette", systemImage: "photo.on.rectangle") {
@@ -469,5 +547,54 @@ struct OutputName: View {
         let out = AVAudioSession.sharedInstance().currentRoute.outputs.first
         if out?.portType == .builtInSpeaker || out?.portType == .builtInReceiver { return "iPhone" }
         return out?.portName ?? "iPhone"
+    }
+}
+
+
+// MARK: - Curseur de la voix (mode instrumental)
+
+/// Curseur vertical : en haut = voix normale, en bas = voix presque retirée.
+struct VocalSlider: View {
+    @Binding var value: Double
+    @State private var start: Double?
+
+    var body: some View {
+        GeometryReader { geo in
+            let h = max(geo.size.height, 1)
+            // Partie claire = la voix qui reste.
+            let voice = 1 - value
+            ZStack(alignment: .bottom) {
+                Capsule().fill(.white.opacity(0.16))
+                Capsule().fill(.white.opacity(0.9))
+                    .frame(height: max(geo.size.width, h * voice))
+                    .opacity(voice > 0.02 ? 1 : 0.25)
+                Image(systemName: "waveform")
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(voice > 0.2 ? Color.black.opacity(0.6) : Color.white.opacity(0.7))
+                    .padding(.bottom, 14)
+            }
+            .contentShape(Capsule())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { g in
+                        if start == nil { start = value }
+                        let moved = Double(g.translation.height / h)
+                        value = min(1, max(0, (start ?? 0) + moved))
+                    }
+                    .onEnded { _ in start = nil }
+            )
+        }
+        .background(.ultraThinMaterial, in: Capsule())
+        .sensoryFeedback(.selection, trigger: value == 0 || value == 1)
+        .accessibilityElement()
+        .accessibilityLabel("Volume de la voix")
+        .accessibilityValue("\(Int((1 - value) * 100)) %")
+        .accessibilityAdjustableAction { direction in
+            switch direction {
+            case .increment: value = max(0, value - 0.1)
+            case .decrement: value = min(1, value + 0.1)
+            @unknown default: break
+            }
+        }
     }
 }

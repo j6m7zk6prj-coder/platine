@@ -25,6 +25,10 @@ final class Player {
     var repeatMode: RepeatMode = RepeatMode(rawValue: UserDefaults.standard.integer(forKey: "repeat")) ?? .off {
         didSet { UserDefaults.standard.set(repeatMode.rawValue, forKey: "repeat") }
     }
+    /// Mode instrumental : 0 = voix normale, 1 = voix retirée au maximum (le fichier n'est jamais modifié).
+    var vocalReduction: Double = 0 {
+        didSet { VocalRemover.setLevel(vocalReduction) }
+    }
     private(set) var sleepEndDate: Date?
     private(set) var sleepAtTrackEnd = false
 
@@ -290,7 +294,9 @@ final class Player {
             if Task.isCancelled { return }
             let item = AVPlayerItem(url: self.library.audioURL(track))
             item.audioTimePitchAlgorithm = .timeDomain
+            VocalRemover.attach(to: item)
             self.player.replaceCurrentItem(with: item)
+            self.warmUpcomingLockArtwork()
             self.currentTime = 0
             if autoplay {
                 self.library.recordPlay(id)
@@ -453,6 +459,18 @@ final class Player {
 
     private func configureRemoteCommands() {
         let c = MPRemoteCommandCenter.shared()
+        // Bouton « favori » de l'écran verrouillé (l'étoile, quand iOS l'affiche).
+        c.likeCommand.isEnabled = true
+        c.likeCommand.localizedTitle = "Ajouter aux favoris"
+        c.likeCommand.localizedShortTitle = "Favori"
+        c.likeCommand.addTarget { [weak self] _ in
+            Task { @MainActor in
+                guard let self, let id = self.currentID else { return }
+                self.library.toggleFavorite(id)
+                self.updateNowPlaying()
+            }
+            return .success
+        }
         c.playCommand.addTarget { [weak self] _ in
             Task { @MainActor in self?.resume() }
             return .success
@@ -481,6 +499,15 @@ final class Player {
         }
     }
 
+    /// Prépare dès maintenant la pochette animée des deux morceaux suivants.
+    private func warmUpcomingLockArtwork() {
+        guard settings.lockScreenAnimation else { return }
+        for i in upcomingInQueue.prefix(2) {
+            guard let t = library.track(queue[i]), let url = library.artworkURL(t) else { continue }
+            LockScreenArtwork.shared.warm(source: url, kind: library.artworkKind(t))
+        }
+    }
+
     /// Met à jour l'écran verrouillé, le Centre de contrôle et la Dynamic Island.
     func updateNowPlaying() {
         let center = MPNowPlayingInfoCenter.default()
@@ -499,6 +526,8 @@ final class Player {
             MPNowPlayingInfoPropertyPlaybackRate: isPlaying ? settings.playbackSpeed : 0.0,
             MPNowPlayingInfoPropertyDefaultPlaybackRate: settings.playbackSpeed
         ]
+        info[MPMediaItemPropertyIsExplicit] = t.explicit
+        MPRemoteCommandCenter.shared().likeCommand.isActive = t.isFavorite
         let still = library.image(for: t)
         if let img = still {
             info[MPMediaItemPropertyArtwork] = Player.makeArtwork(img)

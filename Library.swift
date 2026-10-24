@@ -138,6 +138,12 @@ final class Library {
         save()
     }
 
+    func setExplicit(_ id: UUID, _ on: Bool) {
+        guard let i = tracks.firstIndex(where: { $0.id == id }), tracks[i].explicit != on else { return }
+        tracks[i].explicit = on
+        save()
+    }
+
     func gameName(_ albumID: String) -> String? {
         albumID.hasPrefix(GameCatalog.prefix) ? String(albumID.dropFirst(GameCatalog.prefix.count)) : nil
     }

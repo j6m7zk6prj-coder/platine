@@ -459,3 +459,20 @@ struct RoutePicker: UIViewRepresentable {
 
     func updateUIView(_ uiView: AVRoutePickerView, context: Context) {}
 }
+
+
+// MARK: - Badge « E » (contenu explicite)
+
+/// Le petit carré « E » d'Apple Music, à côté du titre d'un morceau explicite.
+struct ExplicitBadge: View {
+    var size: CGFloat = 15
+
+    var body: some View {
+        Text("E")
+            .font(.system(size: size * 0.68, weight: .heavy, design: .rounded))
+            .foregroundStyle(.background)
+            .frame(width: size, height: size)
+            .background(RoundedRectangle(cornerRadius: size * 0.2, style: .continuous).fill(.secondary))
+            .accessibilityLabel("Explicite")
+    }
+}

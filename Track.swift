@@ -27,6 +27,8 @@ struct Track: Identifiable, Codable, Hashable {
     var lyrics: String?
     /// Jeux dont ce morceau fait partie de la bande-son (ex. « FIFA 17 », « FC 24 »).
     var games: [String] = []
+    /// Contenu explicite : affiche le petit « E » à côté du titre.
+    var explicit: Bool = false
 
     var displayArtist: String { artist.isEmpty ? "Artiste inconnu" : artist }
     var displayAlbum: String { album.isEmpty ? "Sans album" : album }
@@ -50,7 +52,7 @@ extension Track {
     enum CodingKeys: String, CodingKey {
         case id, title, artist, album, trackNumber, year, duration, audioFile
         case embeddedArtwork, customArtwork, customKind, addedAt
-        case isFavorite, playCount, lastPlayed, lyrics, games
+        case isFavorite, playCount, lastPlayed, lyrics, games, explicit
     }
 
     init(from decoder: Decoder) throws {
@@ -72,6 +74,7 @@ extension Track {
         lastPlayed = try c.decodeIfPresent(Date.self, forKey: .lastPlayed)
         lyrics = try c.decodeIfPresent(String.self, forKey: .lyrics)
         games = try c.decodeIfPresent([String].self, forKey: .games) ?? []
+        explicit = try c.decodeIfPresent(Bool.self, forKey: .explicit) ?? false
     }
 }
 
