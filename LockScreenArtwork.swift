@@ -153,7 +153,7 @@ final class LockScreenArtwork {
         let size = job.shape.size
         // Un peu de temps en plus si tu verrouilles l'iPhone pile pendant la préparation.
         let background = UIApplication.shared.beginBackgroundTask(withName: "LockArtwork")
-        Task.detached(priority: .utility) {
+        Task.detached(priority: .background) {
             let temp = job.clip.deletingLastPathComponent().appendingPathComponent(job.id + "-tmp.mp4")
             try? FileManager.default.removeItem(at: temp)
             var ok = false

@@ -68,11 +68,18 @@ struct RootView: View {
             shelfMounted = true
             // Les pochettes animées de l'écran verrouillé sont préparées pendant que l'app est ouverte
             // (iOS ne permet pas de le faire une fois l'iPhone verrouillé).
+            // Seulement les 4 pochettes animées écoutées le plus récemment, et après un moment :
+            // l'encodage vidéo est lourd, il ne doit jamais ralentir l'app (Mode voyage prépare tout le reste).
             if settings.lockScreenAnimation {
-                for t in library.tracks {
-                    let kind = library.artworkKind(t)
-                    guard kind == .video || kind == .gif, let url = library.artworkURL(t) else { continue }
-                    LockScreenArtwork.shared.warm(source: url, kind: kind)
+                try? await Task.sleep(for: .seconds(20))
+                let recent = library.tracks
+                    .filter { let k = library.artworkKind($0); return (k == .video || k == .gif) && library.artworkURL($0) != nil }
+                    .sorted { ($0.lastPlayed ?? .distantPast) > ($1.lastPlayed ?? .distantPast) }
+                    .prefix(4)
+                for t in recent {
+                    if let url = library.artworkURL(t) {
+                        LockScreenArtwork.shared.warm(source: url, kind: library.artworkKind(t))
+                    }
                 }
             }
         }

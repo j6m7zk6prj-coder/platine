@@ -398,7 +398,8 @@ final class PhoneSceneController: NSObject, UIGestureRecognizerDelegate {
         profile.addQuadCurve(to: CGPoint(x: 1, y: 0), controlPoint: CGPoint(x: 1, y: 1))
         body.chamferProfile = profile
         let front = Self.glass(white: 0.015)
-        let back = Self.glass(white: 0.035)
+        // Dos en verre gris sidéral (gris foncé, pas noir), comme sur la photo.
+        let back = Self.glass(white: 0.11)
         let band = Self.metal()
         body.materials = [front, back, band, band, band]
         phone.addChildNode(SCNNode(geometry: body))
@@ -438,12 +439,32 @@ final class PhoneSceneController: NSObject, UIGestureRecognizerDelegate {
         let earNode = SCNNode(geometry: ear)
         earNode.position = SCNVector3(0, Float(H / 2 - 0.085), fz + 0.0008)
         phone.addChildNode(earNode)
+        // Grille de l'écouteur : fines perforations.
+        let mesh = SCNPlane(width: 0.095, height: 0.006)
+        mesh.cornerRadius = 0.003
+        mesh.materials = [Self.flat(UIColor(white: 0.2, alpha: 1))]
+        let meshNode = SCNNode(geometry: mesh)
+        meshNode.position = SCNVector3(0, Float(H / 2 - 0.085), fz + 0.001)
+        phone.addChildNode(meshNode)
+        // Caméra avant (avec son petit reflet bleuté) et capteur de proximité au-dessus de l'écouteur.
         let cam = SCNPlane(width: 0.026, height: 0.026)
         cam.cornerRadius = 0.013
-        cam.materials = [Self.flat(UIColor(red: 0.05, green: 0.05, blue: 0.09, alpha: 1))]
+        cam.materials = [Self.flat(UIColor(red: 0.06, green: 0.06, blue: 0.12, alpha: 1))]
         let camNode = SCNNode(geometry: cam)
-        camNode.position = SCNVector3(-0.1, Float(H / 2 - 0.085), fz + 0.0008)
+        camNode.position = SCNVector3(-0.09, Float(H / 2 - 0.085), fz + 0.0008)
         phone.addChildNode(camNode)
+        let lensDot = SCNPlane(width: 0.012, height: 0.012)
+        lensDot.cornerRadius = 0.006
+        lensDot.materials = [Self.flat(UIColor(red: 0.12, green: 0.14, blue: 0.3, alpha: 1))]
+        let lensDotNode = SCNNode(geometry: lensDot)
+        lensDotNode.position = SCNVector3(-0.09, Float(H / 2 - 0.085), fz + 0.0011)
+        phone.addChildNode(lensDotNode)
+        let sensor = SCNPlane(width: 0.012, height: 0.012)
+        sensor.cornerRadius = 0.006
+        sensor.materials = [Self.flat(UIColor(white: 0.08, alpha: 1))]
+        let sensorNode = SCNNode(geometry: sensor)
+        sensorNode.position = SCNVector3(0, Float(H / 2 - 0.055), fz + 0.0008)
+        phone.addChildNode(sensorNode)
 
         // Bouton principal : anneau métallique et disque de verre.
         homeNode = SCNNode()
@@ -516,8 +537,9 @@ final class PhoneSceneController: NSObject, UIGestureRecognizerDelegate {
         phone.addChildNode(flashNode)
 
         // Boutons sur les côtés : silencieux et volume à gauche, verrouillage à droite.
+        // Boutons en forme de pilule, bien arrondis, qui dépassent à peine de la tranche.
         func sideButton(_ name: String, x: CGFloat, y: CGFloat, length: CGFloat) {
-            let b = SCNBox(width: 0.012, height: length, length: 0.028, chamferRadius: 0.005)
+            let b = SCNBox(width: 0.014, height: length, length: 0.024, chamferRadius: 0.0068)
             b.materials = [Self.metal()]
             let n = SCNNode(geometry: b)
             n.name = name
@@ -525,10 +547,28 @@ final class PhoneSceneController: NSObject, UIGestureRecognizerDelegate {
             phone.addChildNode(n)
             buttons[name] = n
         }
-        sideButton("mute", x: -W / 2 - 0.002, y: 0.47, length: 0.055)
-        sideButton("volumeUp", x: -W / 2 - 0.002, y: 0.33, length: 0.09)
+        // Bouton silencieux : un petit interrupteur dans son logement creusé.
+        let slot = SCNBox(width: 0.008, height: 0.062, length: 0.026, chamferRadius: 0.004)
+        slot.materials = [Self.flat(UIColor(white: 0.04, alpha: 1))]
+        let slotNode = SCNNode(geometry: slot)
+        slotNode.position = SCNVector3(Float(-W / 2 + 0.001), 0.47, 0)
+        phone.addChildNode(slotNode)
+        sideButton("mute", x: -W / 2 - 0.0005, y: 0.477, length: 0.03)
+        sideButton("volumeUp", x: -W / 2 - 0.002, y: 0.32, length: 0.09)
         sideButton("volumeDown", x: -W / 2 - 0.002, y: 0.2, length: 0.09)
-        sideButton("power", x: W / 2 + 0.002, y: 0.33, length: 0.11)
+        sideButton("power", x: W / 2 + 0.002, y: 0.32, length: 0.11)
+
+        // Lignes d'antenne : fines bandes sombres sur la tranche, en haut et en bas.
+        let antenna = Self.flat(UIColor(white: 0.12, alpha: 1))
+        for y in [H / 2 - 0.115, -H / 2 + 0.115] {
+            for x in [-W / 2 - 0.0002, W / 2 + 0.0002] {
+                let line = SCNBox(width: 0.003, height: 0.004, length: 0.03, chamferRadius: 0.0015)
+                line.materials = [antenna]
+                let n = SCNNode(geometry: line)
+                n.position = SCNVector3(Float(x), Float(y), 0)
+                phone.addChildNode(n)
+            }
+        }
 
         // Dessous : prise et grilles du haut-parleur.
         let port = SCNBox(width: 0.08, height: 0.006, length: 0.03, chamferRadius: 0.003)
@@ -536,15 +576,30 @@ final class PhoneSceneController: NSObject, UIGestureRecognizerDelegate {
         let portNode = SCNNode(geometry: port)
         portNode.position = SCNVector3(0, Float(-H / 2 + 0.001), 0)
         phone.addChildNode(portNode)
+        let holeMaterial = Self.flat(UIColor(white: 0.02, alpha: 1))
         for side in [-1.0, 1.0] {
             for i in 0..<6 {
-                let hole = SCNCylinder(radius: 0.006, height: 0.004)
-                hole.materials = [Self.flat(UIColor(white: 0.02, alpha: 1))]
+                let hole = SCNCylinder(radius: 0.0055, height: 0.004)
+                hole.materials = [holeMaterial]
                 let h = SCNNode(geometry: hole)
-                h.position = SCNVector3(Float(side * (0.09 + Double(i) * 0.018)), Float(-H / 2 + 0.0005), 0)
+                h.position = SCNVector3(Float(side * (0.1 + Double(i) * 0.017)), Float(-H / 2 + 0.0005), 0)
                 phone.addChildNode(h)
             }
+            // Les deux petites vis de chaque côté de la prise.
+            let screw = SCNCylinder(radius: 0.005, height: 0.003)
+            screw.materials = [Self.metal()]
+            let sc = SCNNode(geometry: screw)
+            sc.position = SCNVector3(Float(side * 0.072), Float(-H / 2 + 0.0002), 0)
+            phone.addChildNode(sc)
         }
+        // Micro du dos, entre l'appareil photo et le flash.
+        let mic = SCNPlane(width: 0.009, height: 0.009)
+        mic.cornerRadius = 0.0045
+        mic.materials = [holeMaterial]
+        let micNode = SCNNode(geometry: mic)
+        micNode.eulerAngles.y = .pi
+        micNode.position = SCNVector3(Float(-W / 2 + 0.152), Float(H / 2 - 0.1), Float(-D / 2) - 0.0008)
+        phone.addChildNode(micNode)
         return phone
     }
 

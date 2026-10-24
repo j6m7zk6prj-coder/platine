@@ -329,10 +329,10 @@ final class ShelfSceneController: NSObject, UIGestureRecognizerDelegate {
         let c = obtain(builder: builder, start: start)
         c.update(albums: albums, library: library, settings: settings)
         let order = albums.indices.sorted { abs($0 - start) < abs($1 - start) }
-        for i in order.prefix(40) {
+        // Seulement les plus proches, espacés : le reste se fabrique au besoin, à l'arrêt du carrousel.
+        for i in order.prefix(14) {
             _ = c.node(at: i, force: true)
-            // Une pochette à la fois, pour ne jamais ralentir l'app.
-            try? await Task.sleep(for: .milliseconds(40))
+            try? await Task.sleep(for: .milliseconds(90))
         }
         // Les boîtiers de jeux aussi, pour que l'onglet Jeux s'ouvre sans attendre.
         // Ils sont fabriqués cachés, sans jamais changer la liste affichée (plus de « flash » à l'ouverture).
