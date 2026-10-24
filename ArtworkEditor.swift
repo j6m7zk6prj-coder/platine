@@ -18,9 +18,11 @@ struct PickedMovie: Transferable {
     }
 }
 
-/// Changer la pochette d'un morceau (ou de tout son album), autant de fois qu'on veut.
+/// Changer la pochette d'un morceau, ou la pochette officielle d'un album, autant de fois qu'on veut.
 struct ArtworkEditor: View {
     let trackID: UUID
+    /// Rempli : on change la pochette officielle de l'album (chaque morceau garde la sienne).
+    var albumID: String? = nil
     @Environment(Library.self) private var library
     @Environment(\.dismiss) private var dismiss
     @State private var pickerItem: PhotosPickerItem?
@@ -37,7 +39,7 @@ struct ArtworkEditor: View {
                     ContentUnavailableView("Morceau introuvable", systemImage: "music.note")
                 }
             }
-            .navigationTitle("Pochette")
+            .navigationTitle(albumID == nil ? "Pochette du morceau" : "Pochette de l’album")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
@@ -57,8 +59,12 @@ struct ArtworkEditor: View {
         }
     }
 
-    private func content(_ t: Track) -> some View {
-        ScrollView {
+    private var album: AlbumInfo? { albumID.flatMap { library.album($0) } }
+
+    private func content(_ track: Track) -> some View {
+        // En mode album : on montre et on modifie la pochette officielle de l'album.
+        let t = album?.cover ?? track
+        return ScrollView {
             VStack(spacing: 26) {
                 ArtworkView(track: t, cornerRadius: 20)
                     .aspectRatio(1, contentMode: .fit)
@@ -77,8 +83,9 @@ struct ArtworkEditor: View {
                     .animation(.smooth(duration: 0.5), value: library.artworkURL(t))
 
                 VStack(spacing: 4) {
-                    Text(t.title).font(.headline).lineLimit(1)
-                    Text(t.subtitle).font(.subheadline).foregroundStyle(.white.opacity(0.6)).lineLimit(1)
+                    Text(album?.title ?? t.title).font(.headline).lineLimit(1)
+                    Text(album.map { $0.artist + " · album" } ?? t.subtitle)
+                        .font(.subheadline).foregroundStyle(.white.opacity(0.6)).lineLimit(1)
                 }
 
                 VStack(spacing: 10) {
@@ -88,7 +95,12 @@ struct ArtworkEditor: View {
                     Button { showFiles = true } label: {
                         row("Choisir dans Fichiers", detail: "JPG, PNG, HEIC, GIF, MOV, MP4", symbol: "folder")
                     }
-                    if t.customArtwork != nil {
+                    if let albumID, library.hasAlbumCover(albumID) {
+                        Button { library.resetAlbumCover(albumID) } label: {
+                            row("Pochette d’origine", detail: "Celle du fichier audio", symbol: "arrow.uturn.backward")
+                        }
+                        .transition(.opacity.combined(with: .scale(scale: 0.96)))
+                    } else if albumID == nil, t.customArtwork != nil {
                         Button { library.resetArtwork(targetIDs(t)) } label: {
                             row("Pochette d’origine", detail: t.embeddedArtwork == nil ? "Aucune dans le fichier" : "Celle du fichier audio",
                                 symbol: "arrow.uturn.backward")
@@ -100,7 +112,12 @@ struct ArtworkEditor: View {
                 .disabled(working)
                 .animation(.smooth, value: t.customArtwork)
 
-                if !t.album.isEmpty, library.albumTrackIDs(of: t).count > 1 {
+                if albumID != nil {
+                    Text("Seule la pochette de l’album change (bibliothèque, page de l’album, Collection). Chaque morceau garde la sienne dans le lecteur.")
+                        .font(.footnote)
+                        .foregroundStyle(.white.opacity(0.6))
+                        .multilineTextAlignment(.center)
+                } else if !t.album.isEmpty, library.albumTrackIDs(of: t).count > 1 {
                     Toggle(isOn: $applyToAlbum) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Appliquer à tout l’album").font(.body.weight(.medium))
@@ -158,16 +175,19 @@ struct ArtworkEditor: View {
         let types = item.supportedContentTypes
         if types.contains(where: { $0.conforms(to: .movie) }) {
             if let movie = try? await item.loadTransferable(type: PickedMovie.self) {
-                library.setCustomArtwork(ids, file: movie.url, kind: .video)
+                if let albumID { library.setAlbumCover(albumID, file: movie.url, kind: .video) }
+                else { library.setCustomArtwork(ids, file: movie.url, kind: .video) }
                 try? FileManager.default.removeItem(at: movie.url)
             } else {
                 library.message = "Impossible de charger cette vidéo"
             }
         } else if let data = try? await item.loadTransferable(type: Data.self) {
             if types.contains(where: { $0.conforms(to: .gif) }) {
-                library.setCustomArtwork(ids, data: data, ext: "gif", kind: .gif)
+                if let albumID { library.setAlbumCover(albumID, data: data, ext: "gif", kind: .gif) }
+                else { library.setCustomArtwork(ids, data: data, ext: "gif", kind: .gif) }
             } else if let image = UIImage(data: data) {
-                library.setCustomImage(ids, image: image)
+                if let albumID { library.setAlbumCover(albumID, image: image) }
+                else { library.setCustomImage(ids, image: image) }
             } else {
                 library.message = "Format d’image non reconnu"
             }
@@ -183,11 +203,14 @@ struct ArtworkEditor: View {
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
         let type = UTType(filenameExtension: url.pathExtension.lowercased())
         if type?.conforms(to: .gif) == true {
-            library.setCustomArtwork(ids, file: url, kind: .gif)
+            if let albumID { library.setAlbumCover(albumID, file: url, kind: .gif) }
+            else { library.setCustomArtwork(ids, file: url, kind: .gif) }
         } else if type?.conforms(to: .movie) == true {
-            library.setCustomArtwork(ids, file: url, kind: .video)
+            if let albumID { library.setAlbumCover(albumID, file: url, kind: .video) }
+            else { library.setCustomArtwork(ids, file: url, kind: .video) }
         } else if let image = UIImage(contentsOfFile: url.path) {
-            library.setCustomImage(ids, image: image)
+            if let albumID { library.setAlbumCover(albumID, image: image) }
+            else { library.setCustomImage(ids, image: image) }
         } else {
             library.message = "Format non reconnu"
         }

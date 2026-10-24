@@ -92,7 +92,11 @@ struct AlbumInfo: Identifiable, Hashable {
     let artist: String
     let year: Int
     let tracks: [Track]
+    /// Pochette officielle de l'album (indépendante de celle de chaque morceau).
+    var coverTrack: Track? = nil
     var first: Track { tracks[0] }
+    /// À utiliser pour afficher la pochette de l'album.
+    var cover: Track { coverTrack ?? tracks[0] }
     var duration: Double { tracks.reduce(0) { $0 + $1.duration } }
     var latestAdd: Date { tracks.map(\.addedAt).max() ?? .distantPast }
 }
@@ -315,4 +319,11 @@ struct StickerPlacement: Codable, Hashable {
     var signature: String {
         String(format: "%.3f,%.3f,%.2f,%.2f,%d", x, y, scale, rotation, peeled ? 1 : 0)
     }
+}
+
+
+/// Fichier de la pochette officielle d'un album.
+struct AlbumCoverFile: Codable, Hashable {
+    let file: String
+    let kind: ArtworkKind
 }

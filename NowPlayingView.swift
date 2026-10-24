@@ -432,36 +432,52 @@ struct FullBleedArtwork: View {
 // MARK: - Barre de volume (style Musique)
 
 /// Barre épaisse sans point, comme dans Musique. Elle pilote le volume de l'iPhone.
+/// Elle vit sous le doigt : elle gonfle avec un léger rebond, s'étire comme un élastique
+/// quand on tire au-delà des bords, et revient en souplesse.
 struct VolumeBar: View {
     @State private var model = VolumeModel()
     @State private var dragStart: Float?
+    /// Étirement élastique au-delà des bords (en points, négatif = côté gauche).
+    @State private var stretch: CGFloat = 0
 
     var body: some View {
         let active = dragStart != nil
         GeometryReader { geo in
             let width = max(geo.size.width, 1)
             ZStack(alignment: .leading) {
-                Capsule().fill(.white.opacity(0.2))
-                Capsule().fill(.white.opacity(active ? 1 : 0.6))
+                Capsule().fill(.white.opacity(active ? 0.24 : 0.2))
+                Capsule().fill(.white.opacity(active ? 1 : 0.62))
                     .frame(width: width * CGFloat(model.volume))
+                    // Suit le doigt de près pendant le geste ; glisse en douceur sinon (boutons de l'iPhone).
+                    .animation(active ? .interactiveSpring(response: 0.18, dampingFraction: 0.86)
+                                      : .spring(response: 0.45, dampingFraction: 0.82), value: model.volume)
             }
-            .frame(height: active ? 12 : 7)
+            .frame(height: active ? 13 : 7)
+            // L'élastique : la barre s'allonge du côté où l'on tire, et s'amincit un peu.
+            .scaleEffect(x: 1 + abs(stretch) / width, y: 1 - min(abs(stretch), 24) / 120,
+                         anchor: stretch >= 0 ? .leading : .trailing)
             .frame(maxHeight: .infinity)
             .contentShape(Rectangle())
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { g in
                         if dragStart == nil { dragStart = model.volume }
-                        let moved = Float((g.location.x - g.startLocation.x) / width)
-                        model.set(min(1, max(0, (dragStart ?? 0) + moved)))
+                        let raw = (dragStart ?? 0) + Float((g.location.x - g.startLocation.x) / width)
+                        let clamped = min(1, max(0, raw))
+                        model.set(clamped)
+                        // Au-delà des bords : résistance de plus en plus forte.
+                        let over = CGFloat(raw - clamped) * width
+                        stretch = over == 0 ? 0 : (over > 0 ? 1 : -1) * 22 * (1 - 1 / (1 + abs(over) / 60))
                     }
-                    .onEnded { _ in dragStart = nil }
+                    .onEnded { _ in
+                        dragStart = nil
+                        withAnimation(.spring(response: 0.5, dampingFraction: 0.55)) { stretch = 0 }
+                    }
             )
-            .animation(.spring(response: 0.3, dampingFraction: 0.75), value: active)
         }
-        .frame(height: 28)
-        .scaleEffect(x: active ? 1.03 : 1, y: 1)
-        .animation(.spring(response: 0.3, dampingFraction: 0.75), value: active)
+        .frame(height: 30)
+        .animation(.spring(response: 0.42, dampingFraction: 0.62), value: active)
+        .sensoryFeedback(.impact(weight: .light), trigger: model.volume == 0 || model.volume == 1)
         // Le vrai réglage système, caché (il évite aussi la bulle de volume d'iOS).
         .background { HiddenVolumeView(model: model).frame(width: 1, height: 1).opacity(0.01) }
         .accessibilityElement()

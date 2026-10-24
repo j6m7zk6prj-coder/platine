@@ -219,7 +219,7 @@ struct CDBackInsert: View {
     @Environment(Library.self) private var library
 
     var body: some View {
-        let colors = library.palette(for: album.first)
+        let colors = library.palette(for: album.cover)
         GeometryReader { geo in
             let w = geo.size.width
             HStack(spacing: 0) {

@@ -65,7 +65,7 @@ struct ShelfView: View {
             if let handAlbum {
                 let format = library.format(of: handAlbum.id, default: settings.shelfFormat)
                 let playing = isPlaying(handAlbum)
-                RadialGradient(colors: [library.palette(for: handAlbum.first)[1].opacity(0.35), .clear],
+                RadialGradient(colors: [library.palette(for: handAlbum.cover)[1].opacity(0.35), .clear],
                                center: UnitPoint(x: 0.5, y: 0.42), startRadius: 10, endRadius: 380)
                     .ignoresSafeArea()
                     .opacity(isOpen ? 1 : 0)
@@ -606,7 +606,7 @@ final class ShelfSceneController: NSObject, UIGestureRecognizerDelegate {
     private func updateSpot(for album: AlbumInfo) {
         guard album.id != lastSpotAlbum, let spot = scene.rootNode.childNode(withName: "spot", recursively: false)?.light else { return }
         lastSpotAlbum = album.id
-        let color = UIColor(builder.library.palette(for: album.first)[1])
+        let color = UIColor(builder.library.palette(for: album.cover)[1])
         SCNTransaction.begin()
         SCNTransaction.animationDuration = 0.8
         spot.color = color
@@ -1206,7 +1206,7 @@ struct StickerPicker: View {
                 ?? AlbumNodeBuilder.generatedGameCover(title: game, season: GameCatalog.season(game),
                                                        count: album.tracks.count, platform: library.platform(of: game))
         }
-        return library.extraImage("front", album.id) ?? library.image(for: album.first)
+        return library.extraImage("front", album.id) ?? library.image(for: album.cover)
     }
 
     private var placerAspect: CGFloat {

@@ -28,6 +28,8 @@ final class Library {
     private(set) var gamePlatforms: [String: String] = [:]
     /// Tes images pour le dos, la tranche et le disque : « genre|clé » → fichier.
     private(set) var extraImages: [String: String] = [:]
+    /// Pochette officielle de chaque album : nom du fichier et type (image, GIF, vidéo).
+    private(set) var albumCovers: [String: AlbumCoverFile] = [:]
     /// Ajoute aussi les stickers gagnés automatiquement (or, platine, favori, nouveau).
     var autoStickers: Bool = UserDefaults.standard.bool(forKey: "autoStickers") {
         didSet { UserDefaults.standard.set(autoStickers, forKey: "autoStickers") }
@@ -55,6 +57,7 @@ final class Library {
     static let customStickersURL = base.appendingPathComponent("customstickers.json")
     static let placementsURL = base.appendingPathComponent("placements.json")
     static let extraImagesURL = base.appendingPathComponent("extraimages.json")
+    static let albumCoversURL = base.appendingPathComponent("albumcovers.json")
     static let platformsURL = base.appendingPathComponent("platforms.json")
     /// Dossier visible dans Fichiers et dans iTunes sur PC : tout ce qu'on y dépose est importé.
     static let inbox = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -102,12 +105,91 @@ final class Library {
                 return $0.title.localizedStandardCompare($1.title) == .orderedAscending
             }
             return AlbumInfo(id: key, title: sorted[0].displayAlbum, artist: sorted[0].displayArtist,
-                             year: sorted.map(\.year).max() ?? 0, tracks: sorted)
+                             year: sorted.map(\.year).max() ?? 0, tracks: sorted,
+                             coverTrack: albumCoverTrack(key, sorted))
         }
         .sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
     }
 
     func album(_ id: String) -> AlbumInfo? { albums.first { $0.id == id } }
+
+    /// La pochette officielle d'un album, qui ne suit pas la pochette changée d'un seul morceau :
+    /// 1. celle choisie pour l'album ; 2. celle appliquée à tous ses morceaux ;
+    /// 3. la pochette d'origine (celle du fichier audio) ; 4. sinon celle du premier morceau.
+    private func albumCoverTrack(_ key: String, _ list: [Track]) -> Track? {
+        guard let first = list.first else { return nil }
+        if let c = albumCovers[key] {
+            var t = first
+            t.customArtwork = c.file
+            t.customKind = c.kind
+            return t
+        }
+        if let shared = first.customArtwork, list.allSatisfy({ $0.customArtwork == shared }) {
+            return first
+        }
+        if let original = list.first(where: { $0.embeddedArtwork != nil }) {
+            var t = original
+            t.customArtwork = nil
+            t.customKind = nil
+            return t
+        }
+        return first
+    }
+
+    func hasAlbumCover(_ albumID: String) -> Bool { albumCovers[albumID] != nil }
+
+    func setAlbumCover(_ albumID: String, image: UIImage) {
+        guard let name = saveImage(image, prefix: "album-") else {
+            message = "Impossible d’enregistrer cette image"
+            return
+        }
+        assignAlbumCover(name, kind: .image, to: albumID)
+    }
+
+    func setAlbumCover(_ albumID: String, file: URL, kind: ArtworkKind) {
+        let ext = file.pathExtension.isEmpty ? (kind == .video ? "mov" : "gif") : file.pathExtension.lowercased()
+        let name = "album-" + UUID().uuidString + "." + ext
+        do {
+            try FileManager.default.copyItem(at: file, to: Self.artDir.appendingPathComponent(name))
+        } catch {
+            message = "Impossible d’importer ce fichier"
+            return
+        }
+        assignAlbumCover(name, kind: kind, to: albumID)
+    }
+
+    func setAlbumCover(_ albumID: String, data: Data, ext: String, kind: ArtworkKind) {
+        let name = "album-" + UUID().uuidString + "." + ext
+        do {
+            try data.write(to: Self.artDir.appendingPathComponent(name), options: .atomic)
+        } catch {
+            message = "Impossible d’enregistrer ce fichier"
+            return
+        }
+        assignAlbumCover(name, kind: kind, to: albumID)
+    }
+
+    func resetAlbumCover(_ albumID: String) {
+        guard let old = albumCovers.removeValue(forKey: albumID) else { return }
+        saveAlbumCovers()
+        cleanupArtwork(old.file)
+        artworkRevision += 1
+        message = "Pochette de l’album rétablie"
+    }
+
+    private func assignAlbumCover(_ name: String, kind: ArtworkKind, to albumID: String) {
+        let old = albumCovers[albumID]
+        albumCovers[albumID] = AlbumCoverFile(file: name, kind: kind)
+        saveAlbumCovers()
+        if let old { cleanupArtwork(old.file) }
+        artworkRevision += 1
+        message = "Pochette de l’album mise à jour"
+    }
+
+    private func saveAlbumCovers() {
+        guard let data = try? JSONEncoder().encode(albumCovers) else { return }
+        try? data.write(to: Self.albumCoversURL, options: .atomic)
+    }
 
     // MARK: Bandes-son de jeux
 
@@ -564,6 +646,10 @@ final class Library {
             if !cleanArtist.isEmpty { tracks[i].artist = cleanArtist }
             carryArtistImage(from: oldArtistKey, to: tracks[i].displayArtist.lowercased())
             newID = tracks[i].albumKey
+        }
+        if newID != albumID, let c = albumCovers.removeValue(forKey: albumID) {
+            albumCovers[newID] = c
+            saveAlbumCovers()
         }
         if newID != albumID, let f = albumFormats.removeValue(forKey: albumID) {
             albumFormats[newID] = f
@@ -1034,7 +1120,8 @@ final class Library {
 
     /// Supprime un fichier de pochette s'il n'est plus utilisé par aucun morceau.
     private func cleanupArtwork(_ name: String) {
-        guard !tracks.contains(where: { $0.customArtwork == name || $0.embeddedArtwork == name }) else { return }
+        guard !tracks.contains(where: { $0.customArtwork == name || $0.embeddedArtwork == name }),
+              !albumCovers.values.contains(where: { $0.file == name }) else { return }
         try? FileManager.default.removeItem(at: Self.artDir.appendingPathComponent(name))
         images.removeObject(forKey: name as NSString)
         images.removeObject(forKey: ("thumb-" + name) as NSString)
@@ -1089,6 +1176,10 @@ final class Library {
         if let data = try? Data(contentsOf: Self.extraImagesURL),
            let map = try? JSONDecoder().decode([String: String].self, from: data) {
             extraImages = map
+        }
+        if let data = try? Data(contentsOf: Self.albumCoversURL),
+           let map = try? JSONDecoder().decode([String: AlbumCoverFile].self, from: data) {
+            albumCovers = map
         }
         if let data = try? Data(contentsOf: Self.placementsURL),
            let map = try? JSONDecoder().decode([String: [String: StickerPlacement]].self, from: data) {

@@ -83,6 +83,7 @@ struct AlbumDetailView: View {
     @Environment(UIState.self) private var ui
     @Environment(AppSettings.self) private var settings
     /// Position de l'en-tête à l'écran (pour faire suivre la grande pochette au défilement).
+    @State private var albumCoverEditing = false
     @State private var headerY: CGFloat = 0
     @State private var headerBase: CGFloat?
     /// Nouvel identifiant après une modification.
@@ -110,9 +111,9 @@ struct AlbumDetailView: View {
     @ViewBuilder private var content: some View {
         if let album = library.album(currentID) {
             // Comme Musique : seule une pochette animée (vidéo ou GIF) s'étend en haut de la page.
-            let kind = library.artworkKind(album.first)
+            let kind = library.artworkKind(album.cover)
             let extended = settings.extendedAlbumArtwork && settings.animatedArtwork
-                && library.artworkURL(album.first) != nil && (kind == .video || kind == .gif)
+                && library.artworkURL(album.cover) != nil && (kind == .video || kind == .gif)
             List {
                 VStack(spacing: 16) {
                     if extended {
@@ -169,8 +170,8 @@ struct AlbumDetailView: View {
                         Button("Ajouter à une playlist", systemImage: "text.badge.plus") {
                             ui.addToPlaylist = AddToPlaylistTarget(trackIDs: album.tracks.map(\.id))
                         }
-                        Button("Changer la pochette", systemImage: "photo.on.rectangle") {
-                            ui.editing = EditTarget(id: album.first.id)
+                        Button("Changer la pochette de l’album", systemImage: "photo.on.rectangle") {
+                            albumCoverEditing = true
                         }
                         Button("Modifier l’album", systemImage: "pencil") {
                             editTitle = album.title
@@ -184,6 +185,9 @@ struct AlbumDetailView: View {
                 }
             }
             .toolbarBackground(extended ? .hidden : .automatic, for: .navigationBar)
+            .sheet(isPresented: $albumCoverEditing) {
+                ArtworkEditor(trackID: album.first.id, albumID: album.id)
+            }
             .background {
                 ZStack(alignment: .top) {
                     AmbientBackground(track: album.first, dim: 0.5)

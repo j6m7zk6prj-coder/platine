@@ -190,7 +190,7 @@ struct AlbumNodeBuilder {
     let settings: AppSettings
 
     func signature(_ album: AlbumInfo, _ format: AlbumFormat, _ badges: [AlbumBadge]) -> String {
-        var art = library.artworkURL(album.first)?.lastPathComponent ?? "-"
+        var art = library.artworkURL(album.cover)?.lastPathComponent ?? "-"
         if let game = library.gameName(album.id) {
             // Bande-son : la jaquette choisie et la liste des morceaux (dos du boîtier).
             let coverName: String = library.gameCoverName(game) ?? "auto"
@@ -232,7 +232,7 @@ struct AlbumNodeBuilder {
             render(CDBackInsert(album: album, lightX: 0), CGSize(width: 568, height: 500), scale: 2.2)
         }
         let spine = cached("spine|" + signature) {
-            Self.spineImage(title: album.title, artist: album.artist, color: UIColor(library.palette(for: album.first)[0]))
+            Self.spineImage(title: album.title, artist: album.artist, color: UIColor(library.palette(for: album.cover)[0]))
         }
         let tray = SCNBox(width: W - 0.012, height: H - 0.008, length: D - 0.014, chamferRadius: 0.012)
         let smoke = Self.plastic(UIColor(white: 0.1, alpha: 1), roughness: 0.45, coat: 0.2)
@@ -344,8 +344,8 @@ struct AlbumNodeBuilder {
                 Self.gameDiscLabel(self.gameCover(album, game: game), title: game, band: platform.bandFill)
             }
         } else {
-            label = cached("disclabel|" + album.id + "|" + (library.artworkURL(album.first)?.lastPathComponent ?? "-")) {
-                Self.discLabel(library.image(for: album.first))
+            label = cached("disclabel|" + album.id + "|" + (library.artworkURL(album.cover)?.lastPathComponent ?? "-")) {
+                Self.discLabel(library.image(for: album.cover))
             }
         }
         // Face imprimée : couleurs fidèles, avec un léger vernis.

@@ -4,7 +4,7 @@ import MediaToolbox
 /// Effets d'écoute : slowed, sped up, réverbe… Le fichier audio n'est jamais modifié :
 /// la vitesse est celle du lecteur, et la réverbe est calculée en direct pendant la lecture.
 enum SoundEffect: String, CaseIterable, Identifiable {
-    case original, slowed, slowedReverb, superSlowed, spedUp, nightcore, room, hall, cathedral
+    case original, slowed, spedUp, nightcore, room, hall, cathedral
 
     var id: String { rawValue }
 
@@ -12,8 +12,6 @@ enum SoundEffect: String, CaseIterable, Identifiable {
         switch self {
         case .original: return "Original"
         case .slowed: return "Slowed"
-        case .slowedReverb: return "Slowed + reverb"
-        case .superSlowed: return "Super slowed"
         case .spedUp: return "Sped up"
         case .nightcore: return "Nightcore"
         case .room: return "Pièce"
@@ -26,8 +24,6 @@ enum SoundEffect: String, CaseIterable, Identifiable {
         switch self {
         case .original: return "Le son tel quel"
         case .slowed: return "Plus lent et plus grave"
-        case .slowedReverb: return "Lent, grave, avec de l’écho"
-        case .superSlowed: return "Très lent, très planant"
         case .spedUp: return "Plus rapide et plus aigu"
         case .nightcore: return "Très rapide et aigu"
         case .room: return "Petite réverbe chaleureuse"
@@ -40,8 +36,6 @@ enum SoundEffect: String, CaseIterable, Identifiable {
         switch self {
         case .original: return "waveform"
         case .slowed: return "tortoise.fill"
-        case .slowedReverb: return "moon.stars.fill"
-        case .superSlowed: return "cloud.moon.fill"
         case .spedUp: return "hare.fill"
         case .nightcore: return "bolt.fill"
         case .room: return "sofa.fill"
@@ -54,8 +48,6 @@ enum SoundEffect: String, CaseIterable, Identifiable {
     var rate: Double {
         switch self {
         case .slowed: return 0.86
-        case .slowedReverb: return 0.82
-        case .superSlowed: return 0.72
         case .spedUp: return 1.2
         case .nightcore: return 1.3
         default: return 1
@@ -70,8 +62,6 @@ enum SoundEffect: String, CaseIterable, Identifiable {
         switch self {
         case .original, .spedUp: return nil
         case .slowed: return ReverbSettings(wet: 0.16, room: 0.6, damp: 0.5, preDelay: 0.02)
-        case .slowedReverb: return ReverbSettings(wet: 0.4, room: 0.88, damp: 0.35, preDelay: 0.035)
-        case .superSlowed: return ReverbSettings(wet: 0.5, room: 0.94, damp: 0.3, preDelay: 0.045)
         case .nightcore: return ReverbSettings(wet: 0.08, room: 0.4, damp: 0.6, preDelay: 0.01)
         case .room: return ReverbSettings(wet: 0.22, room: 0.5, damp: 0.6, preDelay: 0.01)
         case .hall: return ReverbSettings(wet: 0.32, room: 0.83, damp: 0.42, preDelay: 0.03)
@@ -80,7 +70,7 @@ enum SoundEffect: String, CaseIterable, Identifiable {
     }
 
     /// Les groupes affichés dans le choix des effets.
-    static let speedGroup: [SoundEffect] = [.slowed, .slowedReverb, .superSlowed, .spedUp, .nightcore]
+    static let speedGroup: [SoundEffect] = [.slowed, .spedUp, .nightcore]
     static let reverbGroup: [SoundEffect] = [.room, .hall, .cathedral]
 }
 
