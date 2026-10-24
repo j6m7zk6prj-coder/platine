@@ -118,6 +118,8 @@ final class AppSettings {
     var backgroundMotion: Bool { didSet { UserDefaults.standard.set(backgroundMotion, forKey: "backgroundMotion") } }
     var showRecent: Bool { didSet { UserDefaults.standard.set(showRecent, forKey: "showRecent") } }
     var lockScreenAnimation: Bool { didSet { UserDefaults.standard.set(lockScreenAnimation, forKey: "lockScreenAnimation") } }
+    /// Page d'un album : la pochette (animée) prend toute la largeur en haut et se fond dans le fond.
+    var extendedAlbumArtwork: Bool { didSet { UserDefaults.standard.set(extendedAlbumArtwork, forKey: "extendedAlbumArtwork") } }
 
     /// Couleur d'accent lisible sur le thème choisi (le blanc devient noir sur un thème clair).
     var tint: Color { theme.isLight && accent == .white ? .black : accent.color }
@@ -141,6 +143,7 @@ final class AppSettings {
         backgroundMotion = d.object(forKey: "backgroundMotion") as? Bool ?? true
         showRecent = d.object(forKey: "showRecent") as? Bool ?? true
         lockScreenAnimation = d.object(forKey: "lockScreenAnimation") as? Bool ?? true
+        extendedAlbumArtwork = d.object(forKey: "extendedAlbumArtwork") as? Bool ?? true
     }
 }
 

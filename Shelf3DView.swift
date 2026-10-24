@@ -330,15 +330,11 @@ final class ShelfSceneController: NSObject, UIGestureRecognizerDelegate {
             try? await Task.sleep(for: .milliseconds(40))
         }
         // Les boîtiers de jeux aussi, pour que l'onglet Jeux s'ouvre sans attendre.
-        let games = library.gameAlbums
-        if !games.isEmpty {
-            c.update(albums: games, library: library, settings: settings)
-            for i in games.indices.prefix(6) {
-                _ = c.node(at: i, force: true)
-                try? await Task.sleep(for: .milliseconds(40))
-            }
-            c.update(albums: albums, library: library, settings: settings)
-            c.jump(to: start)
+        // Ils sont fabriqués cachés, sans jamais changer la liste affichée (plus de « flash » à l'ouverture).
+        for game in library.gameAlbums.prefix(6) {
+            let format = library.format(of: game.id, default: settings.shelfFormat)
+            c.prebuild(game, format: format, badges: library.badges(for: game))
+            try? await Task.sleep(for: .milliseconds(40))
         }
         c.layout()
         c.view.prepare([c.scene], completionHandler: nil)
@@ -487,7 +483,26 @@ final class ShelfSceneController: NSObject, UIGestureRecognizerDelegate {
         // Un modèle neuf n'est fabriqué qu'à l'arrêt (jamais pendant que tu fais défiler) : zéro à-coup.
         guard force || (!builtThisFrame && !dragging && abs(vel) < 0.05) else { return nil }
         builtThisFrame = true
-        let n = builder.make(album, format: formats[i], badges: badges[i], extras: false)
+        let n = makeNode(album, format: formats[i], badges: badges[i])
+        // Apparition en fondu seulement si l'objet est déjà à l'écran.
+        n.root.opacity = 0
+        SCNTransaction.begin()
+        SCNTransaction.animationDuration = 0.35
+        n.root.opacity = 1
+        SCNTransaction.commit()
+        return n
+    }
+
+    /// Fabrique un objet en avance, caché, sans toucher à ce qui est affiché.
+    func prebuild(_ album: AlbumInfo, format: AlbumFormat, badges: [AlbumBadge]) {
+        if let n = nodes[album.id], n.signature == builder.signature(album, format, badges) { return }
+        nodes[album.id]?.root.removeFromParentNode()
+        let n = makeNode(album, format: format, badges: badges)
+        n.root.isHidden = true
+    }
+
+    private func makeNode(_ album: AlbumInfo, format: AlbumFormat, badges: [AlbumBadge]) -> AlbumNode {
+        let n = builder.make(album, format: format, badges: badges, extras: false)
         // Ombre douce posée au sol.
         let w = CGFloat(n.shownSize.x)
         let shadow = SCNPlane(width: w * 1.25, height: w * 0.45)
@@ -515,12 +530,7 @@ final class ShelfSceneController: NSObject, UIGestureRecognizerDelegate {
             reflect.position = SCNVector3(r.x * n.fit, bottom - Float(r.height * fit) / 2 - 0.006, r.z * n.fit)
             n.root.addChildNode(reflect)
         }
-        n.root.opacity = 0
         scene.rootNode.addChildNode(n.root)
-        SCNTransaction.begin()
-        SCNTransaction.animationDuration = 0.35
-        n.root.opacity = 1
-        SCNTransaction.commit()
         nodes[album.id] = n
         return n
     }
@@ -996,7 +1006,7 @@ final class InspectorSceneController: NSObject, UIGestureRecognizerDelegate {
         guard on != active else { return }
         active = on
         if on {
-            // L'objet arrive en pivotant légèrement, comme quand on le prend en main.
+            sleepTask?.cancel()
             prepareTask?.cancel()
             // On « soulève » l'objet : il grandit, pivote et se pose avec un très léger rebond.
             rx = restX + 0.12; tx = restX
@@ -1013,6 +1023,21 @@ final class InspectorSceneController: NSObject, UIGestureRecognizerDelegate {
                 self.ensureDisc()
             }
         } else {
+            // On ne fige pas tout de suite : l'objet continue de bouger pendant qu'il s'efface,
+            // puis se remet en place une fois invisible (plus de petit saut en refermant).
+            sleepTask?.cancel()
+            sleepTask = Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .milliseconds(450))
+                guard let self, !Task.isCancelled, !self.active else { return }
+                self.goToSleep()
+            }
+        }
+    }
+
+    private var sleepTask: Task<Void, Never>?
+
+    private func goToSleep() {
+        do {
             stop()
             view.rendersContinuously = false
             view.isPlaying = false

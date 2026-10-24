@@ -18,7 +18,8 @@ final class LockScreenArtwork {
 
     private var artworks: [String: AnyObject] = [:]
     private var working: Set<String> = []
-    private var failed: Set<String> = []
+    /// Clips qui n'ont pas pu être préparés, avec l'heure de l'échec (on réessaie plus tard).
+    private var failed: [String: Date] = [:]
 
     static let folder: URL = {
         let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
@@ -79,7 +80,8 @@ final class LockScreenArtwork {
     }
 
     private func prepare(id: String, source: URL, kind: ArtworkKind, shape: Shape, clip: URL) {
-        guard !working.contains(id), !failed.contains(id) else { return }
+        guard !working.contains(id) else { return }
+        if let when = failed[id], Date().timeIntervalSince(when) < 90 { return }
         working.insert(id)
         let size = shape.size
         Task.detached(priority: .utility) {
@@ -101,7 +103,7 @@ final class LockScreenArtwork {
             await MainActor.run {
                 let me = LockScreenArtwork.shared
                 me.working.remove(id)
-                if ok { me.onReady() } else { me.failed.insert(id) }
+                if ok { me.failed[id] = nil; me.onReady() } else { me.failed[id] = Date() }
             }
         }
     }
@@ -140,15 +142,25 @@ final class LockScreenArtwork {
         }
         video.renderSize = size
 
-        guard let export = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetHighestQuality) else {
-            throw ClipError()
+        // Certaines vidéos (HDR, 10 bits, formats rares) refusent un réglage : on essaie les suivants.
+        let presets = [AVAssetExportPresetHighestQuality, AVAssetExportPreset1920x1080, AVAssetExportPresetMediumQuality]
+        var lastError: Error = ClipError()
+        for preset in presets {
+            guard let export = AVAssetExportSession(asset: composition, presetName: preset) else { continue }
+            export.videoComposition = video
+            try? FileManager.default.removeItem(at: out)
+            do {
+                if #available(iOS 18.0, *) {
+                    try await export.export(to: out, as: .mp4)
+                    return
+                } else {
+                    throw ClipError()
+                }
+            } catch {
+                lastError = error
+            }
         }
-        export.videoComposition = video
-        if #available(iOS 18.0, *) {
-            try await export.export(to: out, as: .mp4)
-        } else {
-            throw ClipError()
-        }
+        throw lastError
     }
 
     /// Remplit le cadre en recadrant au centre (comme « scaledToFill »).

@@ -81,6 +81,10 @@ struct AlbumDetailView: View {
     @Environment(Library.self) private var library
     @Environment(Player.self) private var player
     @Environment(UIState.self) private var ui
+    @Environment(AppSettings.self) private var settings
+    /// Position de l'en-tête à l'écran (pour faire suivre la grande pochette au défilement).
+    @State private var headerY: CGFloat = 0
+    @State private var headerBase: CGFloat?
     /// Nouvel identifiant après une modification.
     @State private var renamedID: String?
     @State private var showEdit = false
@@ -105,15 +109,30 @@ struct AlbumDetailView: View {
 
     @ViewBuilder private var content: some View {
         if let album = library.album(currentID) {
+            // Comme Musique : seule une pochette animée (vidéo ou GIF) s'étend en haut de la page.
+            let kind = library.artworkKind(album.first)
+            let extended = settings.extendedAlbumArtwork && settings.animatedArtwork
+                && library.artworkURL(album.first) != nil && (kind == .video || kind == .gif)
             List {
                 VStack(spacing: 16) {
-                    ArtworkView(track: album.first, animated: false, cornerRadius: 14)
-                        .frame(width: 250, height: 250)
-                        .shadow(color: .black.opacity(0.45), radius: 24, y: 14)
+                    if extended {
+                        // Espace laissé à la grande pochette, qui est dessinée derrière la liste.
+                        Color.clear
+                            .frame(height: UIScreen.main.bounds.width * 0.6)
+                            .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minY } action: { y in
+                                if headerBase == nil { headerBase = y }
+                                headerY = y
+                            }
+                    } else {
+                        ArtworkView(track: album.first, animated: false, cornerRadius: 14)
+                            .frame(width: 250, height: 250)
+                            .shadow(color: .black.opacity(0.45), radius: 24, y: 14)
+                    }
                     VStack(spacing: 4) {
                         Text(album.title)
-                            .font(.title2.bold())
+                            .font(extended ? .title.bold() : .title2.bold())
                             .multilineTextAlignment(.center)
+                            .shadow(color: .black.opacity(extended ? 0.35 : 0), radius: 10, y: 2)
                         Text(album.artist)
                             .font(.title3)
                             .foregroundStyle(.tint)
@@ -164,7 +183,16 @@ struct AlbumDetailView: View {
                     .accessibilityLabel("Options de l’album")
                 }
             }
-            .background { AmbientBackground(track: album.first, dim: 0.5) }
+            .toolbarBackground(extended ? .hidden : .automatic, for: .navigationBar)
+            .background {
+                ZStack(alignment: .top) {
+                    AmbientBackground(track: album.first, dim: 0.5)
+                    if extended {
+                        ExtendedArtwork(track: album.first, scroll: headerBase.map { headerY - $0 } ?? 0)
+                    }
+                }
+                .ignoresSafeArea()
+            }
         } else {
             ContentUnavailableView("Album introuvable", systemImage: "square.stack")
         }
@@ -589,5 +617,47 @@ struct AddToPlaylistSheet: View {
             }
         }
         .presentationDetents([.medium, .large])
+    }
+}
+
+
+// MARK: - Grande pochette en haut de la page d'un album
+
+/// La pochette (animée si c'est une vidéo ou un GIF) prend toute la largeur, passe sous la barre du haut
+/// et se fond progressivement dans le fond. Elle suit le défilement et grandit quand on tire vers le bas.
+struct ExtendedArtwork: View {
+    let track: Track
+    /// Défilement depuis le haut : négatif quand on monte, positif quand on tire vers le bas.
+    let scroll: CGFloat
+
+    var body: some View {
+        GeometryReader { geo in
+            let w = geo.size.width
+            let pull = max(0, scroll)
+            let up = max(0, -scroll)
+            ArtworkView(track: track, animated: true, cornerRadius: 0, bordered: false)
+                .frame(width: w, height: w)
+                .mask(fade)
+                // Tirer vers le bas agrandit la pochette depuis le haut, comme dans Musique.
+                .scaleEffect(1 + pull / w, anchor: .top)
+                // En montant, elle glisse un peu moins vite que la liste (léger effet de profondeur) et s'efface.
+                .offset(y: -up * 0.75)
+                .opacity(Double(max(0, 1 - up / (w * 0.75))))
+                .frame(width: w, alignment: .top)
+        }
+        .allowsHitTesting(false)
+    }
+
+    /// Fondu doux et long (courbe progressive, sans bord visible) vers le fond de la page.
+    private var fade: some View {
+        LinearGradient(stops: [
+            .init(color: .black, location: 0),
+            .init(color: .black, location: 0.5),
+            .init(color: .black.opacity(0.88), location: 0.62),
+            .init(color: .black.opacity(0.62), location: 0.74),
+            .init(color: .black.opacity(0.32), location: 0.85),
+            .init(color: .black.opacity(0.1), location: 0.94),
+            .init(color: .clear, location: 1)
+        ], startPoint: .top, endPoint: .bottom)
     }
 }

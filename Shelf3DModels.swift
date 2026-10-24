@@ -131,7 +131,11 @@ final class AlbumNode {
                 let duration = node === discPivot ? 1.8 : 2.4
                 node.runAction(.repeatForever(.rotateBy(x: 0, y: 0, z: -2 * .pi, duration: duration)), forKey: "spin")
             } else {
+                // Le disque ralentit puis s'arrête, au lieu de se figer net.
                 node.removeAction(forKey: "spin")
+                let coast = SCNAction.rotateBy(x: 0, y: 0, z: -1.1, duration: 0.7)
+                coast.timingMode = .easeOut
+                node.runAction(coast, forKey: "spin")
             }
         }
     }
@@ -160,12 +164,19 @@ final class AlbumNode {
             SCNTransaction.commit()
             return
         }
+        // Le disque glisse vraiment dans le boîtier (il reste visible tout le long, puis est rangé derrière la pochette).
+        discPivot.removeAction(forKey: "fade")
+        if out { discPivot.opacity = 1 }
         SCNTransaction.begin()
-        SCNTransaction.animationDuration = animated ? 0.7 : 0
-        SCNTransaction.animationTimingFunction = CAMediaTimingFunction(controlPoints: 0.25, 0.9, 0.3, 1)
+        SCNTransaction.animationDuration = animated ? (out ? 0.7 : 0.55) : 0
+        SCNTransaction.animationTimingFunction = out
+            ? CAMediaTimingFunction(controlPoints: 0.25, 0.9, 0.3, 1)
+            : CAMediaTimingFunction(controlPoints: 0.4, 0.0, 0.2, 1)
         discPivot.position = out ? SCNVector3(0.05, 0.72, 0.02) : SCNVector3(0.05, 0, 0)
-        discPivot.opacity = out ? 1 : 0
         body.position = out ? SCNVector3(0, -0.32, 0) : SCNVector3(0, 0, 0)
+        SCNTransaction.completionBlock = { [weak self] in
+            if let self, !self.discOut { discPivot.opacity = 0 }
+        }
         SCNTransaction.commit()
     }
 }

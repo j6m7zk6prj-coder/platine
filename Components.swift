@@ -94,6 +94,8 @@ struct ArtworkView: View {
     var animated = true
     var small = false
     var cornerRadius: CGFloat = 12
+    /// Fin liseré autour de la pochette (retiré quand elle prend tout l'écran).
+    var bordered = true
     @Environment(Library.self) private var library
     @Environment(AppSettings.self) private var settings
 
@@ -107,7 +109,7 @@ struct ArtworkView: View {
             .overlay { placeholder }
             .overlay { content }
             .clipShape(shape)
-            .overlay { shape.strokeBorder(.white.opacity(0.08), lineWidth: 0.5) }
+            .overlay { if bordered { shape.strokeBorder(.white.opacity(0.08), lineWidth: 0.5) } }
     }
 
     @ViewBuilder private var content: some View {
@@ -369,20 +371,14 @@ struct Scrubber: View {
             GeometryReader { geo in
                 let width = max(geo.size.width, 1)
                 let x = width * value / total
-                let knob: CGFloat = active ? 18 : 12
+                // Comme Musique : une barre épaisse, sans point, qui grossit quand on la tient.
                 ZStack(alignment: .leading) {
-                    Capsule().fill(.white.opacity(0.22))
-                        .frame(height: active ? 9 : 5)
+                    Capsule().fill(.white.opacity(0.2))
                     Capsule()
-                        .fill(.white.opacity(active ? 1 : 0.8))
-                        .frame(width: max(0, x), height: active ? 9 : 5)
-                    // Le petit point au bout de la barre : c'est lui qu'on attrape pour avancer.
-                    Circle()
-                        .fill(.white)
-                        .frame(width: knob, height: knob)
-                        .shadow(color: .black.opacity(0.25), radius: 3, y: 1)
-                        .offset(x: min(max(0, x - knob / 2), width - knob))
+                        .fill(.white.opacity(active ? 1 : 0.6))
+                        .frame(width: max(0, x))
                 }
+                .frame(height: active ? 12 : 7)
                 .animation(active ? nil : .linear(duration: 0.25), value: value)
                 .frame(maxHeight: .infinity)
                 .contentShape(Rectangle())
@@ -390,10 +386,8 @@ struct Scrubber: View {
                     DragGesture(minimumDistance: 0)
                         .onChanged { g in
                             if grabStart == nil {
-                                // Seul un appui sur le point (ou juste à côté) le fait bouger :
-                                // toucher ailleurs sur la barre ne change rien.
-                                let knobX = width * min(total, player.currentTime) / total
-                                guard abs(g.startLocation.x - knobX) <= 28 else { return }
+                                // On glisse depuis n'importe où : la barre avance du même chemin que le doigt.
+                                // Un simple toucher ne fait jamais sauter le morceau.
                                 grabStart = min(total, player.currentTime)
                             }
                             guard let start = grabStart else { return }
@@ -402,7 +396,7 @@ struct Scrubber: View {
                             dragValue = min(total, max(0, start + moved))
                         }
                         .onEnded { _ in
-                            if grabStart != nil, let v = dragValue { player.seek(to: v) }
+                            if let start = grabStart, let v = dragValue, abs(v - start) > 0.3 { player.seek(to: v) }
                             dragValue = nil
                             grabStart = nil
                             player.isScrubbing = false
@@ -411,6 +405,7 @@ struct Scrubber: View {
                 .animation(.spring(response: 0.35, dampingFraction: 0.7), value: active)
             }
             .frame(height: 28)
+            .scaleEffect(x: active ? 1.03 : 1, y: 1)
             .sensoryFeedback(.selection, trigger: active)
 
             HStack {
