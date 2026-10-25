@@ -64,8 +64,6 @@ struct QueueView: View {
             }
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
-            .animation(.snappy(duration: 0.24), value: player.upNext)
-            .animation(.snappy(duration: 0.24), value: player.currentID)
             .navigationTitle("File d’attente")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

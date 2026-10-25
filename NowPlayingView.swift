@@ -84,7 +84,7 @@ struct NowPlayingView: View {
             }
             .ignoresSafeArea()
         }
-        .animation(.smooth(duration: 0.32), value: player.currentID)
+        .animation(.smooth(duration: 0.45), value: player.currentID)
         .animation(.spring(response: 0.5, dampingFraction: 0.86), value: showLyrics)
         .animation(.spring(response: 0.5, dampingFraction: 0.9), value: controlsHidden)
         .onChange(of: showLyrics) { _, on in
@@ -149,8 +149,8 @@ struct NowPlayingView: View {
         ArtworkView(track: t, cornerRadius: 12)
             .aspectRatio(1, contentMode: .fit)
             .id(t?.id)
-            .transition(.asymmetric(insertion: .opacity.combined(with: .scale(scale: 1.025)),
-                                    removal: .opacity.combined(with: .scale(scale: 0.985))))
+            .transition(.asymmetric(insertion: .opacity.combined(with: .scale(scale: 1.04)),
+                                    removal: .opacity.combined(with: .scale(scale: 0.97))))
             // Comme Musique : la pochette rétrécit en pause et reprend sa taille à la lecture.
             .scaleEffect(player.isPlaying ? 1 : 0.78)
             .shadow(color: .black.opacity(player.isPlaying ? 0.5 : 0.25),

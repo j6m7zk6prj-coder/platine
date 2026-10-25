@@ -184,50 +184,12 @@ struct CDCaseView: View {
                     .blendMode(.screen)
                     .allowsHitTesting(false)
 
-                // Reflets ronds du plastique moulé : un seul Canvas évite de multiplier
-                // les vues et conserve un rendu léger pendant les gestes 3D.
-                PlasticBubbleHighlights(lightX: lightX, lightY: lightY)
-                    .opacity(0.78)
-                    .allowsHitTesting(false)
-                    .clipShape(RoundedRectangle(cornerRadius: w * 0.025, style: .continuous))
-
                 RoundedRectangle(cornerRadius: w * 0.025, style: .continuous)
                     .strokeBorder(
                         LinearGradient(colors: [.white.opacity(0.7), .white.opacity(0.08), .white.opacity(0.35)],
                                        startPoint: .topLeading, endPoint: .bottomTrailing),
                         lineWidth: 1.4)
             }
-        }
-    }
-}
-
-
-/// Microbulles et reflets circulaires inspirés du plastique transparent d'un boîtier CD.
-private struct PlasticBubbleHighlights: View {
-    let lightX: Double
-    let lightY: Double
-
-    var body: some View {
-        Canvas { context, size in
-            let bubbles: [(CGFloat, CGFloat, CGFloat)] = [
-                (0.08, 0.10, 0.035), (0.92, 0.14, 0.025), (0.12, 0.88, 0.022),
-                (0.89, 0.84, 0.042), (0.50, 0.035, 0.018), (0.045, 0.52, 0.014),
-                (0.96, 0.53, 0.017), (0.72, 0.94, 0.016)
-            ]
-            for (x, y, radius) in bubbles {
-                let r = max(2, size.width * radius)
-                let center = CGPoint(x: size.width * x + CGFloat(lightX) * r * 0.22,
-                                     y: size.height * y + CGFloat(lightY) * r * 0.22)
-                let rect = CGRect(x: center.x - r, y: center.y - r, width: r * 2, height: r * 2)
-                context.stroke(Path(ellipseIn: rect), with: .color(.white.opacity(0.24)), lineWidth: max(0.6, r * 0.055))
-                let shine = CGRect(x: center.x - r * 0.48, y: center.y - r * 0.55, width: r * 0.65, height: r * 0.30)
-                context.fill(Path(ellipseIn: shine), with: .color(.white.opacity(0.18)))
-            }
-            var sweep = Path()
-            sweep.move(to: CGPoint(x: size.width * 0.08, y: size.height * 0.02))
-            sweep.addQuadCurve(to: CGPoint(x: size.width * 0.94, y: size.height * 0.12),
-                               control: CGPoint(x: size.width * 0.48, y: size.height * 0.18))
-            context.stroke(sweep, with: .color(.white.opacity(0.22)), lineWidth: max(1, size.width * 0.004))
         }
     }
 }
