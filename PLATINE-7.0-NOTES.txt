@@ -1,0 +1,28 @@
+PLATINE 7.0 — CHANGEMENTS INCLUS
+
+1. Lecteur et file d'attente
+- Transition du changement de morceau raccourcie de 0,45 s à 0,32 s.
+- Fondu/zoom des pochettes ajusté pour une variation de taille plus discrète.
+- Animations snappy de la file d'attente lors des changements de morceau et de l'ordre de lecture.
+
+2. Boîtiers CD
+- Ajout de petits reflets circulaires et microbulles dans un Canvas unique, superposé au boîtier.
+- Le dessin ne reçoit pas les interactions tactiles et est limité à la forme du boîtier.
+
+3. Objet 3D iPhone 8
+- Le modèle SceneKit « Téléphone 8 » déjà présent dans ObjectsViews.swift est conservé, avec son écran interactif, ses matériaux verre/métal, ses caméras/capteurs, ses boutons et son système de stickers.
+- Aucun deuxième modèle redondant n'a été ajouté.
+
+4. Performances / qualité
+- Les optimisations déjà présentes dans le code source sont conservées : mise à jour des stickers seulement quand leur signature change, rafraîchissement d'écran du téléphone seulement quand l'état du morceau change, et rendu SceneKit continu uniquement quand l'objet est actif.
+- Aucun abaissement volontaire de résolution, d'antialiasing ou de qualité des textures n'a été appliqué.
+
+5. Fonctions préservées
+- Pages artistes et thèmes existants conservés.
+- Aucune galerie « Pochettes HD » ajoutée.
+- Pas de dates de concert, pas d'Auto Mix.
+
+LIMITES À CONNAÎTRE
+- Le ZIP source fourni à l'origine ne contient que des fichiers Swift, pas le projet Xcode, Info.plist, Assets.xcassets ni le workflow GitHub Actions.
+- L'activation complète du mode paysage doit être autorisée dans les paramètres d'orientation du projet iOS / Info.plist. Ces fichiers n'étaient pas dans l'archive source, donc cette configuration ne peut pas être modifiée ni vérifiée dans ce ZIP.
+- La compilation iOS et le comportement sur iPhone doivent être vérifiés par ton workflow GitHub Actions.
