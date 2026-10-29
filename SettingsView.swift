@@ -132,7 +132,7 @@ struct SettingsView: View {
             }
 
             Section {
-                LabeledContent("Version", value: "9.1")
+                LabeledContent("Version", value: "10.0 Classique")
             } footer: {
                 Text("Platine lit ta propre musique. Seule la recherche de paroles contacte internet (LRCLIB), et uniquement quand tu ouvres des paroles absentes ou lances la recherche.")
             }
@@ -251,13 +251,13 @@ struct AppearanceSettingsView: View {
                     ForEach(LyricsSize.allCases) { Text($0.label).tag($0) }
                 }
                 .pickerStyle(.segmented)
-                Text("Les paroles brillent doucement")
+                Text("Aperçu des paroles")
                     .font(.system(size: settings.lyricsSize.points * 0.8, weight: .bold))
-                    .foregroundStyle(.white)
-                    .shadow(color: .white.opacity(0.55), radius: 2.5)
+                    .foregroundStyle(.primary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(14)
-                    .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color(white: 0.1)))
+                    .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color(.systemBackground)))
+                    .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Color(.separator), lineWidth: 0.5))
                     .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 12, trailing: 16))
                     .animation(.smooth(duration: 0.25), value: settings.lyricsSize)
             } header: {

@@ -92,11 +92,10 @@ struct FeedView: View {
 
     var body: some View {
         ZStack {
-            Color.black.ignoresSafeArea()
+            Color(.systemBackground).ignoresSafeArea()
             if library.tracks.isEmpty {
                 ContentUnavailableView("Rien à découvrir", systemImage: "sparkles",
                                        description: Text("Importe de la musique : ses extraits apparaîtront ici."))
-                    .foregroundStyle(.white)
             } else {
                 ScrollView(.vertical) {
                     LazyVStack(spacing: 0) {
@@ -119,28 +118,25 @@ struct FeedView: View {
 
             // En haut : le titre et le filtre « avec paroles ».
             VStack {
-                HStack {
-                    Text("Découvrir").font(.title2.bold())
-                    Spacer()
-                    Button {
-                        lyricsOnly.toggle()
-                        rebuild()
-                    } label: {
-                        Label(lyricsOnly ? "Avec paroles" : "Tout", systemImage: lyricsOnly ? "quote.bubble.fill" : "quote.bubble")
-                            .font(.subheadline.weight(.semibold))
-                            .padding(.horizontal, 12)
-                            .frame(height: 34)
-                            .glassCapsule()
+                // Barre du haut classique : titre au centre et choix « Tout / Avec paroles » en segments.
+                VStack(spacing: 8) {
+                    Text("Découvrir").font(.headline)
+                    Picker("Filtre", selection: Binding(get: { lyricsOnly }, set: { lyricsOnly = $0; rebuild() })) {
+                        Text("Tout").tag(false)
+                        Text("Avec paroles").tag(true)
                     }
-                    .buttonStyle(PressStyle(circle: false))
+                    .pickerStyle(.segmented)
+                    .frame(maxWidth: 280)
                 }
-                .foregroundStyle(.white)
                 .padding(.horizontal, 20)
                 .padding(.top, 6)
+                .padding(.bottom, 8)
+                .frame(maxWidth: .infinity)
+                .background(.bar, ignoresSafeAreaEdges: .top)
+                .overlay(alignment: .bottom) { Divider() }
                 Spacer()
             }
         }
-        .environment(\.colorScheme, .dark)
         .toolbar(.hidden, for: .navigationBar)
         .onAppear {
             if items.isEmpty { rebuild() }
@@ -241,23 +237,19 @@ private struct FeedPage: View {
         GeometryReader { geo in
             ZStack(alignment: .bottomLeading) {
                 // Fond : la pochette floue et ses couleurs.
+                // Fond uni (clair ou sombre) avec juste un voile de la couleur de la pochette.
                 ZStack {
-                    LinearGradient(colors: [colors[0], colors[1], .black], startPoint: .top, endPoint: .bottom)
-                    if let img = library.backdrop(for: track) {
-                        Image(uiImage: img).resizable().scaledToFill()
-                            .frame(width: geo.size.width, height: geo.size.height).clipped()
-                            .blur(radius: 30).opacity(0.7)
-                    }
-                    LinearGradient(colors: [.black.opacity(0.25), .clear, .black.opacity(0.85)], startPoint: .top, endPoint: .bottom)
+                    Color(.systemBackground)
+                    LinearGradient(colors: [colors[0].opacity(0.16), .clear], startPoint: .top, endPoint: .bottom)
                 }
                 .ignoresSafeArea()
 
                 VStack(spacing: 0) {
                     Spacer(minLength: geo.safeAreaInsets.top + 60)
                     // La pochette, qui « respire » doucement pendant l'extrait.
-                    ArtworkView(track: track, animated: active, cornerRadius: 16)
+                    ArtworkView(track: track, animated: active, cornerRadius: 3)
                         .frame(width: geo.size.width - 64, height: geo.size.width - 64)
-                        .shadow(color: .black.opacity(0.5), radius: 30, y: 18)
+                        .shadow(color: .black.opacity(0.18), radius: 12, y: 6)
                         .scaleEffect(active && preview.playing ? 1 : 0.94)
                         .animation(.spring(response: 0.6, dampingFraction: 0.8), value: active && preview.playing)
                         // Double toucher : aimer ; toucher : pause / lecture.
@@ -267,8 +259,9 @@ private struct FeedPage: View {
                             if !preview.playing && active {
                                 Image(systemName: "play.fill")
                                     .font(.system(size: 44))
-                                    .foregroundStyle(.white.opacity(0.9))
-                                    .shadow(radius: 10)
+                                    .foregroundStyle(.white)
+                                    .frame(width: 84, height: 84)
+                                    .background(Circle().fill(.black.opacity(0.35)))
                                     .transition(.scale.combined(with: .opacity))
                                     .allowsHitTesting(false)
                             }
@@ -288,16 +281,15 @@ private struct FeedPage: View {
 
                 // Boutons à droite, comme sur TikTok.
                 VStack(spacing: 22) {
-                    sideButton(liked ? "star.fill" : "star", liked ? "Favori" : "Aimer", tint: liked ? .yellow : .white) { like() }
+                    sideButton(liked ? "star.fill" : "star", liked ? "Favori" : "Aimer") { like() }
                     sideButton("text.badge.plus", "Playlist") { ui.addToPlaylist = AddToPlaylistTarget(trackIDs: [track.id]) }
                     sideButton("play.circle.fill", "En entier", action: onListen)
                     ShareLink(item: library.audioURL(track)) {
                         VStack(spacing: 4) {
                             Image(systemName: "square.and.arrow.up").font(.system(size: 24, weight: .semibold))
-                            Text("Partager").font(.caption2.weight(.semibold))
+                            Text("Partager").font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
                         }
-                        .foregroundStyle(.white)
-                        .shadow(color: .black.opacity(0.4), radius: 4)
+                        .foregroundStyle(.tint)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .trailing)
@@ -310,35 +302,31 @@ private struct FeedPage: View {
 
     private var info: some View {
         HStack(spacing: 12) {
-            ArtworkView(track: track, animated: false, small: true, cornerRadius: 8)
+            ArtworkView(track: track, animated: false, small: true, cornerRadius: 2)
                 .frame(width: 46, height: 46)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 5) {
                     Text(track.title).font(.headline).lineLimit(1)
                     if track.explicit { ExplicitBadge(size: 13) }
                 }
-                Text(track.displayArtist).font(.subheadline).foregroundStyle(.white.opacity(0.7)).lineLimit(1)
+                Text(track.displayArtist).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
             }
             Spacer()
             if !track.album.isEmpty {
                 NavigationLink { AlbumDetailView(albumID: track.albumKey) } label: {
-                    Text("Album")
-                        .font(.subheadline.weight(.semibold))
-                        .padding(.horizontal, 14)
-                        .frame(height: 32)
-                        .glassCapsule()
+                    Text("ALBUM")
                 }
-                .buttonStyle(PressStyle(circle: false))
+                .buttonStyle(OutlineButtonStyle(compact: true))
             }
         }
-        .foregroundStyle(.white)
+        .foregroundStyle(.primary)
         .overlay(alignment: .bottom) {
             // Avancée de l'extrait.
             TimelineView(.animation(paused: !active || !preview.playing)) { _ in
                 let p = min(1, max(0, (preview.time - item.start) / FeedPreview.length))
                 GeometryReader { g in
-                    Capsule().fill(.white.opacity(0.2))
-                        .overlay(alignment: .leading) { Capsule().fill(.white).frame(width: g.size.width * (active ? p : 0)) }
+                    Capsule().fill(Color(.systemFill))
+                        .overlay(alignment: .leading) { Capsule().fill(.tint).frame(width: g.size.width * (active ? p : 0)) }
                 }
                 .frame(height: 3)
             }
@@ -352,16 +340,15 @@ private struct FeedPage: View {
         if liked != track.isFavorite { library.toggleFavorite(track.id) }
     }
 
-    private func sideButton(_ symbol: String, _ title: String, tint: Color = .white, action: @escaping () -> Void) -> some View {
+    private func sideButton(_ symbol: String, _ title: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             VStack(spacing: 4) {
                 Image(systemName: symbol)
-                    .font(.system(size: 26, weight: .semibold))
-                    .foregroundStyle(tint)
+                    .font(.system(size: 24))
+                    .foregroundStyle(.tint)
                     .contentTransition(.symbolEffect(.replace))
-                Text(title).font(.caption2.weight(.semibold)).foregroundStyle(.white)
+                Text(title).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
             }
-            .shadow(color: .black.opacity(0.4), radius: 4)
         }
         .buttonStyle(PressStyle())
         .sensoryFeedback(.impact(weight: .light), trigger: liked)
@@ -376,7 +363,7 @@ private struct FeedLyrics: View {
 
     var body: some View {
         if item.lines.isEmpty {
-            Text("♪").font(.system(size: 40, weight: .bold)).foregroundStyle(.white.opacity(0.5))
+            Text("♪").font(.system(size: 40, weight: .bold)).foregroundStyle(.tertiary)
                 .frame(maxWidth: .infinity, alignment: .leading)
         } else {
             TimelineView(.animation(minimumInterval: 1.0 / 20, paused: !active || !item.synced || !preview.playing)) { _ in
@@ -386,9 +373,8 @@ private struct FeedLyrics: View {
                         let next = i + 1 < item.lines.count ? item.lines[i + 1].time : line.time + 4
                         let on = !item.synced || (active && now >= line.time && now < next)
                         Text(line.text)
-                            .font(.system(size: 26, weight: .bold))
-                            .foregroundStyle(.white.opacity(on ? 1 : 0.38))
-                            .shadow(color: .black.opacity(0.35), radius: 6)
+                            .font(.system(size: 24, weight: .bold))
+                            .foregroundStyle(Color.primary.opacity(on ? 1 : 0.3))
                             .lineLimit(3)
                             .animation(.easeOut(duration: 0.3), value: on)
                     }
@@ -409,8 +395,8 @@ private struct HeartBurst: View {
     var body: some View {
         Image(systemName: "star.fill")
             .font(.system(size: 96))
-            .foregroundStyle(.yellow)
-            .shadow(color: .black.opacity(0.3), radius: 10)
+            .foregroundStyle(.tint)
+            .shadow(color: .black.opacity(0.2), radius: 8)
             .scaleEffect(shown ? 1.1 : 0.4)
             .opacity(shown ? 1 : 0)
             .allowsHitTesting(false)

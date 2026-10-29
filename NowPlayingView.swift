@@ -29,7 +29,8 @@ struct NowPlayingView: View {
         let landscape = verticalSizeClass == .compact
         // Comme Musique : une pochette animée remplit tout le haut de l'écran ; une image reste un carré.
         // En paysage, la pochette (animée ou non) reste un carré à gauche.
-        let fullBleed = !landscape && (track.map { isAnimated($0) } ?? false)
+        // Style classique : la pochette reste toujours un carré net (pas d'image plein écran).
+        let fullBleed = false
         Group {
             if landscape {
                 // Mode paysage : la pochette, les paroles ou la file à gauche, les commandes à droite.
@@ -53,19 +54,9 @@ struct NowPlayingView: View {
                 .padding(.bottom, 6)
             }
         }
-        .foregroundStyle(.white)
-        .background {
-            ZStack(alignment: .top) {
-                AmbientBackground(track: track, dim: fullBleed ? 0.55 : 0.3, forceDark: true)
-                // Comme Musique : derrière les paroles, seulement les couleurs floues de la pochette.
-                if fullBleed && !showLyrics, let t = track {
-                    FullBleedArtwork(track: t)
-                        .id(t.id)
-                        .transition(.opacity)
-                }
-            }
-            .ignoresSafeArea()
-        }
+        .foregroundStyle(.primary)
+        // Style iOS classique : un fond uni blanc (thème clair) ou noir (thème sombre).
+        .background { Color(.systemBackground).ignoresSafeArea() }
         .animation(.smooth(duration: 0.45), value: player.currentID)
         .animation(.spring(response: 0.5, dampingFraction: 0.86), value: showLyrics)
         .animation(.spring(response: 0.42, dampingFraction: 0.86), value: queueOpen)
@@ -90,7 +81,6 @@ struct NowPlayingView: View {
             EffectsSheet()
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
-                .environment(\.colorScheme, .dark)
         }
         .animation(.spring(response: 0.4, dampingFraction: 0.8), value: player.effect)
         .onChange(of: player.currentID) { _, id in
@@ -174,7 +164,7 @@ struct NowPlayingView: View {
             ArtworkView(track: t, animated: false, small: true, cornerRadius: 8)
                 .frame(width: 50, height: 50)
                 .matchedGeometryEffect(id: "artwork", in: artSpace)
-                .shadow(color: .black.opacity(0.35), radius: 8, y: 4)
+                .shadow(color: .black.opacity(0.12), radius: 4, y: 2)
             header(t)
         }
     }
@@ -196,8 +186,8 @@ struct NowPlayingView: View {
         .matchedGeometryEffect(id: "artwork", in: artSpace)
             // Comme Musique : la pochette rétrécit en pause et reprend sa taille à la lecture.
             .scaleEffect(player.isPlaying ? 1 : 0.78)
-            .shadow(color: .black.opacity(player.isPlaying ? 0.5 : 0.25),
-                    radius: player.isPlaying ? 30 : 14, y: player.isPlaying ? 18 : 8)
+            .shadow(color: .black.opacity(player.isPlaying ? 0.22 : 0.12),
+                    radius: player.isPlaying ? 18 : 8, y: player.isPlaying ? 10 : 4)
             .animation(.spring(response: 0.5, dampingFraction: 0.72), value: player.isPlaying)
             .contentShape(Rectangle())
             .onTapGesture {
@@ -237,9 +227,10 @@ struct NowPlayingView: View {
                         .lineLimit(1)
                     if t?.explicit == true { ExplicitBadge(size: 18) }
                 }
+                // Comme l'ancien lecteur d'iOS : l'artiste en bleu.
                 Text(t?.displayArtist ?? "")
-                    .font(.title2)
-                    .foregroundStyle(.white.opacity(0.55))
+                    .font(.title3)
+                    .foregroundStyle(.tint)
                     .lineLimit(1)
                 if player.effect != .original {
                     // L'effet en cours, toujours visible : un toucher pour le changer.
@@ -248,9 +239,8 @@ struct NowPlayingView: View {
                             .font(.caption.weight(.semibold))
                             .padding(.horizontal, 10)
                             .padding(.vertical, 5)
-                            .background(Capsule().fill(.white.opacity(0.16)))
                     }
-                    .buttonStyle(PressStyle(circle: false))
+                    .buttonStyle(OutlineButtonStyle(compact: true))
                     .padding(.top, 6)
                     .transition(.scale(scale: 0.8, anchor: .leading).combined(with: .opacity))
                 }
@@ -265,10 +255,9 @@ struct NowPlayingView: View {
                 } label: {
                     Image(systemName: t.isFavorite ? "star.fill" : "star")
                         .font(.system(size: 19, weight: .semibold))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(.tint)
                         .contentTransition(.symbolEffect(.replace))
                         .frame(width: 40, height: 40)
-                        .background(Circle().fill(.white.opacity(0.14)))
                 }
                 .buttonStyle(PressStyle(circle: false))
                 .sensoryFeedback(trigger: t.isFavorite) { _, _ in settings.haptics ? .success : nil }
@@ -322,10 +311,10 @@ struct NowPlayingView: View {
                         player.removed([t.id])
                     }
                 } label: {
-                    Image(systemName: "ellipsis")
-                        .font(.system(size: 19, weight: .bold))
+                    Image(systemName: "ellipsis.circle")
+                        .font(.system(size: 22))
+                        .foregroundStyle(.tint)
                         .frame(width: 40, height: 40)
-                        .background(Circle().fill(.white.opacity(0.14)))
                 }
                 .accessibilityLabel("Plus d’options")
             }
@@ -383,7 +372,7 @@ struct NowPlayingView: View {
             VolumeBar()
             Image(systemName: "speaker.wave.3.fill").font(.footnote)
         }
-        .foregroundStyle(.white.opacity(0.55))
+        .foregroundStyle(.secondary)
     }
 
     private var repeatLabel: String {
@@ -419,7 +408,8 @@ struct NowPlayingView: View {
                     Image(systemName: player.shuffle ? "shuffle" : (player.repeatMode == .one ? "repeat.1" : "repeat"))
                         .font(.system(size: 10, weight: .bold))
                         .frame(width: 22, height: 22)
-                        .background(Circle().fill(Color(white: 0.28)))
+                        .foregroundStyle(.white)
+                        .background(Circle().fill(.tint))
                         .offset(x: 6, y: -8)
                         .transition(.scale.combined(with: .opacity))
                 }
@@ -434,9 +424,9 @@ struct NowPlayingView: View {
             Image(systemName: on && symbol != "list.bullet" ? symbol + ".fill" : symbol)
                 .font(.system(size: 21, weight: .medium))
                 .contentTransition(.symbolEffect(.replace))
-                .foregroundStyle(on ? Color.white : Color.white.opacity(0.55))
+                // Bleu quand c'est activé, gris sinon (comme les anciens boutons d'iOS).
+                .foregroundStyle(on ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
                 .frame(width: 46, height: 36)
-                .background(Capsule().fill(.white.opacity(on && symbol == "list.bullet" ? 0.16 : 0)))
                 .animation(.spring(response: 0.35, dampingFraction: 0.7), value: on)
         }
         .buttonStyle(PressStyle(circle: false))
@@ -491,14 +481,14 @@ struct VolumeBar: View {
         GeometryReader { geo in
             let width = max(geo.size.width, 1)
             ZStack(alignment: .leading) {
-                Capsule().fill(.white.opacity(active ? 0.24 : 0.2))
-                Capsule().fill(.white.opacity(active ? 1 : 0.62))
+                Capsule().fill(Color(.systemFill))
+                Capsule().fill(Color(.secondaryLabel))
                     .frame(width: width * CGFloat(model.volume))
                     // Suit le doigt de près pendant le geste ; glisse en douceur sinon (boutons de l'iPhone).
                     .animation(active ? .interactiveSpring(response: 0.18, dampingFraction: 0.86)
                                       : .spring(response: 0.45, dampingFraction: 0.82), value: model.volume)
             }
-            .frame(height: active ? 13 : 7)
+            .frame(height: active ? 6 : 3)
             // L'élastique : la barre s'allonge du côté où l'on tire, et s'amincit un peu.
             .scaleEffect(x: 1 + abs(stretch) / width, y: 1 - min(abs(stretch), 24) / 120,
                          anchor: stretch >= 0 ? .leading : .trailing)
@@ -586,7 +576,7 @@ struct OutputName: View {
     var body: some View {
         Text(name)
             .font(.footnote.weight(.medium))
-            .foregroundStyle(.white.opacity(0.55))
+            .foregroundStyle(.tint)
             .lineLimit(1)
             .fixedSize()
             .onReceive(NotificationCenter.default.publisher(for: AVAudioSession.routeChangeNotification).receive(on: RunLoop.main)) { _ in
@@ -626,7 +616,7 @@ struct EffectsSheet: View {
                                 Image(systemName: "drop").foregroundStyle(.secondary)
                                 Slider(value: Binding(get: { player.effectIntensity },
                                                       set: { player.setEffectIntensity($0) }), in: 0...1)
-                                    .tint(.white)
+
                                 Image(systemName: "drop.fill").foregroundStyle(.secondary)
                             }
                         }
@@ -667,19 +657,21 @@ struct EffectsSheet: View {
                 Image(systemName: effect.symbol)
                     .font(.system(size: 18, weight: .semibold))
                     .frame(width: 38, height: 38)
-                    .background(Circle().fill(selected ? Color.black.opacity(0.12) : Color.white.opacity(0.1)))
+                    .background(Circle().fill(selected ? Color.white.opacity(0.22) : Color(.tertiarySystemFill)))
                 VStack(alignment: .leading, spacing: 2) {
                     Text(effect.title).font(.subheadline.weight(.semibold)).lineLimit(1)
                     Text(effect.subtitle).font(.caption).lineLimit(2)
-                        .foregroundStyle(selected ? Color.black.opacity(0.6) : Color.white.opacity(0.55))
+                        .foregroundStyle(selected ? Color.white.opacity(0.8) : Color.secondary)
                 }
                 Spacer(minLength: 0)
             }
-            .foregroundStyle(selected ? Color.black : Color.white)
+            .foregroundStyle(selected ? Color.white : Color.primary)
             .padding(12)
             .frame(maxWidth: .infinity, minHeight: 64, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(selected ? Color.white : Color.white.opacity(0.08)))
+            .background(RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(selected ? AnyShapeStyle(.tint) : AnyShapeStyle(Color(.secondarySystemBackground))))
+            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(Color(.separator), lineWidth: selected ? 0 : 0.5))
         }
         .buttonStyle(PressStyle(circle: false))
         .sensoryFeedback(.selection, trigger: selected)
@@ -725,7 +717,7 @@ struct InlineQueue: View {
                     if player.upNext.isEmpty && upcoming.isEmpty {
                         Text("La file d’attente ne comporte aucune musique.")
                             .font(.subheadline)
-                            .foregroundStyle(.white.opacity(0.5))
+                            .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity)
                             .padding(.top, 40)
                     }
@@ -741,9 +733,10 @@ struct InlineQueue: View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(on ? Color.black : Color.white)
-                .frame(width: 66, height: 34)
-                .background(Capsule().fill(on ? Color.white : Color.white.opacity(0.14)))
+                .foregroundStyle(on ? AnyShapeStyle(Color.white) : AnyShapeStyle(.tint))
+                .frame(width: 66, height: 30)
+                .background(Capsule().fill(on ? AnyShapeStyle(.tint) : AnyShapeStyle(Color.clear)))
+                .overlay(Capsule().strokeBorder(.tint, lineWidth: 1.2))
         }
         .buttonStyle(PressStyle(circle: false))
         .sensoryFeedback(.selection, trigger: on)
@@ -766,7 +759,7 @@ struct InlineQueue: View {
                         Text(t.title).font(.body.weight(.medium)).lineLimit(1)
                         if t.explicit { ExplicitBadge(size: 13) }
                     }
-                    Text(t.displayArtist).font(.subheadline).foregroundStyle(.white.opacity(0.55)).lineLimit(1)
+                    Text(t.displayArtist).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
                 }
                 Spacer(minLength: 0)
             }
@@ -774,5 +767,6 @@ struct InlineQueue: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(PressStyle(circle: false))
+        .overlay(alignment: .bottom) { Divider().padding(.leading, 56) }
     }
 }

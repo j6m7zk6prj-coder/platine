@@ -1389,12 +1389,21 @@ enum Studio {
             scene.rootNode.addChildNode(spotNode)
 
             // Pas de sol 3D : le reflet de chaque objet est une image préparée à l'avance (bien plus léger).
-            let bg = UIColor(red: 0.03, green: 0.03, blue: 0.04, alpha: 1)
-            scene.background.contents = bg
-            scene.fogColor = bg
+            setBackground(of: scene, dark: true)
             scene.fogStartDistance = 8
             scene.fogEndDistance = 15
         }
+    }
+
+    /// Fond de la Collection : noir en thème sombre, gris très clair en thème clair (comme l'ancien Cover Flow).
+    static func backgroundColor(dark: Bool) -> UIColor {
+        dark ? UIColor(red: 0.03, green: 0.03, blue: 0.04, alpha: 1) : UIColor(red: 0.95, green: 0.95, blue: 0.96, alpha: 1)
+    }
+
+    static func setBackground(of scene: SCNScene, dark: Bool) {
+        let bg = backgroundColor(dark: dark)
+        scene.background.contents = bg
+        scene.fogColor = bg
     }
 }
 

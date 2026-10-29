@@ -157,7 +157,7 @@ struct ArtistAvatar: View {
                 }
             }
             .clipShape(Circle())
-            .overlay { Circle().strokeBorder(.white.opacity(0.1), lineWidth: 0.5) }
+            .overlay { Circle().strokeBorder(Color(.separator), lineWidth: 0.5) }
             .accessibilityHidden(true)
     }
 }

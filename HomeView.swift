@@ -31,30 +31,32 @@ struct HomeView: View {
             }
         }
         .navigationTitle("Accueil")
-        .background { AmbientBackground(track: currentTrack, dim: 0.55) }
+        .background { Color(.systemBackground).ignoresSafeArea() }
     }
 
     private var content: some View {
         let recents = recentAlbums
         let resume = recents.first ?? library.recentlyAdded.first
+        let top = Array(library.tracks.filter { $0.playCount > 0 }.sorted { $0.playCount > $1.playCount }.prefix(5))
         return ScrollView {
-            VStack(alignment: .leading, spacing: 34) {
-                Text(Date.now.formatted(.dateTime.weekday(.wide).day().month(.wide)).capitalized)
-                    .font(.subheadline.weight(.semibold))
+            VStack(alignment: .leading, spacing: 0) {
+                Text(Date.now.formatted(.dateTime.weekday(.wide).day().month(.wide)).uppercased())
+                    .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 20)
-                    .padding(.top, -18)
+                    .padding(.bottom, 14)
 
                 if let resume {
-                    HomeSection(title: recents.isEmpty ? "À découvrir" : "Reprendre l’écoute") {
-                        HeroAlbumCard(album: resume)
-                            .padding(.horizontal, 20)
-                    }
+                    // Comme la fiche d'un album dans l'iTunes Store.
+                    HeroAlbumCard(album: resume, label: recents.isEmpty ? "À DÉCOUVRIR" : "REPRENDRE L’ÉCOUTE")
+                        .padding(.horizontal, 20)
+                        .padding(.bottom, 18)
+                    ClassicSeparator()
                 }
 
                 HomeSection(title: "Tes mix") {
                     ScrollView(.horizontal) {
-                        LazyHStack(spacing: 14) {
+                        LazyHStack(alignment: .top, spacing: 14) {
                             ForEach(mixes) { mix in
                                 MixCard(mix: mix)
                             }
@@ -66,13 +68,27 @@ struct HomeView: View {
                     .scrollIndicators(.hidden)
                 }
 
+                if !top.isEmpty {
+                    ClassicSeparator()
+                    HomeSection(title: "Les plus écoutés") {
+                        // Liste numérotée, comme le classement des morceaux de l'iTunes Store.
+                        VStack(spacing: 0) {
+                            ForEach(Array(top.enumerated()), id: \.element.id) { i, t in
+                                ChartRow(rank: i + 1, track: t, ids: top.map(\.id), last: i == top.count - 1)
+                            }
+                        }
+                    }
+                }
+
                 if recents.count > 1 {
+                    ClassicSeparator()
                     HomeSection(title: "Écoutés récemment") {
                         albumShelf(Array(recents.dropFirst()))
                     }
                 }
 
                 if !library.recentlyAdded.isEmpty {
+                    ClassicSeparator()
                     HomeSection(title: "Ajouts récents", destination: { AlbumsView() }) {
                         albumShelf(library.recentlyAdded)
                     }
@@ -80,19 +96,21 @@ struct HomeView: View {
 
                 let artists = topArtists
                 if !artists.isEmpty {
+                    ClassicSeparator()
                     HomeSection(title: "Tes artistes", destination: { ArtistsView() }) {
                         ScrollView(.horizontal) {
-                            LazyHStack(alignment: .top, spacing: 18) {
+                            LazyHStack(alignment: .top, spacing: 16) {
                                 ForEach(artists.prefix(15)) { artist in
                                     NavigationLink { ArtistDetailView(artistID: artist.id) } label: {
                                         VStack(spacing: 8) {
                                             ArtistAvatar(artist: artist)
-                                                .frame(width: 112, height: 112)
-                                                .shadow(color: .black.opacity(0.25), radius: 10, y: 6)
+                                                .frame(width: 96, height: 96)
+                                                .overlay(Circle().strokeBorder(Color(.separator), lineWidth: 0.5))
                                             Text(artist.name)
-                                                .font(.subheadline.weight(.medium))
+                                                .font(.footnote)
+                                                .foregroundStyle(.primary)
                                                 .lineLimit(1)
-                                                .frame(width: 112)
+                                                .frame(width: 96)
                                         }
                                     }
                                     .buttonStyle(PressStyle(circle: false))
@@ -106,7 +124,7 @@ struct HomeView: View {
                     }
                 }
             }
-            .padding(.top, 8)
+            .padding(.top, 4)
             .padding(.bottom, 30)
         }
         .scrollIndicators(.hidden)
@@ -123,7 +141,7 @@ struct HomeView: View {
             LazyHStack(alignment: .top, spacing: 14) {
                 ForEach(albums) { album in
                     NavigationLink { AlbumDetailView(albumID: album.id) } label: {
-                        AlbumCard(album: album).frame(width: 160)
+                        AlbumCard(album: album).frame(width: 140)
                     }
                     .buttonStyle(PressStyle(circle: false))
                 }
@@ -179,27 +197,93 @@ struct HomeSection<Content: View, Destination: View>: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Group {
+        VStack(alignment: .leading, spacing: 10) {
+            // Comme l'iTunes Store : titre en gras à gauche, « Tout voir › » en bleu à droite.
+            HStack(alignment: .firstTextBaseline) {
+                Text(title).font(.title3.bold())
+                Spacer()
                 if let destination {
                     NavigationLink {
                         destination()
                     } label: {
-                        HStack(spacing: 4) {
-                            Text(title)
-                            Image(systemName: "chevron.right")
-                                .font(.title3.weight(.bold))
-                                .foregroundStyle(.secondary)
+                        HStack(spacing: 2) {
+                            Text("Tout voir")
+                            Image(systemName: "chevron.right").font(.footnote.weight(.semibold))
                         }
+                        .font(.subheadline)
+                        .foregroundStyle(.tint)
                     }
                     .buttonStyle(.plain)
-                } else {
-                    Text(title)
                 }
             }
-            .font(.title2.bold())
             .padding(.horizontal, 20)
             content()
+        }
+        .padding(.vertical, 16)
+    }
+}
+
+/// Fin trait gris entre deux sections, décalé à gauche comme dans les listes iOS.
+struct ClassicSeparator: View {
+    var body: some View {
+        Rectangle()
+            .fill(Color(.separator))
+            .frame(height: 0.5)
+            .padding(.leading, 20)
+    }
+}
+
+/// Une ligne du classement : numéro, pochette, titre / artiste, durée et bouton « Lire » à contour.
+private struct ChartRow: View {
+    let rank: Int
+    let track: Track
+    let ids: [UUID]
+    let last: Bool
+    @Environment(Player.self) private var player
+
+    var body: some View {
+        let current = player.currentID == track.id
+        HStack(spacing: 12) {
+            Text("\(rank)")
+                .font(.subheadline)
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+                .frame(width: 18)
+            ArtworkView(track: track, animated: false, small: true, cornerRadius: 3)
+                .frame(width: 48, height: 48)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 5) {
+                    Text(track.title)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(current ? AnyShapeStyle(.tint) : AnyShapeStyle(.primary))
+                        .lineLimit(1)
+                    if track.explicit { ExplicitBadge(size: 12) }
+                }
+                Text(track.displayArtist)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 6)
+            Text(formatTime(track.duration))
+                .font(.footnote)
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+            Button {
+                if let i = ids.firstIndex(of: track.id) { player.play(ids: Array(ids[i...]), shuffled: false) }
+            } label: {
+                Image(systemName: current && player.isPlaying ? "pause.fill" : "play.fill")
+                    .font(.caption)
+            }
+            .buttonStyle(OutlineButtonStyle(compact: true))
+            .accessibilityLabel("Lire \(track.title)")
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 8)
+        .overlay(alignment: .bottom) {
+            if !last {
+                Rectangle().fill(Color(.separator)).frame(height: 0.5).padding(.leading, 110)
+            }
         }
     }
 }
@@ -207,67 +291,62 @@ struct HomeSection<Content: View, Destination: View>: View {
 /// Grande carte « Reprendre l'écoute » : la pochette, ses couleurs en fond, et Lire / Aléatoire.
 private struct HeroAlbumCard: View {
     let album: AlbumInfo
-    @Environment(Library.self) private var library
+    var label: String
     @Environment(Player.self) private var player
 
     var body: some View {
-        let colors = library.palette(for: album.cover)
-        NavigationLink { AlbumDetailView(albumID: album.id) } label: {
-            HStack(spacing: 16) {
-                ArtworkView(track: album.cover, animated: true, cornerRadius: 12)
-                    .frame(width: 128, height: 128)
-                    .shadow(color: .black.opacity(0.35), radius: 14, y: 8)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(album.year > 0 ? "ALBUM · \(String(album.year))" : "ALBUM")
-                        .font(.caption2.weight(.bold))
-                        .tracking(0.8)
-                        .foregroundStyle(.white.opacity(0.65))
-                    Text(album.title)
-                        .font(.title3.bold())
-                        .foregroundStyle(.white)
-                        .lineLimit(2)
-                    Text(album.artist)
+        HStack(alignment: .top, spacing: 16) {
+            NavigationLink { AlbumDetailView(albumID: album.id) } label: {
+                ArtworkView(track: album.cover, animated: true, cornerRadius: 2)
+                    .frame(width: 120, height: 120)
+                    .shadow(color: .black.opacity(0.12), radius: 4, y: 2)
+            }
+            .buttonStyle(PressStyle(circle: false))
+            VStack(alignment: .leading, spacing: 3) {
+                Text(label)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                NavigationLink { AlbumDetailView(albumID: album.id) } label: {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(album.title)
+                            .font(.headline)
+                            .foregroundStyle(.primary)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.leading)
+                        HStack(spacing: 2) {
+                            Text(album.artist).lineLimit(1)
+                            Image(systemName: "chevron.right").font(.caption2.weight(.semibold))
+                        }
                         .font(.subheadline)
-                        .foregroundStyle(.white.opacity(0.75))
-                        .lineLimit(1)
-                    Spacer(minLength: 6)
-                    HStack(spacing: 8) {
-                        Button { player.play(ids: album.tracks.map(\.id), shuffled: false) } label: {
-                            Label("Lire", systemImage: "play.fill")
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(.black)
-                                .padding(.horizontal, 16)
-                                .frame(height: 34)
-                                .background(Capsule().fill(.white))
-                        }
-                        Button { player.play(ids: album.tracks.map(\.id), shuffled: true) } label: {
-                            Image(systemName: "shuffle")
-                                .font(.subheadline.weight(.bold))
-                                .foregroundStyle(.white)
-                                .frame(width: 34, height: 34)
-                                .background(Circle().fill(.white.opacity(0.22)))
-                        }
-                        .accessibilityLabel("Aléatoire")
+                        .foregroundStyle(.secondary)
                     }
-                    .buttonStyle(PressStyle(circle: false))
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .padding(16)
-            .background {
-                ZStack {
-                    LinearGradient(colors: [colors[0], colors[1]], startPoint: .topLeading, endPoint: .bottomTrailing)
-                    if let img = library.backdrop(for: album.cover) {
-                        Image(uiImage: img).resizable().scaledToFill().opacity(0.55)
+                .buttonStyle(.plain)
+                Text(details)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 8)
+                HStack(spacing: 8) {
+                    Button { player.play(ids: album.tracks.map(\.id), shuffled: false) } label: {
+                        Label("Lire", systemImage: "play.fill")
                     }
-                    LinearGradient(colors: [.black.opacity(0.05), .black.opacity(0.45)], startPoint: .top, endPoint: .bottom)
+                    .buttonStyle(OutlineButtonStyle(compact: true))
+                    Button { player.play(ids: album.tracks.map(\.id), shuffled: true) } label: {
+                        Image(systemName: "shuffle")
+                    }
+                    .buttonStyle(OutlineButtonStyle(compact: true))
+                    .accessibilityLabel("Aléatoire")
                 }
             }
-            .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(.white.opacity(0.12), lineWidth: 0.5))
-            .shadow(color: colors[0].opacity(0.35), radius: 20, y: 10)
+            .frame(maxWidth: .infinity, minHeight: 120, alignment: .leading)
         }
-        .buttonStyle(PressStyle(circle: false))
+    }
+
+    private var details: String {
+        let n = album.tracks.count
+        var parts = ["\(n) morceau\(n > 1 ? "x" : "")"]
+        if album.year > 0 { parts.append("Sortie : \(album.year)") }
+        return parts.joined(separator: " · ")
     }
 }
 
@@ -279,52 +358,52 @@ struct HomeMix: Identifiable {
     let colors: [Color]
 }
 
-/// Carte d'un mix : dégradé, trois pochettes empilées, lecture aléatoire au toucher.
+/// Carte d'un mix : quatre pochettes en mosaïque avec un fin cadre, le titre et le sous-titre dessous.
 private struct MixCard: View {
     let mix: HomeMix
     @Environment(Player.self) private var player
 
     var body: some View {
         Button { player.play(ids: mix.tracks.map(\.id), shuffled: true) } label: {
-            VStack(alignment: .leading, spacing: 0) {
-                ZStack(alignment: .bottomLeading) {
-                    LinearGradient(colors: mix.colors, startPoint: .topLeading, endPoint: .bottomTrailing)
-                    // Pochettes du mix, en éventail.
-                    let covers = Array(mix.tracks.prefix(3))
-                    ZStack {
-                        ForEach(Array(covers.enumerated().reversed()), id: \.offset) { i, t in
-                            ArtworkView(track: t, animated: false, small: true, cornerRadius: 8)
-                                .frame(width: 84, height: 84)
-                                .shadow(color: .black.opacity(0.3), radius: 6, y: 4)
-                                .rotationEffect(.degrees(Double(i) * 7 - 7))
-                                .offset(x: CGFloat(i) * 26, y: CGFloat(i) * -6)
-                        }
+            VStack(alignment: .leading, spacing: 6) {
+                let covers = Array(mix.tracks.prefix(4))
+                ZStack(alignment: .bottomTrailing) {
+                    Grid(horizontalSpacing: 0, verticalSpacing: 0) {
+                        GridRow { tile(covers, 0); tile(covers, 1) }
+                        GridRow { tile(covers, 2); tile(covers, 3) }
                     }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
-                    .padding(.top, 18)
-                    .padding(.trailing, 64)
-
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(mix.title).font(.title3.bold())
-                        Text(mix.subtitle).font(.caption.weight(.medium)).opacity(0.8)
-                    }
-                    .foregroundStyle(.white)
-                    .padding(14)
-
-                    Image(systemName: "play.fill")
-                        .font(.subheadline.weight(.bold))
+                    .frame(width: 150, height: 150)
+                    .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 3, style: .continuous).strokeBorder(Color(.separator), lineWidth: 0.5))
+                    // Petite pastille de couleur du mix, comme les bandeaux des sélections iTunes.
+                    Image(systemName: "shuffle")
+                        .font(.caption.weight(.bold))
                         .foregroundStyle(.white)
-                        .frame(width: 34, height: 34)
-                        .background(Circle().fill(.black.opacity(0.25)))
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
-                        .padding(12)
+                        .frame(width: 26, height: 26)
+                        .background(Circle().fill(mix.colors[0]))
+                        .overlay(Circle().strokeBorder(.white.opacity(0.8), lineWidth: 1))
+                        .padding(6)
                 }
-                .frame(width: 230, height: 230)
-                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(.white.opacity(0.12), lineWidth: 0.5))
+                Text(mix.title).font(.subheadline).foregroundStyle(.primary).lineLimit(1)
+                Text(mix.subtitle).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
             }
+            .frame(width: 150, alignment: .leading)
         }
         .buttonStyle(PressStyle(circle: false))
         .accessibilityLabel("\(mix.title), lecture aléatoire")
+    }
+
+    @ViewBuilder private func tile(_ covers: [Track], _ i: Int) -> some View {
+        Group {
+            if covers.indices.contains(i) {
+                ArtworkView(track: covers[i], animated: false, small: true, cornerRadius: 0, bordered: false)
+            } else if let first = covers.first {
+                ArtworkView(track: first, animated: false, small: true, cornerRadius: 0, bordered: false)
+            } else {
+                Rectangle().fill(mix.colors[0])
+            }
+        }
+        .frame(width: 75, height: 75)
+        .clipped()
     }
 }

@@ -46,10 +46,10 @@ struct ArtworkEditor: View {
                     Button("OK") { dismiss() }.fontWeight(.semibold)
                 }
             }
-            .background { AmbientBackground(track: library.track(trackID), dim: 0.45) }
+            .background { Color(.systemGroupedBackground).ignoresSafeArea() }
         }
         .presentationDragIndicator(.visible)
-        .presentationBackground(.black)
+        .presentationBackground(Color(.systemGroupedBackground))
         .onChange(of: pickerItem) { _, item in
             guard let item else { return }
             Task { await loadPicked(item) }
@@ -66,18 +66,17 @@ struct ArtworkEditor: View {
         let t = album?.cover ?? track
         return ScrollView {
             VStack(spacing: 26) {
-                ArtworkView(track: t, cornerRadius: 20)
+                ArtworkView(track: t, cornerRadius: 4)
                     .aspectRatio(1, contentMode: .fit)
                     .overlay {
                         if working {
                             ProgressView()
                                 .controlSize(.large)
-                                .tint(.white)
                                 .frame(width: 70, height: 70)
                                 .glass(18)
                         }
                     }
-                    .shadow(color: .black.opacity(0.4), radius: 26, y: 16)
+                    .shadow(color: .black.opacity(0.15), radius: 10, y: 5)
                     .padding(.horizontal, 36)
                     .padding(.top, 12)
                     .animation(.smooth(duration: 0.5), value: library.artworkURL(t))
@@ -85,7 +84,7 @@ struct ArtworkEditor: View {
                 VStack(spacing: 4) {
                     Text(album?.title ?? t.title).font(.headline).lineLimit(1)
                     Text(album.map { $0.artist + " · album" } ?? t.subtitle)
-                        .font(.subheadline).foregroundStyle(.white.opacity(0.6)).lineLimit(1)
+                        .font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
                 }
 
                 VStack(spacing: 10) {
@@ -132,14 +131,14 @@ struct ArtworkEditor: View {
                 if albumID != nil {
                     Text("Seule la pochette de l’album change (bibliothèque, page de l’album, Collection). Chaque morceau garde la sienne dans le lecteur.")
                         .font(.footnote)
-                        .foregroundStyle(.white.opacity(0.6))
+                        .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
                 } else if !t.album.isEmpty, library.albumTrackIDs(of: t).count > 1 {
                     Toggle(isOn: $applyToAlbum) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Appliquer à tout l’album").font(.body.weight(.medium))
                             Text("\(t.album) · \(library.albumTrackIDs(of: t).count) morceaux")
-                                .font(.footnote).foregroundStyle(.white.opacity(0.6))
+                                .font(.footnote).foregroundStyle(.secondary)
                         }
                     }
                     .padding(16)
@@ -150,7 +149,7 @@ struct ArtworkEditor: View {
 
                 Text("Une image devient la pochette normale, une vidéo ou un GIF la pochette animée : tu peux avoir les deux. L’animée tourne en boucle, sans le son ; s’il n’y a pas de pochette normale, c’est elle qui s’affiche partout.")
                     .font(.footnote)
-                    .foregroundStyle(.white.opacity(0.5))
+                    .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 12)
             }
@@ -169,7 +168,7 @@ struct ArtworkEditor: View {
         let moving = library.motion(t) != nil
         return HStack(spacing: 0) {
             status("Normale", on: still, symbol: "photo")
-            Divider().frame(height: 30).overlay(.white.opacity(0.15))
+            Divider().frame(height: 30)
             status("Animée", on: moving, symbol: "play.rectangle")
         }
         .padding(.vertical, 12)
@@ -179,11 +178,11 @@ struct ArtworkEditor: View {
     private func status(_ title: String, on: Bool, symbol: String) -> some View {
         HStack(spacing: 8) {
             Image(systemName: on ? "checkmark.circle.fill" : symbol)
-                .foregroundStyle(on ? Color.green : .white.opacity(0.45))
+                .foregroundStyle(on ? Color.green : Color(.tertiaryLabel))
                 .contentTransition(.symbolEffect(.replace))
             VStack(alignment: .leading, spacing: 1) {
                 Text(title).font(.subheadline.weight(.semibold))
-                Text(on ? "En place" : "Aucune").font(.caption).foregroundStyle(.white.opacity(0.55))
+                Text(on ? "En place" : "Aucune").font(.caption).foregroundStyle(.secondary)
             }
         }
         .frame(maxWidth: .infinity)
@@ -193,17 +192,18 @@ struct ArtworkEditor: View {
         HStack(spacing: 14) {
             Image(systemName: symbol)
                 .font(.title3)
+                .foregroundStyle(.tint)
                 .frame(width: 30)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(.body.weight(.semibold))
-                Text(detail).font(.footnote).foregroundStyle(.white.opacity(0.6))
+                Text(detail).font(.footnote).foregroundStyle(.secondary)
             }
             Spacer()
             Image(systemName: "chevron.right")
                 .font(.footnote.weight(.semibold))
-                .foregroundStyle(.white.opacity(0.4))
+                .foregroundStyle(Color(.tertiaryLabel))
         }
-        .foregroundStyle(.white)
+        .foregroundStyle(.primary)
         .padding(16)
         .contentShape(Rectangle())
         .glass(18, interactive: true)

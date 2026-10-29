@@ -12,7 +12,7 @@ struct QueueView: View {
                 if let id = player.currentID, let t = library.track(id) {
                     Section {
                         TrackRow(track: t, isCurrent: true)
-                            .listRowBackground(Color.white.opacity(0.08))
+                            .listRowBackground(Color(.secondarySystemGroupedBackground))
                     } header: {
                         header("En lecture")
                     }

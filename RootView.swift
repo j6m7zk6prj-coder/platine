@@ -44,7 +44,6 @@ struct RootView: View {
         .overlay {
             if shelfMounted {
                 ShelfView(visible: ui.showShelf, onClose: { ui.showShelf = false })
-                    .environment(\.colorScheme, .dark)
                     .opacity(ui.showShelf ? 1 : 0)
                     .allowsHitTesting(ui.showShelf)
                     .accessibilityHidden(!ui.showShelf)
@@ -120,7 +119,7 @@ struct Banner: View {
         Group {
             if library.isImporting {
                 HStack(spacing: 10) {
-                    ProgressView().tint(.white)
+                    ProgressView()
                     Text("Import en cours…").font(.subheadline.weight(.semibold))
                 }
                 .padding(.horizontal, 18)
@@ -182,21 +181,12 @@ struct PlayerPresenter: ViewModifier {
     let namespace: Namespace.ID
 
     func body(content: Content) -> some View {
-        if #available(iOS 18.0, *) {
-            content.fullScreenCover(isPresented: $isPresented) {
-                NowPlayingView()
-                    .environment(\.colorScheme, .dark)
-                    .overlay(alignment: .top) { Grabber() }
-                    .navigationTransition(.zoom(sourceID: "miniPlayer", in: namespace))
-            }
-        } else {
-            content.sheet(isPresented: $isPresented) {
-                NowPlayingView()
-                    .environment(\.colorScheme, .dark)
-                    .presentationDragIndicator(.visible)
-                    .presentationCornerRadius(40)
-                    .presentationBackground(.black)
-            }
+        // Style iOS classique : le lecteur monte comme une carte, l'écran derrière recule un peu.
+        content.sheet(isPresented: $isPresented) {
+            NowPlayingView()
+                .overlay(alignment: .top) { Grabber() }
+                .presentationDragIndicator(.hidden)
+                .presentationBackground(Color(.systemBackground))
         }
     }
 }
@@ -205,7 +195,7 @@ struct PlayerPresenter: ViewModifier {
 struct Grabber: View {
     var body: some View {
         Capsule()
-            .fill(.white.opacity(0.4))
+            .fill(Color(.tertiaryLabel))
             .frame(width: 38, height: 5)
             .padding(.top, 8)
             .allowsHitTesting(false)

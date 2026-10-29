@@ -51,7 +51,7 @@ struct AppIconPicker: View {
                                     .clipShape(RoundedRectangle(cornerRadius: 17, style: .continuous))
                                     .overlay(
                                         RoundedRectangle(cornerRadius: 17, style: .continuous)
-                                            .strokeBorder(selected ? AnyShapeStyle(.tint) : AnyShapeStyle(Color.white.opacity(0.12)),
+                                            .strokeBorder(selected ? AnyShapeStyle(.tint) : AnyShapeStyle(Color(.separator)),
                                                           lineWidth: selected ? 3 : 0.5)
                                             .padding(selected ? -5 : 0)
                                     )

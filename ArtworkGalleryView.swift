@@ -94,8 +94,8 @@ private struct GalleryImage: View {
                     .aspectRatio(contentMode: fill ? .fill : .fit)
                     .transition(.opacity)
             } else {
-                Color(white: 0.12)
-                    .overlay { ProgressView().tint(.white.opacity(0.5)) }
+                Color(.secondarySystemFill)
+                    .overlay { ProgressView() }
             }
         }
         .animation(.easeOut(duration: 0.2), value: image != nil)
@@ -222,7 +222,8 @@ struct ArtworkPager: View {
     var body: some View {
         let item = items.indices.contains(index) ? items[index] : items.first
         ZStack {
-            Color.black
+            // Comme Photos : fond blanc (ou noir en thème sombre) ; un toucher cache tout et passe au noir.
+            (chromeHidden ? Color.black : Color(.systemBackground))
                 .opacity(1 - min(0.6, Double(dragDown / 500)))
                 .ignoresSafeArea()
 
@@ -255,8 +256,8 @@ struct ArtworkPager: View {
                     .transition(.opacity)
             }
         }
-        .foregroundStyle(.white)
-        .environment(\.colorScheme, .dark)
+        .foregroundStyle(.primary)
+        .animation(.easeOut(duration: 0.2), value: chromeHidden)
         .statusBarHidden(chromeHidden)
         .onAppear { if current.isEmpty, items.indices.contains(start) { current = items[start].id } }
         .onChange(of: current) { _, _ in zoomed = false }
@@ -266,36 +267,33 @@ struct ArtworkPager: View {
     private func chrome(_ item: GalleryItem) -> some View {
         VStack(spacing: 0) {
             HStack {
-                Button { dismiss() } label: {
-                    Image(systemName: "xmark")
-                        .font(.body.weight(.bold))
-                        .frame(width: 40, height: 40)
-                        .glassCircle()
-                }
-                .accessibilityLabel("Fermer")
+                Button("OK") { dismiss() }
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.tint)
+                    .accessibilityLabel("Fermer")
                 Spacer()
                 Text("\(index + 1) sur \(items.count)")
-                    .font(.subheadline.weight(.semibold).monospacedDigit())
-                    .padding(.horizontal, 14)
-                    .frame(height: 34)
-                    .glassCapsule()
+                    .font(.headline.monospacedDigit())
                 Spacer()
                 ShareLink(item: item.url) {
                     Image(systemName: "square.and.arrow.up")
-                        .font(.body.weight(.bold))
-                        .frame(width: 40, height: 40)
-                        .glassCircle()
+                        .font(.body)
+                        .foregroundStyle(.tint)
+                        .frame(width: 30, height: 30)
                 }
                 .accessibilityLabel("Enregistrer ou partager")
             }
-            .padding(.horizontal, 18)
-            .padding(.top, 8)
+            .padding(.horizontal, 16)
+            .padding(.top, 10)
+            .padding(.bottom, 8)
+            .background(.bar, ignoresSafeAreaEdges: .top)
+            .overlay(alignment: .bottom) { Divider() }
 
             Spacer()
 
             VStack(spacing: 4) {
                 Text(item.title).font(.title3.bold()).lineLimit(1)
-                Text(item.subtitle).font(.subheadline).foregroundStyle(.white.opacity(0.6)).lineLimit(1)
+                Text(item.subtitle).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
                 GalleryDetails(item: item)
             }
             .padding(.horizontal, 24)
@@ -313,7 +311,7 @@ struct ArtworkPager: View {
                                     .frame(width: it.id == current ? 46 : 34, height: 46)
                                     .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
                                     .overlay(RoundedRectangle(cornerRadius: 5, style: .continuous)
-                                        .strokeBorder(.white.opacity(it.id == current ? 0.9 : 0), lineWidth: 1.5))
+                                        .strokeBorder(it.id == current ? AnyShapeStyle(.tint) : AnyShapeStyle(Color.clear), lineWidth: 1.5))
                                     .opacity(it.id == current ? 1 : 0.6)
                             }
                             .buttonStyle(.plain)
@@ -428,7 +426,7 @@ private struct GalleryDetails: View {
     var body: some View {
         Text(text)
             .font(.caption.monospacedDigit())
-            .foregroundStyle(.white.opacity(0.45))
+            .foregroundStyle(.secondary)
             .padding(.top, 2)
             .task(id: item.id) { size = await GalleryImages.shared.pixelSize(item) }
     }

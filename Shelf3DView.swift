@@ -13,6 +13,7 @@ struct ShelfView: View {
     @Environment(Library.self) private var library
     @Environment(Player.self) private var player
     @Environment(AppSettings.self) private var settings
+    @Environment(\.colorScheme) private var colorScheme
     @State private var motion = MotionTilt()
     @State private var focusedIndex = 0
     @State private var inspected: AlbumInfo?
@@ -35,7 +36,7 @@ struct ShelfView: View {
         let handAlbum = inspected ?? focused
         let isOpen = inspected != nil && visible
         ZStack {
-            Color(red: 0.03, green: 0.03, blue: 0.04).ignoresSafeArea()
+            Color(uiColor: Studio.backgroundColor(dark: colorScheme == .dark)).ignoresSafeArea()
 
             if albums.isEmpty {
                 emptyState
@@ -105,7 +106,7 @@ struct ShelfView: View {
                 }
             }
         }
-        .foregroundStyle(.white)
+        .foregroundStyle(.primary)
         .sheet(item: $stickerAlbum) { album in
             StickerPicker(album: album)
                 .presentationDetents([.medium, .large])
@@ -170,22 +171,25 @@ struct ShelfView: View {
     private var topBar: some View {
         HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: 2) {
-                Text("Collection").font(.largeTitle.bold())
+                Text("Collection").font(.headline)
                 Text("\(library.exposedAlbums.count) album\(library.exposedAlbums.count > 1 ? "s" : "")")
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(.white.opacity(0.55))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
-            Spacer()
-            Button { onClose() } label: {
-                Image(systemName: "xmark")
-                    .font(.body.weight(.bold))
-                    .frame(width: 40, height: 40)
-                    .glassCircle()
+            .frame(maxWidth: .infinity)
+            .overlay(alignment: .trailing) {
+                // Barre classique : « OK » en bleu à droite, comme dans les anciennes apps d'iOS.
+                Button("OK") { onClose() }
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(.tint)
+                    .accessibilityLabel("Fermer")
             }
-            .accessibilityLabel("Fermer")
         }
-        .padding(.horizontal, 22)
-        .padding(.top, 16)
+        .padding(.horizontal, 16)
+        .padding(.top, 10)
+        .padding(.bottom, 8)
+        .background(.bar, ignoresSafeAreaEdges: .top)
+        .overlay(alignment: .bottom) { Divider() }
     }
 
     private func caption(_ album: AlbumInfo) -> some View {
@@ -199,7 +203,7 @@ struct ShelfView: View {
                     .lineLimit(1)
                 Text([album.artist, album.year > 0 ? "\(album.year)" : nil].compactMap { $0 }.joined(separator: " · "))
                     .font(.headline)
-                    .foregroundStyle(.white.opacity(0.6))
+                    .foregroundStyle(.secondary)
                     .lineLimit(1)
                 let custom = library.customStickers(for: album.id)
                 if !badges.isEmpty || !custom.isEmpty {
@@ -221,21 +225,12 @@ struct ShelfView: View {
             HStack(spacing: 12) {
                 Button { player.play(ids: album.tracks.map(\.id), shuffled: false) } label: {
                     Label("Lire", systemImage: "play.fill")
-                        .padding(.horizontal, 22)
-                        .padding(.vertical, 12)
-                        .contentShape(Capsule())
-                        .glassCapsule()
                 }
                 Button { open(album) } label: {
                     Label("Prendre en main", systemImage: "hand.point.up.left.fill")
-                        .padding(.horizontal, 22)
-                        .padding(.vertical, 12)
-                        .contentShape(Capsule())
-                        .glassCapsule()
                 }
             }
-            .font(.subheadline.weight(.semibold))
-            .buttonStyle(PressStyle(circle: false))
+            .buttonStyle(OutlineButtonStyle())
         }
         .padding(.horizontal, 20)
         .animation(.smooth(duration: 0.28), value: album.id)
@@ -268,6 +263,7 @@ struct ShelfSceneView: UIViewRepresentable {
         c.update(albums: albums, library: library, settings: settings)
         c.start()
         c.setPaused(paused)
+        Studio.setBackground(of: c.scene, dark: context.environment.colorScheme == .dark)
         return c.view
     }
 
@@ -278,6 +274,8 @@ struct ShelfSceneView: UIViewRepresentable {
         c.onLongPress = onLongPress
         c.update(albums: albums, library: library, settings: settings)
         c.setPaused(paused)
+        // Le fond suit le thème clair / sombre.
+        Studio.setBackground(of: c.scene, dark: context.environment.colorScheme == .dark)
     }
 
     static func dismantleUIView(_ uiView: SCNView, coordinator: ShelfSceneController) {
@@ -684,46 +682,39 @@ struct ShelfInspector: View {
         VStack(spacing: 16) {
             HStack(spacing: 10) {
                 // Personnaliser : pochette avant, disque et prix.
-                Button {
-                    customizing = true
-                } label: {
-                    Label("Personnaliser", systemImage: "paintbrush.pointed.fill")
-                        .labelStyle(.iconOnly)
-                        .font(.body.weight(.semibold))
-                        .frame(width: 40, height: 40)
-                        .contentShape(Circle())
-                        .glassCircle()
-                }
-                .buttonStyle(PressStyle(circle: false))
+                Button("Personnaliser") { customizing = true }
                 Spacer()
-                Button(action: onClose) {
-                    Image(systemName: "xmark")
-                        .font(.body.weight(.bold))
-                        .frame(width: 40, height: 40)
-                        .glassCircle()
-                }
-                .accessibilityLabel("Reposer")
+                Text(album.title).font(.headline).lineLimit(1)
+                Spacer()
+                Button("OK", action: onClose)
+                    .fontWeight(.semibold)
+                    .accessibilityLabel("Reposer")
             }
-            .padding(.horizontal, 22)
-            .padding(.top, 16)
+            .foregroundStyle(.tint)
+            .padding(.horizontal, 16)
+            .padding(.top, 10)
+            .padding(.bottom, 8)
+            .background(.bar, ignoresSafeAreaEdges: .top)
+            .overlay(alignment: .bottom) { Divider() }
 
             Spacer(minLength: 0)
                 .allowsHitTesting(false)
 
             VStack(spacing: 4) {
                 Text(album.title).font(.title2.bold()).lineLimit(1)
-                Text(album.artist).font(.headline).foregroundStyle(.white.opacity(0.6)).lineLimit(1)
+                Text(album.artist).font(.headline).foregroundStyle(.secondary).lineLimit(1)
             }
             .allowsHitTesting(false)
 
             Text("Glisse pour tourner · touche pour retourner · pince pour zoomer · touche deux fois pour remettre droit · appui long sur un album pour ses stickers")
                 .font(.caption)
-                .foregroundStyle(.white.opacity(0.45))
+                .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 30)
                 .allowsHitTesting(false)
 
-            HStack(spacing: 10) {
+            // Barre d'outils classique en bas : icônes bleues et petits libellés.
+            HStack(spacing: 0) {
                 inspectorButton(format == .cassette ? (isBack ? "Face A" : "Face B") : (isBack ? "Face" : "Dos"),
                                 symbol: "arrow.left.and.right.righttriangle.left.righttriangle.right", action: onFlip)
                 if sealed {
@@ -749,8 +740,10 @@ struct ShelfInspector: View {
                 }
                 inspectorButton("Stickers", symbol: "seal.fill", action: onStickers)
             }
-            .padding(.horizontal, 16)
-            .padding(.bottom, 26)
+            .padding(.horizontal, 8)
+            .padding(.top, 4)
+            .background(.bar, ignoresSafeAreaEdges: .bottom)
+            .overlay(alignment: .top) { Divider() }
             .animation(.spring(response: 0.4, dampingFraction: 0.85), value: sealed)
         }
         .sensoryFeedback(trigger: unwrapTick) { _, _ in settings.haptics ? .impact(flexibility: .soft, intensity: 0.8) : nil }
@@ -768,19 +761,7 @@ struct ShelfInspector: View {
     private var discSymbol: String { "opticaldisc" }
 
     private func inspectorButton(_ title: String, symbol: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            VStack(spacing: 6) {
-                Image(systemName: symbol)
-                    .font(.title3)
-                    .contentTransition(.symbolEffect(.replace))
-                Text(title).font(.caption.weight(.semibold)).lineLimit(1)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 12)
-            .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-            .glass(18)
-        }
-        .buttonStyle(PressStyle(circle: false))
+        ToolbarItemButton(title: title, symbol: symbol, action: action)
     }
 
     private func playAlbum() {
@@ -1253,7 +1234,6 @@ struct StickerPicker: View {
                 }
             }
         }
-        .environment(\.colorScheme, .dark)
     }
 }
 
@@ -1264,7 +1244,7 @@ private struct StickerTile: View {
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: 16, style: .continuous)
-        let border: Color = on ? .white.opacity(0.8) : .white.opacity(0.08)
+        let border: AnyShapeStyle = on ? AnyShapeStyle(.tint) : AnyShapeStyle(Color(.separator))
         VStack(spacing: 10) {
             HoloBadge(badge: badge, light: light, scale: 1.6)
                 .frame(height: 46)
@@ -1275,12 +1255,13 @@ private struct StickerTile: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 14)
-        .background(shape.fill(Color.white.opacity(on ? 0.16 : 0.05)))
-        .overlay(shape.strokeBorder(border, lineWidth: on ? 1.5 : 1))
+        .background(shape.fill(Color(.secondarySystemBackground)))
+        .overlay(shape.strokeBorder(border, lineWidth: on ? 2 : 0.5))
         .overlay(alignment: .topTrailing) {
             if on {
                 Image(systemName: "checkmark.circle.fill")
                     .font(.body)
+                    .foregroundStyle(.tint)
                     .padding(6)
                     .transition(.scale.combined(with: .opacity))
             }
@@ -1331,11 +1312,10 @@ struct CoverCropper: View {
             // Barre du haut bien en dessous de l'heure et de la Dynamic Island, gros boutons faciles à toucher.
             HStack {
                 Button { dismiss() } label: {
+                    // Comme l'ancien recadrage de Photos : de simples mots, sur fond noir.
                     Text("Annuler")
-                        .font(.body.weight(.medium))
-                        .padding(.horizontal, 16)
+                        .font(.body)
                         .frame(height: 40)
-                        .background(Capsule().fill(Color.white.opacity(0.14)))
                 }
                 Spacer()
                 Text(title).font(.headline)
@@ -1345,11 +1325,9 @@ struct CoverCropper: View {
                     dismiss()
                 } label: {
                     Text("Utiliser")
-                        .font(.body.weight(.bold))
-                        .foregroundStyle(.black)
-                        .padding(.horizontal, 18)
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(Color(red: 1, green: 0.8, blue: 0.0))
                         .frame(height: 40)
-                        .background(Capsule().fill(Color.white))
                 }
             }
             .buttonStyle(PressStyle(circle: false))
@@ -1366,7 +1344,7 @@ struct CoverCropper: View {
                         .font(.subheadline.weight(.semibold))
                         .padding(.horizontal, 16)
                         .frame(height: 36)
-                        .background(Capsule().fill(Color.white.opacity(0.14)))
+                        .overlay(Capsule().strokeBorder(Color.white.opacity(0.6), lineWidth: 1))
                 }
                 .buttonStyle(PressStyle(circle: false))
                 .padding(.bottom, 6)

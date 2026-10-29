@@ -220,7 +220,7 @@ struct StickerFinishSheet: View {
                     .frame(height: 220)
                     .overlay {
                         if working {
-                            ProgressView().controlSize(.large).tint(.white)
+                            ProgressView().controlSize(.large)
                         }
                     }
                     .padding(.top, 16)
@@ -234,10 +234,11 @@ struct StickerFinishSheet: View {
                                     Button { cutoutMode = mode } label: {
                                         Text(mode.label)
                                             .font(.subheadline.weight(.semibold))
-                                            .foregroundStyle(on ? Color.black : Color.white)
+                                            .foregroundStyle(on ? AnyShapeStyle(Color.white) : AnyShapeStyle(.tint))
                                             .padding(.horizontal, 14)
-                                            .frame(height: 34)
-                                            .background(Capsule().fill(on ? Color.white : Color.white.opacity(0.12)))
+                                            .frame(height: 30)
+                                            .background(Capsule().fill(on ? AnyShapeStyle(.tint) : AnyShapeStyle(Color.clear)))
+                                            .overlay(Capsule().strokeBorder(.tint, lineWidth: 1.2))
                                     }
                                     .buttonStyle(PressStyle(circle: false))
                                 }
@@ -270,10 +271,10 @@ struct StickerFinishSheet: View {
                                 }
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 12)
-                                .background(RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                    .fill(Color.white.opacity(on ? 0.16 : 0.05)))
-                                .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                    .strokeBorder(Color.white.opacity(on ? 0.8 : 0.08), lineWidth: on ? 1.5 : 1))
+                                .background(RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .fill(Color(.secondarySystemBackground)))
+                                .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .strokeBorder(on ? AnyShapeStyle(.tint) : AnyShapeStyle(Color(.separator)), lineWidth: on ? 2 : 0.5))
                             }
                             .buttonStyle(PressStyle(circle: false))
                             .sensoryFeedback(.selection, trigger: on)
@@ -302,8 +303,7 @@ struct StickerFinishSheet: View {
                             .frame(maxWidth: .infinity)
                             .frame(height: 52)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .buttonBorderShape(.capsule)
+                    .buttonStyle(FilledButtonStyle())
                     .disabled(working)
                     .padding(.horizontal, 20)
                     .padding(.bottom, 12)
@@ -315,7 +315,6 @@ struct StickerFinishSheet: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Annuler") { dismiss() } }
             }
         }
-        .environment(\.colorScheme, .dark)
         .onChange(of: cutoutMode) { _, mode in
             Task { await applyCutout(mode) }
         }
@@ -544,7 +543,8 @@ struct MyStickersSection: View {
                         Image(systemName: "plus")
                             .font(.title2.weight(.semibold))
                             .frame(width: 52, height: 52)
-                            .background(Circle().strokeBorder(Color.white.opacity(0.5), style: StrokeStyle(lineWidth: 1.5, dash: [5, 4])))
+                            .foregroundStyle(.tint)
+                            .background(Circle().strokeBorder(.tint, style: StrokeStyle(lineWidth: 1.5, dash: [5, 4])))
                         Text("Depuis une image").font(.caption2.weight(.semibold)).multilineTextAlignment(.center)
                     }
                     .frame(maxWidth: .infinity)
@@ -564,11 +564,13 @@ struct MyStickersSection: View {
                         }
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 10)
-                        .background(RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .fill(Color.white.opacity(on ? 0.16 : 0.0)))
+                        .background(RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(on ? Color(.secondarySystemBackground) : .clear))
+                        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .strokeBorder(on ? AnyShapeStyle(.tint) : AnyShapeStyle(Color.clear), lineWidth: 2))
                         .overlay(alignment: .topTrailing) {
                             if on {
-                                Image(systemName: "checkmark.circle.fill").padding(4)
+                                Image(systemName: "checkmark.circle.fill").foregroundStyle(.tint).padding(4)
                             }
                         }
                     }
@@ -734,7 +736,7 @@ struct StickerPlacer: View {
                             if let background {
                                 Image(uiImage: background).resizable().scaledToFill()
                             } else {
-                                Color(white: 0.15)
+                                Color(.secondarySystemFill)
                             }
                         }
                         .frame(width: size.width, height: size.height)
@@ -744,7 +746,7 @@ struct StickerPlacer: View {
                             AnySticker(key: key, size: size.width * 0.2 * p.scale, peeled: p.peeled)
                                 .overlay {
                                     if selected == key {
-                                        Circle().strokeBorder(Color.white, style: StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
+                                        Circle().strokeBorder(.tint, style: StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
                                             .padding(-6)
                                     }
                                 }
@@ -757,7 +759,7 @@ struct StickerPlacer: View {
                     }
                     .frame(width: size.width, height: size.height)
                     .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                    .shadow(color: .black.opacity(0.5), radius: 20, y: 10)
+                    .shadow(color: .black.opacity(0.2), radius: 10, y: 5)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
                 if let key = selected, let index = keys.firstIndex(of: key) {
@@ -795,7 +797,6 @@ struct StickerPlacer: View {
                 }
             }
         }
-        .environment(\.colorScheme, .dark)
     }
 
     /// Réglages du sticker touché : taille, coin décollé, dupliquer, retirer.
@@ -933,7 +934,6 @@ struct CaseCustomizer: View {
                 }
             }
         }
-        .environment(\.colorScheme, .dark)
         .onChange(of: photoItem) { _, item in
             guard let item else { return }
             Task {
@@ -955,7 +955,7 @@ struct CaseCustomizer: View {
         let custom = library.extraImage(slot.kind, album.id)
         return HStack(spacing: 14) {
             ZStack {
-                Color(white: 0.18)
+                Color(.tertiarySystemFill)
                 if let custom {
                     Image(uiImage: custom).resizable().scaledToFill()
                 } else {

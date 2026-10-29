@@ -19,10 +19,10 @@ struct LyricsPane: View {
                 staticLyrics(lyrics)
             } else if searching {
                 VStack(spacing: 14) {
-                    ProgressView().controlSize(.large).tint(.white)
+                    ProgressView().controlSize(.large)
                     Text("Recherche des paroles…")
                         .font(.headline)
-                        .foregroundStyle(.white.opacity(0.7))
+                        .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
@@ -41,7 +41,7 @@ struct LyricsPane: View {
         ScrollView {
             Text(text)
                 .font(.system(size: settings.lyricsSize.points - 5, weight: .bold))
-                .foregroundStyle(.white.opacity(0.88))
+                .foregroundStyle(.primary)
                 .lineSpacing(8)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.vertical, 28)
@@ -67,7 +67,7 @@ struct LyricsPane: View {
                     .padding(.horizontal, 6)
                     .padding(.vertical, 4)
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(OutlineButtonStyle())
             .buttonBorderShape(.capsule)
         }
     }
@@ -254,7 +254,7 @@ struct LyricLineView: View {
                 }
             } else {
                 text
-                    .foregroundStyle(.white.opacity(isActive ? 0.38 : (browsing ? 0.55 : 0.3)))
+                    .foregroundStyle(Color.primary.opacity(isActive ? 0.3 : (browsing ? 0.5 : 0.25)))
                     .overlay(alignment: .topLeading) {
                         if isActive {
                             // Le blanc avance sur la ligne au fil du chant, rangée après rangée, à chaque image.
@@ -262,11 +262,10 @@ struct LyricLineView: View {
                                 // Lecture de currentTime : à l'arrêt, un saut dans le morceau met aussi la ligne à jour.
                                 let _ = player.currentTime
                                 text
-                                    .foregroundStyle(.white)
+                                    .foregroundStyle(.primary)
                                     .mask(alignment: .topLeading) { SweepMask(progress: fill(at: player.liveTime), rows: rows) }
                             }
-                            .shadow(color: .white.opacity(0.35), radius: 3)
-                            .transition(.opacity)
+                                                        .transition(.opacity)
                         }
                     }
                     .fixedSize(horizontal: false, vertical: true)
@@ -333,7 +332,7 @@ struct InterludeDots: View {
             ForEach(0..<3, id: \.self) { i in
                 let fill = min(1, max(0, progress * 3 - Double(i)))
                 Circle()
-                    .fill(.white.opacity(0.28 + 0.72 * fill))
+                    .fill(Color.primary.opacity(0.22 + 0.78 * fill))
                     .frame(width: 13, height: 13)
                     .scaleEffect(0.85 + 0.15 * fill)
             }

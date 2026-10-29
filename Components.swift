@@ -53,6 +53,74 @@ struct PressStyle: ButtonStyle {
     }
 }
 
+// MARK: - Boutons façon iTunes Store
+
+/// Le bouton « prix » de l'iTunes Store : contour bleu en pilule ; enfoncé, il se remplit de bleu.
+struct OutlineButtonStyle: ButtonStyle {
+    var compact = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        OutlineLabel(configuration: configuration, compact: compact)
+    }
+
+    private struct OutlineLabel: View {
+        let configuration: Configuration
+        let compact: Bool
+        @Environment(\.isEnabled) private var enabled
+
+        var body: some View {
+            configuration.label
+                .font((compact ? Font.subheadline : .body).weight(.semibold))
+                .lineLimit(1)
+                .foregroundStyle(configuration.isPressed ? AnyShapeStyle(Color(.systemBackground)) : AnyShapeStyle(.tint))
+                .padding(.horizontal, compact ? 12 : 18)
+                .frame(minHeight: compact ? 28 : 36)
+                .background { Capsule().fill(configuration.isPressed ? AnyShapeStyle(.tint) : AnyShapeStyle(Color.clear)) }
+                .overlay { Capsule().strokeBorder(.tint, lineWidth: 1.2) }
+                .contentShape(Capsule())
+                .opacity(enabled ? 1 : 0.4)
+        }
+    }
+}
+
+/// Bouton plein (action principale) : fond bleu, texte blanc, coins légèrement arrondis.
+struct FilledButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.body.weight(.semibold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 18)
+            .frame(minHeight: 40)
+            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(.tint))
+            .opacity(configuration.isPressed ? 0.7 : 1)
+            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+}
+
+/// Bouton de barre d'outils : icône bleue et petit texte dessous, comme les anciennes barres iOS.
+struct ToolbarItemButton: View {
+    let title: String
+    let symbol: String
+    var action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 3) {
+                Image(systemName: symbol)
+                    .font(.system(size: 21))
+                    .contentTransition(.symbolEffect(.replace))
+                    .frame(height: 26)
+                Text(title).font(.system(size: 10, weight: .medium)).lineLimit(1).minimumScaleFactor(0.8)
+            }
+            .foregroundStyle(.tint)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 6)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(PressStyle(circle: false))
+    }
+}
+
 // MARK: - Pochette (image, GIF animé ou vidéo en boucle)
 
 struct ArtworkView: View {
@@ -70,14 +138,14 @@ struct ArtworkView: View {
         let radius = settings.artworkStyle == .square ? min(cornerRadius, cornerRadius >= 25 ? cornerRadius : 2) : cornerRadius
         let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
         shape
-            .fill(LinearGradient(colors: [.white.opacity(0.16), .white.opacity(0.05)],
-                                 startPoint: .topLeading, endPoint: .bottomTrailing))
+            .fill(Color(.tertiarySystemFill))
             // La note de musique n'apparaît que s'il n'y a vraiment aucune pochette
             // (jamais en transparence derrière une pochette animée).
             .overlay { if !hasArtwork { placeholder } }
             .overlay { content }
             .clipShape(shape)
-            .overlay { if bordered { shape.strokeBorder(.white.opacity(0.08), lineWidth: 0.5) } }
+            // Comme l'iTunes Store : un fin trait gris autour de chaque pochette.
+            .overlay { if bordered { shape.strokeBorder(Color(.separator), lineWidth: 0.5) } }
     }
 
     private var hasArtwork: Bool {
@@ -107,7 +175,7 @@ struct ArtworkView: View {
         GeometryReader { geo in
             Image(systemName: "music.note")
                 .font(.system(size: max(10, geo.size.width * 0.3), weight: .medium))
-                .foregroundStyle(.white.opacity(0.35))
+                .foregroundStyle(Color(.tertiaryLabel))
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
@@ -343,36 +411,33 @@ struct AmbientBackground: View {
 struct Scrubber: View {
     @Environment(Player.self) private var player
     @State private var dragValue: Double?
-    /// Position du morceau au moment où on a attrapé le point.
     @State private var grabStart: Double?
 
     var body: some View {
         let total = max(player.duration, 0.01)
         let value = min(total, dragValue ?? player.currentTime)
         let active = dragValue != nil
-        VStack(spacing: 6) {
+        VStack(spacing: 4) {
             GeometryReader { geo in
                 let width = max(geo.size.width, 1)
                 let x = width * value / total
-                // Comme Musique : une barre épaisse, sans point, qui grossit quand on la tient.
+                // Style classique : une fine barre avec son point, qui grossit quand on le tient.
                 ZStack(alignment: .leading) {
-                    Capsule().fill(.white.opacity(0.2))
-                    Capsule()
-                        .fill(.white.opacity(active ? 1 : 0.6))
-                        .frame(width: max(0, x))
+                    Capsule().fill(Color(.systemFill)).frame(height: 3)
+                    Capsule().fill(Color(.secondaryLabel)).frame(width: max(0, x), height: 3)
+                    Circle()
+                        .fill(Color(.secondaryLabel))
+                        .frame(width: active ? 22 : 8, height: active ? 22 : 8)
+                        .shadow(color: .black.opacity(active ? 0.2 : 0), radius: 3, y: 1)
+                        .offset(x: max(0, min(width, x)) - (active ? 11 : 4))
                 }
-                .frame(height: active ? 12 : 7)
                 .animation(active ? nil : .linear(duration: 0.25), value: value)
                 .frame(maxHeight: .infinity)
                 .contentShape(Rectangle())
                 .gesture(
                     DragGesture(minimumDistance: 0)
                         .onChanged { g in
-                            if grabStart == nil {
-                                // On glisse depuis n'importe où : la barre avance du même chemin que le doigt.
-                                // Un simple toucher ne fait jamais sauter le morceau.
-                                grabStart = min(total, player.currentTime)
-                            }
+                            if grabStart == nil { grabStart = min(total, player.currentTime) }
                             guard let start = grabStart else { return }
                             player.isScrubbing = true
                             let moved = Double(g.location.x - g.startLocation.x) / Double(width) * total
@@ -385,10 +450,9 @@ struct Scrubber: View {
                             player.isScrubbing = false
                         }
                 )
-                .animation(.spring(response: 0.35, dampingFraction: 0.7), value: active)
+                .animation(.spring(response: 0.3, dampingFraction: 0.7), value: active)
             }
-            .frame(height: 28)
-            .scaleEffect(x: active ? 1.03 : 1, y: 1)
+            .frame(height: 26)
             .sensoryFeedback(.selection, trigger: active)
 
             HStack {
@@ -396,9 +460,9 @@ struct Scrubber: View {
                 Spacer()
                 Text("-" + formatTime(total - value))
             }
-            .font(.caption.weight(.medium))
+            .font(.caption2.weight(.medium))
             .monospacedDigit()
-            .foregroundStyle(.white.opacity(active ? 0.85 : 0.5))
+            .foregroundStyle(.secondary)
         }
         .accessibilityElement()
         .accessibilityLabel("Position")
@@ -419,9 +483,9 @@ struct Scrubber: View {
 struct SystemVolumeSlider: UIViewRepresentable {
     func makeUIView(context: Context) -> MPVolumeView {
         let view = MPVolumeView(frame: .zero)
-        view.tintColor = .white
+        view.tintColor = .secondaryLabel
         let thumb = UIGraphicsImageRenderer(size: CGSize(width: 14, height: 14)).image { ctx in
-            UIColor.white.setFill()
+            UIColor.secondaryLabel.setFill()
             ctx.cgContext.fillEllipse(in: CGRect(x: 1, y: 1, width: 12, height: 12))
         }
         view.setVolumeThumbImage(thumb, for: .normal)
@@ -434,8 +498,8 @@ struct SystemVolumeSlider: UIViewRepresentable {
 struct RoutePicker: UIViewRepresentable {
     func makeUIView(context: Context) -> AVRoutePickerView {
         let view = AVRoutePickerView()
-        view.tintColor = UIColor(white: 1, alpha: 0.75)
-        view.activeTintColor = .white
+        view.tintColor = .systemBlue
+        view.activeTintColor = .systemBlue
         view.prioritizesVideoDevices = false
         return view
     }

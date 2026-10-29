@@ -349,7 +349,6 @@ struct ArtistDetailView: View {
                         .font(.system(size: 34, weight: .heavy))
                         .lineLimit(2)
                         .minimumScaleFactor(0.7)
-                        .shadow(color: .black.opacity(0.4), radius: 12, y: 2)
                     Spacer()
                     Button {
                         player.play(ids: artist.tracks.map(\.id), shuffled: false)
@@ -458,7 +457,7 @@ struct ArtistHero: View {
                 if let img = library.artistImage(artist.id) ?? artist.albums.first.flatMap({ library.image(for: $0.cover) }) {
                     Image(uiImage: img).resizable().scaledToFill()
                 } else {
-                    Color(white: 0.15)
+                    Color(.secondarySystemFill)
                 }
             }
             .frame(width: w, height: h)
@@ -586,9 +585,9 @@ struct PlaylistMosaic: View {
             } else if let first = covers.first {
                 ArtworkView(track: first, animated: false, cornerRadius: 0)
             } else {
-                shape.fill(LinearGradient(colors: [.white.opacity(0.18), .white.opacity(0.05)], startPoint: .topLeading, endPoint: .bottomTrailing))
+                shape.fill(Color(.tertiarySystemFill))
                     .overlay {
-                        Image(systemName: "music.note.list").font(.title2).foregroundStyle(.white.opacity(0.5))
+                        Image(systemName: "music.note.list").font(.title2).foregroundStyle(Color(.tertiaryLabel))
                     }
             }
         }
@@ -610,7 +609,7 @@ struct PlaylistDetailView: View {
                 VStack(spacing: 14) {
                     PlaylistMosaic(playlist: p, cornerRadius: 14)
                         .frame(width: 230, height: 230)
-                        .shadow(color: .black.opacity(0.45), radius: 22, y: 12)
+                        .shadow(color: .black.opacity(0.15), radius: 8, y: 4)
                     VStack(spacing: 4) {
                         Text(p.name).font(.title2.bold()).multilineTextAlignment(.center)
                         Text("\(songCount(tracks.count)) · \(formatDuration(tracks.reduce(0) { $0 + $1.duration }))")
