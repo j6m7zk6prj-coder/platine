@@ -893,11 +893,9 @@ struct StickerPlacer: View {
 
 // MARK: - Personnaliser le boîtier
 
-/// Jaquette, dos, tranche et disque : chaque image peut être remplacée par la tienne, recadrée au bon format.
+/// Pochette avant et disque : chaque image peut être remplacée par la tienne, recadrée au bon format.
 struct CaseCustomizer: View {
     let album: AlbumInfo
-    /// Nom du jeu (boîtier de jeu) ; nil pour un CD (seul le disque se personnalise).
-    let game: String?
     @Environment(Library.self) private var library
     @Environment(\.dismiss) private var dismiss
     @State private var target: Slot?
@@ -905,49 +903,17 @@ struct CaseCustomizer: View {
     @State private var cropping: CropSource?
 
     enum Slot: String, Identifiable {
-        case wrap, cover, back, spine, front, disc, inner
+        case front, disc
         var id: String { rawValue }
-        var title: String {
-            switch self {
-            case .wrap: return "Jaquette complète"
-            case .cover: return "Jaquette"
-            case .back: return "Dos du boîtier"
-            case .spine: return "Tranche"
-            case .front: return "Pochette avant"
-            case .disc: return "Disque"
-            case .inner: return "Intérieur du gatefold"
-            }
-        }
+        var title: String { self == .front ? "Pochette avant" : "Disque" }
         var detail: String {
-            switch self {
-            case .wrap: return "Dos + tranche + face en une image : tout se place d’un coup"
-            case .cover: return "La face avant, sous le film"
-            case .back: return "L’arrière du boîtier"
-            case .spine: return "Le côté, visible sur l’étagère"
-            case .front: return "L’image carrée sous le couvercle du boîtier"
-            case .disc: return "Recadrée en cercle, comme une photo de profil"
-            case .inner: return "La double page qu’on voit en ouvrant la pochette"
-            }
+            self == .front ? "L’image carrée sous le couvercle du boîtier" : "Recadrée en cercle, comme une photo de profil"
         }
-        var symbol: String {
-            switch self {
-            case .wrap: return "book.pages"
-            case .cover: return "rectangle.portrait"
-            case .back: return "rectangle.portrait.on.rectangle.portrait"
-            case .spine: return "rectangle.split.3x1"
-            case .front: return "square"
-            case .disc: return "opticaldisc"
-            case .inner: return "book"
-            }
-        }
+        var symbol: String { self == .front ? "square" : "opticaldisc" }
+        var kind: String { rawValue }
     }
 
-    private var isVinyl: Bool { VinylCatalog.isVinyl(album.id) }
-
-    private var slots: [Slot] {
-        if isVinyl { return library.vinylOptions(album.id).gatefold ? [.front, .inner, .disc] : [.front, .disc] }
-        return game == nil ? [.front, .disc] : [.wrap, .cover, .back, .spine, .disc]
-    }
+    private let slots: [Slot] = [.front, .disc]
 
     var body: some View {
         NavigationStack {
@@ -955,16 +921,9 @@ struct CaseCustomizer: View {
                 Section {
                     ForEach(slots) { slot in row(slot) }
                 } footer: {
-                    Text(isVinyl ? "Le vinyle au-dessus se met à jour dès que tu valides un choix. Pour « Disque », l’image devient l’étiquette du centre."
-                                 : "Le boîtier au-dessus se met à jour dès que tu valides une image.")
+                    Text("Le boîtier au-dessus se met à jour dès que tu valides une image.")
                 }
-                if isVinyl {
-                    VinylOptionsSection(album: album)
-                }
-                if game == nil {
-                    PriceSection(album: album,
-                                 discs: isVinyl ? VinylLayout.discCount(album, library.vinylOptions(album.id)) : 1)
-                }
+                PriceSection(album: album)
             }
             .navigationTitle("Personnaliser")
             .navigationBarTitleDisplayMode(.inline)
@@ -985,26 +944,36 @@ struct CaseCustomizer: View {
             }
         }
         .fullScreenCover(item: $cropping) { source in
-            CoverCropper(image: source.image, aspect: aspect(target ?? .cover),
-                         title: (target ?? .cover).title, round: target == .disc) { cropped in
-                save(cropped, in: target ?? .cover)
+            CoverCropper(image: source.image, aspect: 1,
+                         title: (target ?? .front).title, round: target == .disc) { cropped in
+                library.setExtraImage(cropped, kind: (target ?? .front).kind, key: album.id)
             }
         }
     }
 
     private func row(_ slot: Slot) -> some View {
-        HStack(spacing: 14) {
-            thumbnail(slot)
+        let custom = library.extraImage(slot.kind, album.id)
+        return HStack(spacing: 14) {
+            ZStack {
+                Color(white: 0.18)
+                if let custom {
+                    Image(uiImage: custom).resizable().scaledToFill()
+                } else {
+                    Image(systemName: slot.symbol).foregroundStyle(.secondary)
+                }
+            }
+            .frame(width: 52, height: 52)
+            .clipShape(slot == .disc ? AnyShape(Circle()) : AnyShape(RoundedRectangle(cornerRadius: 8, style: .continuous)))
             VStack(alignment: .leading, spacing: 2) {
                 Text(slot.title).font(.body.weight(.semibold))
-                Text(isCustom(slot) ? "Ton image" : slot.detail)
+                Text(custom != nil ? "Ton image" : slot.detail)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            if isCustom(slot) {
+            if custom != nil {
                 Button {
-                    reset(slot)
+                    library.resetExtraImage(slot.kind, album.id)
                 } label: {
                     Image(systemName: "arrow.uturn.backward")
                 }
@@ -1021,105 +990,5 @@ struct CaseCustomizer: View {
             .buttonBorderShape(.capsule)
         }
         .padding(.vertical, 4)
-    }
-
-    @ViewBuilder private func thumbnail(_ slot: Slot) -> some View {
-        let img = current(slot)
-        let shape = slot == .disc ? AnyShape(Circle()) : AnyShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-        ZStack {
-            Color(white: 0.18)
-            if let img {
-                Image(uiImage: img).resizable().scaledToFill()
-            } else {
-                Image(systemName: slot.symbol).foregroundStyle(.secondary)
-            }
-        }
-        .frame(width: thumbWidth(slot), height: 52)
-        .clipShape(shape)
-    }
-
-    private func thumbWidth(_ slot: Slot) -> CGFloat {
-        switch slot {
-        case .spine: return 10
-        case .disc: return 52
-        case .wrap, .inner: return 92
-        default: return 45
-        }
-    }
-
-    private func current(_ slot: Slot) -> UIImage? {
-        switch slot {
-        case .wrap: return nil
-        case .cover: return game.flatMap { library.gameCoverImage($0) }
-        case .back: return game.flatMap { library.extraImage("back", $0) }
-        case .spine: return game.flatMap { library.extraImage("spine", $0) }
-        case .front: return library.extraImage("front", album.id)
-        case .disc: return library.extraImage("disc", album.id)
-        case .inner: return library.extraImage("inner", album.id)
-        }
-    }
-
-    private func isCustom(_ slot: Slot) -> Bool {
-        if slot == .wrap { return [Slot.cover, .back, .spine].contains { current($0) != nil } }
-        return current(slot) != nil
-    }
-
-    /// Une bande verticale de l'image, de `from` à `to` (fractions de la largeur).
-    static func slice(_ image: UIImage, _ from: CGFloat, _ to: CGFloat) -> UIImage {
-        let w = image.size.width, h = image.size.height
-        let rect = CGRect(x: w * from, y: 0, width: w * (to - from), height: h)
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = image.scale
-        return UIGraphicsImageRenderer(size: rect.size, format: format).image { _ in
-            image.draw(at: CGPoint(x: -rect.minX, y: 0))
-        }
-    }
-
-    private func aspect(_ slot: Slot) -> CGFloat {
-        let insert = Physical.insert
-        switch slot {
-        case .wrap: return Physical.wrapAspect
-        case .cover, .back: return insert.width / insert.height
-        case .spine: return Physical.insertSpine / insert.height
-        case .front, .disc: return 1
-        case .inner: return 2
-        }
-    }
-
-    private func save(_ image: UIImage, in slot: Slot) {
-        switch slot {
-        case .wrap:
-            // Découpe selon les vraies proportions : dos 128 mm | tranche 14 mm | face 128 mm.
-            guard let game else { return }
-            let total = Physical.insert.width * 2 + Physical.insertSpine
-            let backEnd = Physical.insert.width / total
-            let spineEnd = (Physical.insert.width + Physical.insertSpine) / total
-            library.setExtraImage(Self.slice(image, 0, backEnd), kind: "back", key: game)
-            library.setExtraImage(Self.slice(image, backEnd, spineEnd), kind: "spine", key: game)
-            library.setGameCover(Self.slice(image, spineEnd, 1), for: game)
-        case .cover: if let game { library.setGameCover(image, for: game) }
-        case .back: if let game { library.setExtraImage(image, kind: "back", key: game) }
-        case .spine: if let game { library.setExtraImage(image, kind: "spine", key: game) }
-        case .front: library.setExtraImage(image, kind: "front", key: album.id)
-        case .disc: library.setExtraImage(image, kind: "disc", key: album.id)
-        case .inner: library.setExtraImage(image, kind: "inner", key: album.id)
-        }
-    }
-
-    private func reset(_ slot: Slot) {
-        switch slot {
-        case .wrap:
-            if let game {
-                library.resetGameCover(game)
-                library.resetExtraImage("back", game)
-                library.resetExtraImage("spine", game)
-            }
-        case .cover: if let game { library.resetGameCover(game) }
-        case .back: if let game { library.resetExtraImage("back", game) }
-        case .spine: if let game { library.resetExtraImage("spine", game) }
-        case .front: library.resetExtraImage("front", album.id)
-        case .disc: library.resetExtraImage("disc", album.id)
-        case .inner: library.resetExtraImage("inner", album.id)
-        }
     }
 }

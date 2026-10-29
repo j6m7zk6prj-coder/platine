@@ -18,14 +18,10 @@ final class Library {
     private(set) var albumFormats: [String: String] = [:]
     /// Stickers holographiques posés sur chaque album : identifiant de l'album → stickers.
     private(set) var albumStickers: [String: [String]] = [:]
-    /// Jaquette choisie pour chaque jeu : nom du jeu → fichier image.
-    private(set) var gameCovers: [String: String] = [:]
     /// Stickers faits à partir de tes images.
     private(set) var customStickers: [CustomSticker] = []
     /// Où chaque sticker est collé : album → sticker → position.
     private(set) var stickerPlacements: [String: [String: StickerPlacement]] = [:]
-    /// Console choisie pour chaque jeu (PS3, PS4 ou PS5).
-    private(set) var gamePlatforms: [String: String] = [:]
     /// Tes images pour le dos, la tranche et le disque : « genre|clé » → fichier.
     private(set) var extraImages: [String: String] = [:]
     /// Pochette officielle de chaque album : nom du fichier et type (image, GIF, vidéo).
@@ -177,46 +173,6 @@ final class Library {
         UserDefaults.standard.set(Array(hiddenFromCollection), forKey: "hiddenFromCollection")
     }
 
-    // MARK: Vinyles exposés
-
-    /// Albums que tu as choisi de ne pas mettre dans le bac à vinyles.
-    private(set) var hiddenFromVinyl: Set<String> =
-        Set(UserDefaults.standard.stringArray(forKey: "hiddenFromVinyl") ?? [])
-
-    func isVinylExposed(_ albumID: String) -> Bool { !hiddenFromVinyl.contains(VinylCatalog.base(albumID)) }
-
-    func setVinylExposed(_ albumID: String, _ on: Bool) {
-        let id = VinylCatalog.base(albumID)
-        if on { hiddenFromVinyl.remove(id) } else {
-            hiddenFromVinyl.insert(id)
-            // Rangé : il retrouve son blister neuf.
-            setSealed(VinylCatalog.prefix + id, true)
-        }
-        UserDefaults.standard.set(Array(hiddenFromVinyl), forKey: "hiddenFromVinyl")
-    }
-
-    func setAllVinylExposed(_ on: Bool) {
-        hiddenFromVinyl = on ? [] : Set(albums.map(\.id))
-        if !on {
-            unwrappedAlbums = unwrappedAlbums.filter { !VinylCatalog.isVinyl($0) }
-            UserDefaults.standard.set(Array(unwrappedAlbums), forKey: "unwrappedAlbums")
-        }
-        UserDefaults.standard.set(Array(hiddenFromVinyl), forKey: "hiddenFromVinyl")
-    }
-
-    /// Couleur du disque, pochette, sous-pochette… pour chaque album.
-    private(set) var vinylOptionsMap: [String: VinylOptions] = {
-        guard let data = UserDefaults.standard.data(forKey: "vinylOptions"),
-              let map = try? JSONDecoder().decode([String: VinylOptions].self, from: data) else { return [:] }
-        return map
-    }()
-
-    func setVinylOptions(_ options: VinylOptions, for albumID: String) {
-        vinylOptionsMap[VinylCatalog.base(albumID)] = options
-        if let data = try? JSONEncoder().encode(vinylOptionsMap) { UserDefaults.standard.set(data, forKey: "vinylOptions") }
-        artworkRevision += 1
-    }
-
     /// Prix que tu as choisis (sinon un prix de disquaire est proposé).
     private(set) var customPrices: [String: Double] =
         (UserDefaults.standard.dictionary(forKey: "customPrices") as? [String: Double]) ?? [:]
@@ -355,87 +311,6 @@ final class Library {
     private func saveAlbumCovers() {
         guard let data = try? JSONEncoder().encode(albumCovers) else { return }
         try? data.write(to: Self.albumCoversURL, options: .atomic)
-    }
-
-    // MARK: Bandes-son de jeux
-
-    /// Une « bande-son » par jeu tagué, présentée comme un album dans la Collection.
-    var gameAlbums: [AlbumInfo] {
-        var byGame: [String: [Track]] = [:]
-        for t in tracks {
-            for g in t.games { byGame[g, default: []].append(t) }
-        }
-        return byGame.map { game, list in
-            AlbumInfo(id: GameCatalog.prefix + game, title: game, artist: "Bande-son",
-                      year: GameCatalog.releaseYear(game),
-                      tracks: list.sorted { $0.addedAt < $1.addedAt })
-        }
-        .sorted { $0.year != $1.year ? $0.year > $1.year : $0.title > $1.title }
-    }
-
-    /// Tous les jeux déjà utilisés (y compris ceux tapés à la main).
-    var usedGames: [String] {
-        Array(Set(tracks.flatMap(\.games))).sorted()
-    }
-
-    func setGames(_ id: UUID, _ games: [String]) {
-        guard let i = tracks.firstIndex(where: { $0.id == id }) else { return }
-        var seen = Set<String>()
-        tracks[i].games = games.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty && seen.insert($0).inserted }
-        save()
-    }
-
-    func setExplicit(_ id: UUID, _ on: Bool) {
-        guard let i = tracks.firstIndex(where: { $0.id == id }), tracks[i].explicit != on else { return }
-        tracks[i].explicit = on
-        save()
-    }
-
-    func gameName(_ albumID: String) -> String? {
-        albumID.hasPrefix(GameCatalog.prefix) ? String(albumID.dropFirst(GameCatalog.prefix.count)) : nil
-    }
-
-    func gameCoverImage(_ game: String) -> UIImage? {
-        guard let name = gameCovers[game] else { return nil }
-        let key = name as NSString
-        if let cached = images.object(forKey: key) { return cached }
-        guard let img = UIImage(contentsOfFile: Self.artDir.appendingPathComponent(name).path) else { return nil }
-        images.setObject(img, forKey: key)
-        return img
-    }
-
-    func gameCoverName(_ game: String) -> String? { gameCovers[game] }
-
-    /// Ta photo de la jaquette du jeu.
-    func setGameCover(_ image: UIImage, for game: String) {
-        // Taille raisonnable pour la 3D (une photo de 12 Mpx serait inutilement lourde).
-        let maxSide: CGFloat = 1600
-        let scale = min(1, maxSide / max(image.size.width, image.size.height, 1))
-        let target = CGSize(width: image.size.width * scale, height: image.size.height * scale)
-        let resized = UIGraphicsImageRenderer(size: target).image { _ in image.draw(in: CGRect(origin: .zero, size: target)) }
-        guard let data = resized.jpegData(compressionQuality: 0.9) else { return }
-        let name = "game-" + UUID().uuidString + ".jpg"
-        do {
-            try data.write(to: Self.artDir.appendingPathComponent(name), options: .atomic)
-        } catch { return }
-        if let old = gameCovers[game] { try? FileManager.default.removeItem(at: Self.artDir.appendingPathComponent(old)) }
-        gameCovers[game] = name
-        saveGames()
-        artworkRevision += 1
-        message = "Jaquette enregistrée"
-    }
-
-    func resetGameCover(_ game: String) {
-        guard let old = gameCovers.removeValue(forKey: game) else { return }
-        try? FileManager.default.removeItem(at: Self.artDir.appendingPathComponent(old))
-        saveGames()
-        artworkRevision += 1
-    }
-
-    private func saveGames() {
-        guard let data = try? JSONEncoder().encode(gameCovers) else { return }
-        try? data.write(to: Self.gamesURL, options: .atomic)
     }
 
     var artists: [ArtistInfo] {
@@ -839,14 +714,6 @@ final class Library {
             if let m = albumCovers.removeValue(forKey: Self.motionKey(albumID)) { albumCovers[Self.motionKey(newID)] = m }
             saveAlbumCovers()
         }
-        if newID != albumID, let v = vinylOptionsMap.removeValue(forKey: albumID) {
-            vinylOptionsMap[newID] = v
-            if let data = try? JSONEncoder().encode(vinylOptionsMap) { UserDefaults.standard.set(data, forKey: "vinylOptions") }
-        }
-        if newID != albumID, hiddenFromVinyl.remove(albumID) != nil {
-            hiddenFromVinyl.insert(newID)
-            UserDefaults.standard.set(Array(hiddenFromVinyl), forKey: "hiddenFromVinyl")
-        }
         if newID != albumID, let f = albumFormats.removeValue(forKey: albumID) {
             albumFormats[newID] = f
             saveFormats()
@@ -864,8 +731,6 @@ final class Library {
 
     func format(of albumID: String, default fallback: AlbumFormat) -> AlbumFormat {
         // Les cassettes ont été retirées : tous les albums sont des CD, les bandes-son des jeux.
-        if albumID.hasPrefix(GameCatalog.prefix) { return .game }
-        if VinylCatalog.isVinyl(albumID) { return .vinyl }
         return .cd
     }
 
@@ -1050,19 +915,6 @@ final class Library {
         list.removeAll { $0 == key }
         albumStickers[albumID] = list.isEmpty ? nil : list
         saveStickers()
-    }
-
-    // MARK: Console du boîtier de jeu
-
-    func platform(of game: String) -> GamePlatform {
-        GamePlatform(rawValue: gamePlatforms[game] ?? "") ?? .ps5
-    }
-
-    func setPlatform(_ platform: GamePlatform, for game: String) {
-        gamePlatforms[game] = platform.rawValue
-        artworkRevision += 1
-        guard let data = try? JSONEncoder().encode(gamePlatforms) else { return }
-        try? data.write(to: Self.platformsURL, options: .atomic)
     }
 
     private func saveCustomStickers() {
@@ -1329,8 +1181,6 @@ final class Library {
         saveFormats()
         albumStickers = [:]
         saveStickers()
-        gameCovers = [:]
-        saveGames()
         customStickers = []
         saveCustomStickers()
         images.removeAllObjects()
@@ -1421,17 +1271,9 @@ final class Library {
            let map = try? JSONDecoder().decode([String: [String: StickerPlacement]].self, from: data) {
             stickerPlacements = map
         }
-        if let data = try? Data(contentsOf: Self.platformsURL),
-           let map = try? JSONDecoder().decode([String: String].self, from: data) {
-            gamePlatforms = map
-        }
         if let data = try? Data(contentsOf: Self.customStickersURL),
            let list = try? JSONDecoder().decode([CustomSticker].self, from: data) {
             customStickers = list
-        }
-        if let data = try? Data(contentsOf: Self.gamesURL),
-           let map = try? JSONDecoder().decode([String: String].self, from: data) {
-            gameCovers = map
         }
         if let data = try? Data(contentsOf: Self.stickersURL),
            let map = try? JSONDecoder().decode([String: [String]].self, from: data) {

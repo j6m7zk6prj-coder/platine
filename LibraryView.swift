@@ -36,44 +36,58 @@ struct LibraryHomeView: View {
 
     private var content: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 28) {
-                CollectionCard(choosing: $choosingExhibit)
+            VStack(alignment: .leading, spacing: 30) {
+                // Comme Musique : la liste des rubriques, simple et aérée.
                 VStack(spacing: 0) {
-                    LibraryLink(title: "Playlists", icon: "music.note.list", count: library.playlists.count) { PlaylistsView() }
+                    LibraryLink(title: "Playlists", icon: "music.note.list") { PlaylistsView() }
                     rowDivider
-                    LibraryLink(title: "Artistes", icon: "music.mic", count: library.artists.count) { ArtistsView() }
+                    LibraryLink(title: "Artistes", icon: "music.mic") { ArtistsView() }
                     rowDivider
-                    LibraryLink(title: "Albums", icon: "square.stack", count: library.albums.count) { AlbumsView() }
+                    LibraryLink(title: "Albums", icon: "square.stack") { AlbumsView() }
                     rowDivider
-                    LibraryLink(title: "Pochettes", icon: "photo.on.rectangle.angled", count: ArtworkGalleryView.items(library).count) { ArtworkGalleryView() }
+                    LibraryLink(title: "Morceaux", icon: "music.note") { SongsView() }
                     rowDivider
-                    LibraryLink(title: "Morceaux", icon: "music.note", count: library.tracks.count) { SongsView() }
+                    LibraryLink(title: "Favoris", icon: "star") { SongsView(favoritesOnly: true) }
                     rowDivider
-                    LibraryLink(title: "Favoris", icon: "heart", count: library.favorites.count) { SongsView(favoritesOnly: true) }
+                    LibraryLink(title: "Pochettes", icon: "photo.on.rectangle.angled") { ArtworkGalleryView() }
+                    rowDivider
                 }
-                .glass(22)
+
+                CollectionCard(choosing: $choosingExhibit)
 
                 if settings.showRecent && !library.recentlyAdded.isEmpty {
                     VStack(alignment: .leading, spacing: 14) {
-                        Text("Ajouts récents").font(.title2.bold())
+                        NavigationLink { AlbumsView() } label: {
+                            HStack(spacing: 4) {
+                                Text("Ajouts récents")
+                                Image(systemName: "chevron.right")
+                                    .font(.title3.weight(.bold))
+                                    .foregroundStyle(.secondary)
+                            }
+                            .font(.title2.bold())
+                        }
+                        .buttonStyle(.plain)
                         LazyVGrid(columns: [GridItem(.flexible(), spacing: 16), GridItem(.flexible(), spacing: 16)], spacing: 22) {
                             ForEach(library.recentlyAdded) { album in
                                 NavigationLink { AlbumDetailView(albumID: album.id) } label: { AlbumCard(album: album) }
-                                    .buttonStyle(.plain)
+                                    .buttonStyle(PressStyle(circle: false))
                             }
                         }
                     }
                 }
             }
             .padding(.horizontal, 20)
-            .padding(.top, 8)
+            .padding(.top, 4)
             .padding(.bottom, 24)
         }
         .scrollIndicators(.hidden)
     }
 
     private var rowDivider: some View {
-        Divider().overlay(Color.primary.opacity(0.08)).padding(.leading, 60)
+        Rectangle()
+            .fill(Color.primary.opacity(0.12))
+            .frame(height: 0.5)
+            .padding(.leading, 44)
     }
 }
 
@@ -89,8 +103,7 @@ struct CollectionCard: View {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Collection").font(.title2.bold())
-                    let vinyls = library.vinylAlbums.count
-                    Text("\(shown.count) CD · \(vinyls) vinyle\(vinyls > 1 ? "s" : "") sur \(library.albums.count) albums")
+                    Text("\(shown.count) album\(shown.count > 1 ? "s" : "") exposé\(shown.count > 1 ? "s" : "") sur \(library.albums.count)")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
@@ -143,39 +156,29 @@ struct CollectionCard: View {
 struct ExhibitPicker: View {
     @Environment(Library.self) private var library
     @Environment(\.dismiss) private var dismiss
-    /// Collection modifiée : 0 = CD, 1 = vinyles.
-    @State private var kind = 0
 
     private let columns = [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)]
 
     var body: some View {
         let albums = library.albums
-        let vinyl = kind == 1
-        let count = vinyl ? library.vinylAlbums.count : library.exposedAlbums.count
+        let count = library.exposedAlbums.count
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    Picker("Collection", selection: $kind) {
-                        Label("CD", systemImage: "opticaldisc").tag(0)
-                        Label("Vinyles", systemImage: "record.circle").tag(1)
-                    }
-                    .pickerStyle(.segmented)
-                    Text(vinyl
-                         ? "Touche une pochette pour la ranger dans le bac à vinyles ou l’en retirer. \(count) sur \(albums.count) en vinyle."
-                         : "Touche une pochette pour l’exposer dans la Collection ou la ranger. \(count) sur \(albums.count) exposés.")
+                    Text("Touche une pochette pour l’exposer dans la Collection ou la ranger. \(count) sur \(albums.count) exposés.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                     HStack(spacing: 10) {
-                        Button("Tout exposer") { vinyl ? library.setAllVinylExposed(true) : library.setAllExposed(true) }
+                        Button("Tout exposer") { library.setAllExposed(true) }
                             .buttonStyle(.bordered)
-                        Button("Tout ranger") { vinyl ? library.setAllVinylExposed(false) : library.setAllExposed(false) }
+                        Button("Tout ranger") { library.setAllExposed(false) }
                             .buttonStyle(.bordered)
                     }
                     LazyVGrid(columns: columns, spacing: 16) {
                         ForEach(albums) { album in
-                            let on = vinyl ? library.isVinylExposed(album.id) : library.isExposed(album.id)
+                            let on = library.isExposed(album.id)
                             Button {
-                                if vinyl { library.setVinylExposed(album.id, !on) } else { library.setExposed(album.id, !on) }
+                                library.setExposed(album.id, !on)
                             } label: {
                                 VStack(alignment: .leading, spacing: 5) {
                                     ArtworkView(track: album.cover, animated: false, small: true, cornerRadius: 8)
@@ -234,10 +237,10 @@ struct EmptyLibraryView: View {
     }
 }
 
+/// Une rubrique de la Bibliothèque : icône colorée, titre, chevron (comme dans Musique).
 struct LibraryLink<Destination: View>: View {
     let title: String
     let icon: String
-    let count: Int
     @ViewBuilder let destination: () -> Destination
 
     var body: some View {
@@ -246,21 +249,31 @@ struct LibraryLink<Destination: View>: View {
         } label: {
             HStack(spacing: 14) {
                 Image(systemName: icon)
-                    .font(.title3)
+                    .font(.system(size: 21, weight: .regular))
                     .foregroundStyle(.tint)
                     .frame(width: 30)
                 Text(title).font(.title3)
                 Spacer()
-                Text("\(count)").foregroundStyle(.secondary).monospacedDigit()
                 Image(systemName: "chevron.right")
-                    .font(.footnote.weight(.semibold))
+                    .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.tertiary)
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 14)
+            .padding(.vertical, 13)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(RowPressStyle())
+    }
+}
+
+/// Toucher une ligne : léger voile, comme une cellule de liste iOS.
+struct RowPressStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background {
+                Color.primary.opacity(configuration.isPressed ? 0.06 : 0)
+                    .padding(.horizontal, -20)
+            }
+            .animation(configuration.isPressed ? nil : .easeOut(duration: 0.25), value: configuration.isPressed)
     }
 }
 
@@ -271,8 +284,10 @@ struct AlbumCard: View {
         VStack(alignment: .leading, spacing: 6) {
             ArtworkView(track: album.cover, animated: false, cornerRadius: 10)
                 .aspectRatio(1, contentMode: .fit)
-                .shadow(color: .black.opacity(0.3), radius: 10, y: 6)
-            Text(album.title).font(.subheadline.weight(.semibold)).lineLimit(1)
+                .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(.primary.opacity(0.08), lineWidth: 0.5))
+                .shadow(color: .black.opacity(0.22), radius: 12, y: 7)
+                .padding(.bottom, 2)
+            Text(album.title).font(.subheadline.weight(.medium)).lineLimit(1)
             Text(album.artist).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
         }
         .contentShape(Rectangle())

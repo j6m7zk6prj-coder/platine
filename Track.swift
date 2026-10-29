@@ -28,7 +28,7 @@ struct Track: Identifiable, Codable, Hashable {
     var playCount: Int = 0
     var lastPlayed: Date?
     var lyrics: String?
-    /// Jeux dont ce morceau fait partie de la bande-son (ex. « FIFA 17 », « FC 24 »).
+    /// Ancien champ (bandes-son de jeux, retirées) : gardé pour lire les anciennes bibliothèques.
     var games: [String] = []
     /// Contenu explicite : affiche le petit « E » à côté du titre.
     var explicit: Bool = false
@@ -115,54 +115,16 @@ struct ArtistInfo: Identifiable, Hashable {
 
 /// Format physique d'un album dans la Collection.
 enum AlbumFormat: String, CaseIterable, Identifiable {
-    case cd, cassette, game, vinyl
+    case cd, cassette
     var id: String { rawValue }
     var label: String {
         switch self {
         case .cd: return "CD"
         case .cassette: return "Cassette"
-        case .game: return "Jeu vidéo"
-        case .vinyl: return "Vinyle"
         }
     }
-    /// Formats proposés pour un album (le boîtier de jeu est réservé aux bandes-son).
+    /// Formats proposés pour un album.
     static let choosable: [AlbumFormat] = [.cd]
-}
-
-/// Les jeux de foot dont on peut taguer la bande-son.
-enum GameCatalog {
-    static let prefix = "game:"
-
-    /// Du plus récent au plus ancien.
-    static let all: [String] = {
-        var list: [String] = ["FC 26", "FC 25", "FC 24"]
-        for n in stride(from: 23, through: 6, by: -1) {
-            list.append(String(format: "FIFA %02d", n))
-        }
-        for year in stride(from: 2005, through: 2000, by: -1) {
-            list.append("FIFA " + String(year))
-        }
-        for n in stride(from: 99, through: 94, by: -1) {
-            list.append("FIFA " + String(n))
-        }
-        return list
-    }()
-
-    /// Année de sortie du jeu (FIFA 17 est sorti en 2016, FC 24 en 2023).
-    static func releaseYear(_ game: String) -> Int {
-        let digits = game.filter(\.isNumber)
-        guard let n = Int(digits) else { return 0 }
-        if n >= 1000 { return n - 1 }
-        if n >= 90 { return 1900 + n - 1 }
-        return 2000 + n - 1
-    }
-
-    /// « Saison 2016-17 ».
-    static func season(_ game: String) -> String {
-        let y = releaseYear(game)
-        guard y > 0 else { return "" }
-        return "Saison \(y)-\(String(format: "%02d", (y + 1) % 100))"
-    }
 }
 
 /// Badges holographiques gagnés par un album.
@@ -310,13 +272,6 @@ struct CustomSticker: Codable, Identifiable, Hashable {
     }
 }
 
-
-/// Console du boîtier de jeu : même format Blu-ray (135 × 171,5 mm), plastique et bandeau différents.
-enum GamePlatform: String, Codable, CaseIterable, Identifiable {
-    case ps3, ps4, ps5
-    var id: String { rawValue }
-    var label: String { rawValue.uppercased() }
-}
 
 /// Position d'un sticker sur la jaquette : x et y de 0 à 1, taille relative.
 struct StickerPlacement: Codable, Hashable {

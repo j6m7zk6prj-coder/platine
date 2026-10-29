@@ -23,18 +23,13 @@ struct ShelfView: View {
     @State private var flipToken = 0
     @State private var resetToken = 0
     @State private var stickerAlbum: AlbumInfo?
-    /// Sous-section de la Collection : albums (CD), bandes-son de jeux, ou vinyles.
-    @State private var section = 0
-    /// Vinyle en main : dans sa pochette, ou sorti.
-    @State private var vinylStage: VinylStage = .jacket
-    @State private var gatefoldOpen = false
 
     /// Ouverture et fermeture : un ressort court, comme les transitions d'iOS.
     private static let quick = Animation.smooth(duration: 0.38)
 
     var body: some View {
         let _ = library.artworkRevision
-        let albums = section == 1 ? library.gameAlbums : (section == 2 ? library.vinylAlbums : library.exposedAlbums)
+        let albums = library.exposedAlbums
         let focused = albums.indices.contains(focusedIndex) ? albums[focusedIndex] : albums.first
         // La vue « en main » est déjà prête avec l'album au centre : l'ouverture est instantanée.
         let handAlbum = inspected ?? focused
@@ -77,7 +72,6 @@ struct ShelfView: View {
                 InspectorSceneView(album: handAlbum, format: format, badges: library.badges(for: handAlbum),
                                    motion: motion, active: isOpen, discOut: discOut,
                                    spinning: playing && player.isPlaying,
-                                   vinylStage: vinylStage, gatefoldOpen: gatefoldOpen,
                                    flipToken: flipToken, resetToken: resetToken,
                                    onBackChange: { isBack = $0 })
                     .id("inspector")
@@ -86,9 +80,8 @@ struct ShelfView: View {
                     .allowsHitTesting(isOpen)
 
                 if let inspected {
-                    ShelfInspector(album: inspected, format: format, game: library.gameName(inspected.id),
+                    ShelfInspector(album: inspected, format: format,
                                    isBack: isBack, discOut: $discOut,
-                                   vinylStage: $vinylStage, gatefoldOpen: $gatefoldOpen,
                                    playingThisAlbum: playing,
                                    onFlip: {
                                        // Directement sur la scène : la réaction est immédiate.
@@ -120,7 +113,6 @@ struct ShelfView: View {
         }
         .animation(Self.quick, value: isOpen)
         .sensoryFeedback(trigger: discOut) { _, _ in settings.haptics ? .impact(weight: .medium) : nil }
-        .sensoryFeedback(trigger: vinylStage) { _, _ in settings.haptics ? .impact(weight: .medium) : nil }
         .sensoryFeedback(trigger: isBack) { _, _ in settings.haptics && isOpen ? .impact(weight: .light) : nil }
         .onAppear {
             if visible { motion.start() }
@@ -135,7 +127,7 @@ struct ShelfView: View {
                 motion.start()
                 // On se replace sur l'album en cours d'écoute.
                 let i = initialIndex(library.exposedAlbums)
-                if section == 0 && i != focusedIndex {
+                if i != focusedIndex {
                     ShelfSceneController.shared?.jump(to: i)
                     focusedIndex = i
                 }
@@ -144,26 +136,13 @@ struct ShelfView: View {
                 close()
             }
         }
-        .onChange(of: section) { _, _ in
-            close()
-            focusedIndex = 0
-            ShelfSceneController.shared?.jump(to: 0)
-        }
         .onDisappear { motion.stop() }
         .statusBarHidden(visible)
     }
 
     @ViewBuilder private var emptyState: some View {
-        if section == 2 {
-            ContentUnavailableView("Aucun vinyle", systemImage: "record.circle",
-                                   description: Text("Dans la Bibliothèque, touche « Choisir les albums » puis « Vinyles » pour remplir ton bac."))
-        } else if section == 1 {
-            ContentUnavailableView("Aucune bande-son", systemImage: "gamecontroller",
-                                   description: Text("Dans « Modifier les infos » d’un morceau, choisis un ou plusieurs jeux (FIFA 17, FC 24…). Leurs bandes-son apparaîtront ici en boîtiers PS5."))
-        } else {
-            ContentUnavailableView("Aucun album exposé", systemImage: "opticaldisc",
-                                   description: Text("Dans la Bibliothèque, touche « Choisir les albums » pour ranger des albums dans ta Collection."))
-        }
+        ContentUnavailableView("Aucun album exposé", systemImage: "opticaldisc",
+                               description: Text("Dans la Bibliothèque, touche « Choisir les albums » pour ranger des albums dans ta Collection."))
     }
 
     /// La Collection s'ouvre sur l'album en cours d'écoute.
@@ -178,28 +157,23 @@ struct ShelfView: View {
     }
 
     private func open(_ album: AlbumInfo) {
-        vinylStage = .jacket
-        gatefoldOpen = false
         discOut = false
         isBack = false
         inspected = album
     }
 
     private func close() {
-        vinylStage = .jacket
-        gatefoldOpen = false
         discOut = false
         inspected = nil
     }
 
     private var topBar: some View {
         HStack(alignment: .top) {
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text("Collection").font(.largeTitle.bold())
-                SectionSwitch(section: $section,
-                              albums: library.exposedAlbums.count,
-                              games: library.gameAlbums.count,
-                              vinyls: library.vinylAlbums.count)
+                Text("\(library.exposedAlbums.count) album\(library.exposedAlbums.count > 1 ? "s" : "")")
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.white.opacity(0.55))
             }
             Spacer()
             Button { onClose() } label: {
@@ -343,18 +317,6 @@ final class ShelfSceneController: NSObject, UIGestureRecognizerDelegate {
             _ = c.node(at: i, force: true)
             try? await Task.sleep(for: .milliseconds(90))
         }
-        // Les boîtiers de jeux aussi, pour que l'onglet Jeux s'ouvre sans attendre.
-        // Ils sont fabriqués cachés, sans jamais changer la liste affichée (plus de « flash » à l'ouverture).
-        for game in library.gameAlbums.prefix(6) {
-            let format = library.format(of: game.id, default: settings.shelfFormat)
-            c.prebuild(game, format: format, badges: library.badges(for: game))
-            try? await Task.sleep(for: .milliseconds(40))
-        }
-        // Quelques vinyles aussi (fabriqués cachés).
-        for vinyl in library.vinylAlbums.prefix(3) {
-            c.prebuild(vinyl, format: .vinyl, badges: library.badges(for: vinyl))
-            try? await Task.sleep(for: .milliseconds(60))
-        }
         c.layout()
         c.view.prepare([c.scene], completionHandler: nil)
         // La vue « en main » aussi (en haute définition).
@@ -392,49 +354,6 @@ final class ShelfSceneController: NSObject, UIGestureRecognizerDelegate {
     private let cameraNode = SCNNode()
     private var lastSpotAlbum = ""
     private var pausedState = false
-
-    /// Mise en page : Cover Flow (CD, jeux), bac à feuilleter ou étagère murale (vinyles).
-    enum LayoutMode { case flow, crate, wall }
-    private var mode: LayoutMode = .flow
-    private var crateNode: SCNNode?
-    private var ledgeNode: SCNNode?
-
-    private func setMode(_ m: LayoutMode) {
-        guard m != mode else { return }
-        mode = m
-        if m == .crate && crateNode == nil {
-            let crate = VinylFurniture.crate(innerWidth: 1.62)
-            scene.rootNode.addChildNode(crate)
-            crateNode = crate
-        }
-        if m == .wall && ledgeNode == nil {
-            let ledge = VinylFurniture.ledge()
-            scene.rootNode.addChildNode(ledge)
-            ledgeNode = ledge
-        }
-        crateNode?.isHidden = m != .crate
-        ledgeNode?.isHidden = m != .wall
-        // Le brouillard du fond recule avec la caméra (sinon les pochettes s'assombrissent).
-        switch m {
-        case .flow:
-            cameraNode.position = SCNVector3(0, 0.95, 8.6)
-            cameraNode.look(at: SCNVector3(0, 0.16, 0))
-            scene.fogStartDistance = 8
-            scene.fogEndDistance = 15
-        case .crate:
-            // Vu de haut et de loin, comme debout devant un bac chez le disquaire : tout le bac
-            // et la pochette du dessus sont visibles en entier.
-            cameraNode.position = SCNVector3(0, 4.6, 10.6)
-            cameraNode.look(at: SCNVector3(0, 0.95, -0.1))
-            scene.fogStartDistance = 13
-            scene.fogEndDistance = 22
-        case .wall:
-            cameraNode.position = SCNVector3(0, 1.2, 10.2)
-            cameraNode.look(at: SCNVector3(0, 0.8, 0))
-            scene.fogStartDistance = 12
-            scene.fogEndDistance = 20
-        }
-    }
 
     func jump(to index: Int) {
         let i = albums.isEmpty ? index : min(max(0, index), albums.count - 1)
@@ -518,8 +437,6 @@ final class ShelfSceneController: NSObject, UIGestureRecognizerDelegate {
 
     func update(albums newAlbums: [AlbumInfo], library: Library, settings: AppSettings) {
         builder = AlbumNodeBuilder(library: library, settings: settings)
-        let vinyls = newAlbums.first.map { VinylCatalog.isVinyl($0.id) } ?? false
-        setMode(vinyls ? (settings.vinylStorage == .crate ? .crate : .wall) : .flow)
         albums = newAlbums
         formats = newAlbums.map { library.format(of: $0.id, default: settings.shelfFormat) }
         badges = newAlbums.map { library.badges(for: $0) }
@@ -573,12 +490,6 @@ final class ShelfSceneController: NSObject, UIGestureRecognizerDelegate {
 
     private func makeNode(_ album: AlbumInfo, format: AlbumFormat, badges: [AlbumBadge]) -> AlbumNode {
         let n = builder.make(album, format: format, badges: badges, extras: false)
-        if format == .vinyl {
-            // Les vinyles sont posés dans le bac ou sur l'étagère : ni ombre au sol, ni reflet.
-            scene.rootNode.addChildNode(n.root)
-            nodes[album.id] = n
-            return n
-        }
         // Ombre douce posée au sol.
         let w = CGFloat(n.shownSize.x)
         let shadow = SCNPlane(width: w * 1.25, height: w * 0.45)
@@ -638,19 +549,13 @@ final class ShelfSceneController: NSObject, UIGestureRecognizerDelegate {
             let d = Double(i) - pos
             let ad = abs(d)
             let album = albums[i]
-            // Dans le bac, on voit bien plus de pochettes derrière celle du dessus.
-            let hidden = mode == .crate ? (d > 9 || d < -3.5) : ad > 4.5
-            if hidden {
+            if ad > 4.5 {
                 nodes[album.id]?.root.isHidden = true
                 continue
             }
             guard let n = node(at: i, force: ad < 0.6) else { continue }
             n.root.isHidden = false
-            switch mode {
-            case .flow: coverFlow(n, d: d, ad: ad, isFocus: i == focus && ad < 0.5, tiltX: tiltX, tiltY: tiltY)
-            case .crate: crate(n, d: d, tiltX: tiltX, tiltY: tiltY)
-            case .wall: wall(n, d: d, ad: ad, tiltX: tiltX, tiltY: tiltY)
-            }
+            coverFlow(n, d: d, ad: ad, isFocus: i == focus && ad < 0.5, tiltX: tiltX, tiltY: tiltY)
         }
         if focus != lastFocus {
             lastFocus = focus
@@ -667,9 +572,7 @@ final class ShelfSceneController: NSObject, UIGestureRecognizerDelegate {
         let s = d < 0 ? -1.0 : 1.0
         let e = min(ad, 1)
         let ease = e * e * (3 - 2 * e)
-        let game = n.format == .game
-        let gap = game ? 0.24 : 0.27
-        let x = d * gap + s * ease * (game ? 0.7 : 0.66)
+        let x = d * 0.27 + s * ease * 0.66
         let z = (1 - ease) * 0.22 - ease * 0.8 - max(0, ad - 1) * 0.05
         let rotY = -s * ease * 1.12
         let h = Double(n.shownSize.y)
@@ -685,48 +588,6 @@ final class ShelfSceneController: NSObject, UIGestureRecognizerDelegate {
         n.root.eulerAngles = SCNVector3(Float(tx), Float(ty), 0)
     }
 
-    /// Bac à feuilleter : les pochettes sont debout, serrées ; celle du dessus est soulevée vers toi,
-    /// celles déjà feuilletées sont penchées vers l'avant, appuyées sur le bord du bac.
-    private func crate(_ n: AlbumNode, d: Double, tiltX: Double, tiltY: Double) {
-        let h = Double(n.shownSize.y)
-        // Position du bas de la pochette et inclinaison (rotation autour de l'axe horizontal).
-        func pose(_ d: Double) -> (y: Double, z: Double, rx: Double) {
-            if d >= 1 { return (0.06, -0.16 - (d - 1) * 0.105, -0.16) }
-            if d <= -1 { return (0.06, 0.55 + (d + 1) * 0.045, 0.66) }
-            // Celle du dessus est bien soulevée : on la voit en entier au-dessus des autres.
-            let focus = (y: 0.82, z: 0.22, rx: -0.06)
-            let other = d > 0 ? pose(1) : pose(-1)
-            let e = abs(d)
-            let k = e * e * (3 - 2 * e)
-            return (focus.y + (other.y - focus.y) * k, focus.z + (other.z - focus.z) * k, focus.rx + (other.rx - focus.rx) * k)
-        }
-        let p = pose(d)
-        let y = p.y + cos(p.rx) * h / 2
-        let z = p.z + sin(p.rx) * h / 2
-        n.root.position = SCNVector3(0, Float(y), Float(z))
-        n.root.scale = SCNVector3(1, 1, 1)
-        let w = max(0, 1 - abs(d))
-        n.root.eulerAngles = SCNVector3(Float(p.rx - tiltY * 0.04 * w), Float(tiltX * 0.08 * w), 0)
-        let fade = d > 7.5 ? max(0, 1 - (d - 7.5) / 1.5) : 1
-        if abs(Double(n.root.opacity) - fade) > 0.01 { n.root.opacity = CGFloat(fade) }
-    }
-
-    /// Étagère murale : les pochettes posées de face côte à côte ; celle du centre avance un peu.
-    private func wall(_ n: AlbumNode, d: Double, ad: Double, tiltX: Double, tiltY: Double) {
-        let w = Double(n.shownSize.x), h = Double(n.shownSize.y)
-        let e = min(ad, 1)
-        let ease = e * e * (3 - 2 * e)
-        let x = d * (w + 0.14)
-        let z = (1 - ease) * 0.3
-        let y = h / 2 + 0.06 + (1 - ease) * 0.06
-        n.root.position = SCNVector3(Float(x), Float(y), Float(z))
-        n.root.scale = SCNVector3(1, 1, 1)
-        let k = 1 - ease
-        n.root.eulerAngles = SCNVector3(Float(-0.05 - tiltY * 0.05 * k), Float(tiltX * 0.1 * k), 0)
-        let fade = ad > 3 ? max(0, 1 - (ad - 3) / 1.5) : 1
-        if abs(Double(n.root.opacity) - fade) > 0.01 { n.root.opacity = CGFloat(fade) }
-    }
-
     private func updateSpot(for album: AlbumInfo) {
         guard album.id != lastSpotAlbum, let spot = scene.rootNode.childNode(withName: "spot", recursively: false)?.light else { return }
         lastSpotAlbum = album.id
@@ -738,12 +599,10 @@ final class ShelfSceneController: NSObject, UIGestureRecognizerDelegate {
     }
 
     @objc private func handlePan(_ g: UIPanGestureRecognizer) {
-        // Dans le bac, on feuillette de haut en bas (glisser vers le bas : pochette suivante).
-        let vertical = mode == .crate
         let width = max(view.bounds.width, 1)
-        let unit = vertical ? Double(max(view.bounds.height, 1)) * 0.2 : Double(width) * 0.42
-        let moved = vertical ? Double(g.translation(in: view).y) : -Double(g.translation(in: view).x)
-        let speed = vertical ? Double(g.velocity(in: view).y) : -Double(g.velocity(in: view).x)
+        let unit = Double(width) * 0.42
+        let moved = -Double(g.translation(in: view).x)
+        let speed = -Double(g.velocity(in: view).x)
         switch g.state {
         case .began:
             dragging = true
@@ -803,12 +662,8 @@ extension Comparable {
 struct ShelfInspector: View {
     let album: AlbumInfo
     let format: AlbumFormat
-    /// Nom du jeu quand c'est une bande-son (boîtier PS5).
-    var game: String?
     let isBack: Bool
     @Binding var discOut: Bool
-    @Binding var vinylStage: VinylStage
-    @Binding var gatefoldOpen: Bool
     let playingThisAlbum: Bool
     var onFlip: () -> Void
     var onDisc: (Bool) -> Void
@@ -818,85 +673,17 @@ struct ShelfInspector: View {
     @Environment(Player.self) private var player
     @Environment(Library.self) private var library
     @Environment(AppSettings.self) private var settings
-    @State private var photoItem: PhotosPickerItem?
-    @State private var cropping: CropSource?
     @State private var customizing = false
     @State private var unwrapTick = 0
-    /// Face visible du vinyle sorti.
-    @State private var shownSide = 0
 
-    /// CD ou vinyle encore sous blister : il faut le déballer avant de sortir le disque.
-    private var sealed: Bool { (format == .cd || format == .vinyl) && settings.shrinkWrap && library.isSealed(album.id) }
-
-    private var vinylSides: [VinylSide] {
-        VinylLayout.sides(album, discs: VinylLayout.discCount(album, library.vinylOptions(album.id)))
-    }
-
-    /// Face suivante du disque sorti (A → B → C → D → A), en sautant les faces vides.
-    private var nextSide: Int? {
-        let sides = vinylSides
-        guard sides.count > 1 else { return nil }
-        for k in 1..<sides.count {
-            let i = (shownSide + k) % sides.count
-            if !sides[i].tracks.isEmpty { return i }
-        }
-        return nil
-    }
-
-    /// Lance une face depuis son premier morceau.
-    private func playSide(_ i: Int) {
-        guard vinylSides.indices.contains(i), let first = vinylSides[i].tracks.first else { return }
-        player.play(ids: album.tracks.map(\.id), startAt: first.id, shuffled: false)
-    }
-
-    @ViewBuilder private var vinylButtons: some View {
-        let spinning = playingThisAlbum && player.isPlaying
-        switch vinylStage {
-        case .jacket:
-            inspectorButton(isBack ? "Face" : "Dos", symbol: "arrow.left.and.right.righttriangle.left.righttriangle.right", action: onFlip)
-            inspectorButton("Sortir le vinyle", symbol: "record.circle") {
-                gatefoldOpen = false
-                vinylStage = .out
-            }
-            if library.vinylOptions(album.id).gatefold {
-                inspectorButton(gatefoldOpen ? "Fermer" : "Ouvrir", symbol: gatefoldOpen ? "book.closed" : "book") {
-                    gatefoldOpen.toggle()
-                }
-            } else {
-                inspectorButton(spinning ? "Pause" : "Lire", symbol: spinning ? "pause.fill" : "play.fill") {
-                    if playingThisAlbum { player.togglePlay() } else { playAlbum() }
-                }
-            }
-            inspectorButton("Stickers", symbol: "seal.fill", action: onStickers)
-        case .out:
-            inspectorButton("Ranger", symbol: "arrow.down.to.line") {
-                shownSide = 0
-                InspectorSceneController.shared?.node?.flipDisc(toSide: 0)
-                vinylStage = .jacket
-            }
-            if let next = nextSide {
-                // Retourne le disque pour voir l'autre face (son étiquette et ses sillons).
-                inspectorButton("Face " + vinylSides[next].letter, symbol: "arrow.triangle.2.circlepath") {
-                    shownSide = next
-                    InspectorSceneController.shared?.node?.flipDisc(toSide: next)
-                }
-            }
-            inspectorButton(spinning ? "Pause" : "Lire", symbol: spinning ? "pause.fill" : "play.fill") {
-                if playingThisAlbum { player.togglePlay() } else { playSide(shownSide) }
-            }
-            inspectorButton("Stickers", symbol: "seal.fill", action: onStickers)
-        }
-    }
+    /// CD encore sous blister : il faut le déballer avant de sortir le disque.
+    private var sealed: Bool { format == .cd && settings.shrinkWrap && library.isSealed(album.id) }
 
     var body: some View {
         let spinning = playingThisAlbum && player.isPlaying
         VStack(spacing: 16) {
             HStack(spacing: 10) {
-                if let game {
-                    // Bande-son : console du boîtier (PS3, PS4, PS5).
-                    PlatformSwitch(platform: library.platform(of: game)) { library.setPlatform($0, for: game) }
-                }
-                // Personnaliser : jaquette, dos, tranche et disque (le disque seulement pour un CD).
+                // Personnaliser : pochette avant, disque et prix.
                 Button {
                     customizing = true
                 } label: {
@@ -929,9 +716,7 @@ struct ShelfInspector: View {
             }
             .allowsHitTesting(false)
 
-            Text(format == .vinyl && vinylStage == .out
-                 ? "« Face » retourne le disque · « Lire » joue la face visible · glisse pour tourner"
-                 : "Glisse pour tourner · touche pour retourner · pince pour zoomer · touche deux fois pour remettre droit · appui long sur un album pour ses stickers")
+            Text("Glisse pour tourner · touche pour retourner · pince pour zoomer · touche deux fois pour remettre droit · appui long sur un album pour ses stickers")
                 .font(.caption)
                 .foregroundStyle(.white.opacity(0.45))
                 .multilineTextAlignment(.center)
@@ -939,9 +724,6 @@ struct ShelfInspector: View {
                 .allowsHitTesting(false)
 
             HStack(spacing: 10) {
-                if format == .vinyl && !sealed {
-                    vinylButtons
-                } else {
                 inspectorButton(format == .cassette ? (isBack ? "Face A" : "Face B") : (isBack ? "Face" : "Dos"),
                                 symbol: "arrow.left.and.right.righttriangle.left.righttriangle.right", action: onFlip)
                 if sealed {
@@ -954,7 +736,7 @@ struct ShelfInspector: View {
                         }
                     }
                     .transition(.blurReplace)
-                } else if format == .cd || format == .game {
+                } else if format == .cd {
                     inspectorButton(discTitle, symbol: discSymbol) {
                         let out = !discOut
                         onDisc(out)
@@ -966,41 +748,24 @@ struct ShelfInspector: View {
                     if playingThisAlbum { player.togglePlay() } else { playAlbum() }
                 }
                 inspectorButton("Stickers", symbol: "seal.fill", action: onStickers)
-                }
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 26)
             .animation(.spring(response: 0.4, dampingFraction: 0.85), value: sealed)
-            .animation(.spring(response: 0.4, dampingFraction: 0.85), value: vinylStage)
         }
         .sensoryFeedback(trigger: unwrapTick) { _, _ in settings.haptics ? .impact(flexibility: .soft, intensity: 0.8) : nil }
-        .onChange(of: photoItem) { _, item in loadCover(item) }
         .sheet(isPresented: $customizing) {
             // Feuille à mi-hauteur : le boîtier reste visible au-dessus et se met à jour en direct.
-            CaseCustomizer(album: album, game: game)
+            CaseCustomizer(album: album)
                 .presentationDetents([.medium, .large])
                 .presentationBackgroundInteraction(.enabled(upThrough: .medium))
                 .presentationDragIndicator(.visible)
         }
     }
 
-    private var discTitle: String {
-        if format == .game { return discOut ? "Refermer" : "Ouvrir" }
-        return discOut ? "Ranger le CD" : "Sortir le CD"
-    }
+    private var discTitle: String { discOut ? "Ranger le CD" : "Sortir le CD" }
 
-    private var discSymbol: String { format == .game ? "gamecontroller" : "opticaldisc" }
-
-    private func loadCover(_ item: PhotosPickerItem?) {
-        guard let item, game != nil else { return }
-        Task {
-            if let data = try? await item.loadTransferable(type: Data.self), let img = UIImage(data: data) {
-                // On recadre d'abord l'image au format de la jaquette.
-                cropping = CropSource(image: img)
-            }
-            photoItem = nil
-        }
-    }
+    private var discSymbol: String { "opticaldisc" }
 
     private func inspectorButton(_ title: String, symbol: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
@@ -1031,8 +796,6 @@ struct InspectorSceneView: UIViewRepresentable {
     let active: Bool
     let discOut: Bool
     let spinning: Bool
-    var vinylStage: VinylStage = .jacket
-    var gatefoldOpen = false
     let flipToken: Int
     let resetToken: Int
     var onBackChange: (Bool) -> Void
@@ -1071,13 +834,6 @@ struct InspectorSceneView: UIViewRepresentable {
         }
         c.setActive(active)
         c.node?.setWrapVisible(settings.shrinkWrap && library.isSealed(album.id))
-        if format == .vinyl {
-            // Vinyle : dans sa pochette, ou sorti à moitié de sa sous-pochette.
-            if active && vinylStage != .jacket { c.ensureDisc() }
-            c.node?.setVinylStage(active ? vinylStage : .jacket)
-            c.node?.setGatefold(open: active && gatefoldOpen && vinylStage == .jacket)
-            return
-        }
         if discOut { c.ensureDisc() }
         c.node?.setDiscOut(discOut && active)
         c.node?.setSpinning(active && spinning && (format == .cassette || discOut))
@@ -1298,15 +1054,11 @@ final class InspectorSceneController: NSObject, UIGestureRecognizerDelegate {
         let old = node
         let fresh = builder.make(album, format: format, badges: badges, extras: false)
         let wasOpen = old?.discOut ?? false
-        // Même album reconstruit (sticker, couleur du disque…) : le vinyle reste où il était.
-        let oldStage = old?.albumID == album.id ? (old?.vinyl?.stage ?? .jacket) : .jacket
-        let oldGatefold = old?.albumID == album.id && (old?.vinyl?.gatefoldOpen ?? false)
         guard animated else {
             old?.root.removeFromParentNode()
             holder.addChildNode(fresh.root)
             node = fresh
             if wasOpen { keepOpen(fresh) }
-            keepVinyl(fresh, stage: oldStage, gatefold: oldGatefold)
             return
         }
         fresh.root.opacity = 0
@@ -1314,7 +1066,6 @@ final class InspectorSceneController: NSObject, UIGestureRecognizerDelegate {
         holder.addChildNode(fresh.root)
         node = fresh
         if wasOpen { keepOpen(fresh) }
-        keepVinyl(fresh, stage: oldStage, gatefold: oldGatefold)
         SCNTransaction.begin()
         SCNTransaction.animationDuration = 0.3
         SCNTransaction.animationTimingFunction = CAMediaTimingFunction(name: .easeOut)
@@ -1324,16 +1075,6 @@ final class InspectorSceneController: NSObject, UIGestureRecognizerDelegate {
         old?.root.scale = SCNVector3(1.05, 1.05, 1.05)
         SCNTransaction.completionBlock = { old?.root.removeFromParentNode() }
         SCNTransaction.commit()
-    }
-
-    private func keepVinyl(_ fresh: AlbumNode, stage: VinylStage, gatefold: Bool) {
-        guard fresh.vinyl != nil else { return }
-        if stage != .jacket {
-            ensureDisc()
-            fresh.setVinylStage(stage, animated: false)
-        } else if gatefold {
-            fresh.setGatefold(open: true, animated: false)
-        }
     }
 
     /// Un modèle reconstruit (nouvelle image, nouveau sticker…) reste ouvert s'il l'était, disque compris.
@@ -1444,18 +1185,10 @@ struct StickerPicker: View {
     }
 
     private var placerBackground: UIImage? {
-        if let game = library.gameName(album.id) {
-            return library.gameCoverImage(game)
-                ?? AlbumNodeBuilder.generatedGameCover(title: game, season: GameCatalog.season(game),
-                                                       count: album.tracks.count, platform: library.platform(of: game))
-        }
-        return library.extraImage("front", album.id) ?? library.image(for: album.cover)
+        library.extraImage("front", album.id) ?? library.image(for: album.cover)
     }
 
-    private var placerAspect: CGFloat {
-        guard library.gameName(album.id) != nil else { return 1 }
-        return Physical.insert.width / Physical.insert.height
-    }
+    private var placerAspect: CGFloat { 1 }
 
     var body: some View {
         let chosen = library.stickers(for: album.id)
@@ -1552,50 +1285,6 @@ private struct StickerTile: View {
                     .transition(.scale.combined(with: .opacity))
             }
         }
-    }
-}
-
-
-/// Onglets de la Collection : Albums (CD et cassettes) ou Jeux (bandes-son en boîtiers PS5).
-private struct SectionSwitch: View {
-    @Binding var section: Int
-    let albums: Int
-    let games: Int
-    let vinyls: Int
-    @Namespace private var pill
-
-    var body: some View {
-        HStack(spacing: 2) {
-            tab(0, "Albums", "\(albums)", "opticaldisc")
-            tab(1, "Jeux", "\(games)", "gamecontroller.fill")
-            tab(2, "Vinyles", "\(vinyls)", "record.circle")
-        }
-        .padding(4)
-        .glassCapsule()
-        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: section)
-        .sensoryFeedback(.selection, trigger: section)
-    }
-
-    private func tab(_ index: Int, _ title: String, _ count: String, _ symbol: String) -> some View {
-        let on = section == index
-        return Button {
-            section = index
-        } label: {
-            HStack(spacing: 5) {
-                Text(title)
-                Text(count).opacity(0.55)
-            }
-            .font(.subheadline.weight(.semibold))
-            .foregroundStyle(on ? Color.black : Color.white.opacity(0.85))
-            .padding(.horizontal, 11)
-            .frame(height: 34)
-            .background {
-                if on { Capsule().fill(.white).matchedGeometryEffect(id: "pill", in: pill) }
-            }
-            .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .accessibilityAddTraits(on ? AccessibilityTraits.isSelected : AccessibilityTraits())
     }
 }
 
@@ -1815,40 +1504,5 @@ extension View {
                 .overlay { mask().blendMode(.destinationOut) }
                 .compositingGroup()
         }
-    }
-}
-
-
-/// Console du boîtier de jeu : PS3, PS4 ou PS5.
-private struct PlatformSwitch: View {
-    let platform: GamePlatform
-    var onChange: (GamePlatform) -> Void
-    @Namespace private var pill
-
-    var body: some View {
-        HStack(spacing: 2) {
-            ForEach(GamePlatform.allCases) { p in
-                let on = p == platform
-                Button {
-                    if !on { onChange(p) }
-                } label: {
-                    Text(p.label)
-                        .font(.footnote.weight(.bold))
-                        .foregroundStyle(on ? Color.black : Color.white.opacity(0.85))
-                        .padding(.horizontal, 10)
-                        .frame(height: 32)
-                        .background {
-                            if on { Capsule().fill(.white).matchedGeometryEffect(id: "pill", in: pill) }
-                        }
-                        .contentShape(Capsule())
-                }
-                .buttonStyle(.plain)
-                .accessibilityAddTraits(on ? AccessibilityTraits.isSelected : AccessibilityTraits())
-            }
-        }
-        .padding(4)
-        .glassCapsule()
-        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: platform)
-        .sensoryFeedback(.selection, trigger: platform)
     }
 }

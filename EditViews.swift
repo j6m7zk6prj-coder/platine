@@ -12,7 +12,6 @@ struct TrackInfoEditor: View {
     @State private var number = ""
     @State private var year = ""
     @State private var lyrics = ""
-    @State private var games: [String] = []
     @State private var explicit = false
     @State private var loaded = false
     @State private var searching = false
@@ -54,23 +53,6 @@ struct TrackInfoEditor: View {
                             .keyboardType(.numberPad)
                             .multilineTextAlignment(.trailing)
                     }
-                }
-                Section {
-                    NavigationLink {
-                        GameTagPicker(selection: $games)
-                    } label: {
-                        HStack {
-                            Label("Bande-son de jeu", systemImage: "gamecontroller.fill")
-                            Spacer()
-                            Text(games.isEmpty ? "Aucun" : games.joined(separator: ", "))
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                        }
-                    }
-                } header: {
-                    Text("Jeux vidéo")
-                } footer: {
-                    Text("Les morceaux d’un même jeu forment sa bande-son, rangée dans un boîtier de jeu PS5 dans la Collection (onglet Jeux).")
                 }
                 Section {
                     TextEditor(text: $lyrics)
@@ -116,7 +98,6 @@ struct TrackInfoEditor: View {
                     Button("Enregistrer") {
                         library.updateInfo(trackID, title: title, artist: artist, album: album,
                                            trackNumber: Int(number) ?? 0, year: Int(year) ?? 0, lyrics: lyrics)
-                        library.setGames(trackID, games)
                         library.setExplicit(trackID, explicit)
                         dismiss()
                     }
@@ -140,7 +121,6 @@ struct TrackInfoEditor: View {
                 number = t.trackNumber > 0 ? "\(t.trackNumber)" : ""
                 year = t.year > 0 ? "\(t.year)" : ""
                 lyrics = t.lyrics ?? ""
-                games = t.games
                 explicit = t.explicit
             }
         }
@@ -179,72 +159,5 @@ struct ArtistAvatar: View {
             .clipShape(Circle())
             .overlay { Circle().strokeBorder(.white.opacity(0.1), lineWidth: 0.5) }
             .accessibilityHidden(true)
-    }
-}
-
-
-/// Choix des jeux (FIFA 17, FC 24…) dont le morceau fait partie de la bande-son. Plusieurs possibles.
-struct GameTagPicker: View {
-    @Binding var selection: [String]
-    @Environment(Library.self) private var library
-    @State private var custom = ""
-
-    var body: some View {
-        let extra = Array(Set(library.usedGames + selection)).filter { !GameCatalog.all.contains($0) }.sorted()
-        List {
-            Section {
-                HStack {
-                    TextField("Autre jeu (ex. PES 6)", text: $custom)
-                        .submitLabel(.done)
-                        .onSubmit(addCustom)
-                    Button("Ajouter", action: addCustom)
-                        .disabled(custom.trimmingCharacters(in: .whitespaces).isEmpty)
-                }
-            } footer: {
-                Text("Touche un ou plusieurs jeux. Un morceau présent dans plusieurs jeux apparaît dans chacun.")
-            }
-            if !extra.isEmpty {
-                Section("Tes jeux") {
-                    ForEach(extra, id: \.self) { row($0) }
-                }
-            }
-            Section("EA Sports FC") {
-                ForEach(GameCatalog.all.filter { $0.hasPrefix("FC") }, id: \.self) { row($0) }
-            }
-            Section("FIFA") {
-                ForEach(GameCatalog.all.filter { $0.hasPrefix("FIFA") }, id: \.self) { row($0) }
-            }
-        }
-        .navigationTitle("Bande-son de jeu")
-        .navigationBarTitleDisplayMode(.inline)
-    }
-
-    private func row(_ game: String) -> some View {
-        let on = selection.contains(game)
-        return Button {
-            if let i = selection.firstIndex(of: game) { selection.remove(at: i) } else { selection.append(game) }
-        } label: {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(game).foregroundStyle(.primary)
-                    let season = GameCatalog.season(game)
-                    if !season.isEmpty {
-                        Text(season).font(.caption).foregroundStyle(.secondary)
-                    }
-                }
-                Spacer()
-                Image(systemName: on ? "checkmark.circle.fill" : "circle")
-                    .font(.title3)
-                    .foregroundStyle(on ? AnyShapeStyle(.tint) : AnyShapeStyle(.tertiary))
-            }
-        }
-        .sensoryFeedback(.selection, trigger: on)
-    }
-
-    private func addCustom() {
-        let name = custom.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty else { return }
-        if !selection.contains(name) { selection.append(name) }
-        custom = ""
     }
 }

@@ -132,7 +132,7 @@ struct SettingsView: View {
             }
 
             Section {
-                LabeledContent("Version", value: "8.2")
+                LabeledContent("Version", value: "9.0")
             } footer: {
                 Text("Platine lit ta propre musique. Seule la recherche de paroles contacte internet (LRCLIB), et uniquement quand tu ouvres des paroles absentes ou lances la recherche.")
             }
@@ -284,31 +284,10 @@ struct AppearanceSettingsView: View {
                 .pickerStyle(.segmented)
                 Toggle("Pochettes animées", isOn: $settings.animatedArtwork)
                 Toggle("Pochette étendue dans les albums", isOn: $settings.extendedAlbumArtwork)
-                Toggle("CD et vinyles neufs sous blister", isOn: $settings.shrinkWrap)
+                Toggle("CD neufs sous blister", isOn: $settings.shrinkWrap)
                 Toggle("Étiquettes prix du disquaire", isOn: $settings.priceStickers)
             }
 
-            Section {
-                Picker("Rangement", selection: $settings.vinylStorage) {
-                    ForEach(VinylStorage.allCases) { Text($0.label).tag($0) }
-                }
-                Toggle("Pochettes marquées par l’usure", isOn: $settings.ringWear)
-                Toggle("Craquements vinyle", isOn: $settings.vinylCrackle)
-                    .onChange(of: settings.vinylCrackle) { _, _ in player.applyCrackle() }
-                if settings.vinylCrackle {
-                    HStack {
-                        Image(systemName: "speaker.wave.1")
-                        Slider(value: $settings.crackleAmount, in: 0.05...1)
-                            .onChange(of: settings.crackleAmount) { _, _ in player.applyCrackle() }
-                        Image(systemName: "speaker.wave.3")
-                    }
-                    .foregroundStyle(.secondary)
-                }
-            } header: {
-                Text("Vinyles")
-            } footer: {
-                Text("Les craquements sont ajoutés pendant l’écoute, comme sur un vrai vinyle : tes fichiers ne sont jamais modifiés.")
-            }
 
             Section {
                 Toggle("Lecteur sur l’écran verrouillé", isOn: $settings.lockScreenPlayer)

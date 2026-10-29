@@ -16,17 +16,21 @@ struct RootView: View {
     var body: some View {
         @Bindable var ui = ui
         TabView(selection: $ui.selectedTab) {
+            NavigationStack { HomeView() }
+                .modifier(MiniPlayerInset())
+                .tabItem { Label("Accueil", systemImage: "house.fill") }
+                .tag(0)
             NavigationStack { LibraryHomeView() }
                 .modifier(MiniPlayerInset())
                 .tabItem { Label("Bibliothèque", systemImage: "square.stack.fill") }
-                .tag(0)
+                .tag(1)
             NavigationStack { SearchView() }
                 .modifier(MiniPlayerInset())
                 .tabItem { Label("Recherche", systemImage: "magnifyingglass") }
-                .tag(1)
+                .tag(2)
             NavigationStack { SettingsView() }
                 .tabItem { Label("Réglages", systemImage: "gearshape.fill") }
-                .tag(2)
+                .tag(3)
         }
         .overlay(alignment: .top) { Banner() }
         .modifier(PlayerPresenter(isPresented: $ui.showPlayer, namespace: playerZoom))
