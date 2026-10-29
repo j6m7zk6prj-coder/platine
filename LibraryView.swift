@@ -89,7 +89,8 @@ struct CollectionCard: View {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Collection").font(.title2.bold())
-                    Text("\(shown.count) album\(shown.count > 1 ? "s" : "") exposé\(shown.count > 1 ? "s" : "") sur \(library.albums.count)")
+                    let vinyls = library.vinylAlbums.count
+                    Text("\(shown.count) CD · \(vinyls) vinyle\(vinyls > 1 ? "s" : "") sur \(library.albums.count) albums")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
@@ -142,29 +143,39 @@ struct CollectionCard: View {
 struct ExhibitPicker: View {
     @Environment(Library.self) private var library
     @Environment(\.dismiss) private var dismiss
+    /// Collection modifiée : 0 = CD, 1 = vinyles.
+    @State private var kind = 0
 
     private let columns = [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)]
 
     var body: some View {
         let albums = library.albums
-        let count = library.exposedAlbums.count
+        let vinyl = kind == 1
+        let count = vinyl ? library.vinylAlbums.count : library.exposedAlbums.count
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    Text("Touche une pochette pour l’exposer dans la Collection ou la ranger. \(count) sur \(albums.count) exposés.")
+                    Picker("Collection", selection: $kind) {
+                        Label("CD", systemImage: "opticaldisc").tag(0)
+                        Label("Vinyles", systemImage: "record.circle").tag(1)
+                    }
+                    .pickerStyle(.segmented)
+                    Text(vinyl
+                         ? "Touche une pochette pour la ranger dans le bac à vinyles ou l’en retirer. \(count) sur \(albums.count) en vinyle."
+                         : "Touche une pochette pour l’exposer dans la Collection ou la ranger. \(count) sur \(albums.count) exposés.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                     HStack(spacing: 10) {
-                        Button("Tout exposer") { library.setAllExposed(true) }
+                        Button("Tout exposer") { vinyl ? library.setAllVinylExposed(true) : library.setAllExposed(true) }
                             .buttonStyle(.bordered)
-                        Button("Tout ranger") { library.setAllExposed(false) }
+                        Button("Tout ranger") { vinyl ? library.setAllVinylExposed(false) : library.setAllExposed(false) }
                             .buttonStyle(.bordered)
                     }
                     LazyVGrid(columns: columns, spacing: 16) {
                         ForEach(albums) { album in
-                            let on = library.isExposed(album.id)
+                            let on = vinyl ? library.isVinylExposed(album.id) : library.isExposed(album.id)
                             Button {
-                                library.setExposed(album.id, !on)
+                                if vinyl { library.setVinylExposed(album.id, !on) } else { library.setExposed(album.id, !on) }
                             } label: {
                                 VStack(alignment: .leading, spacing: 5) {
                                     ArtworkView(track: album.cover, animated: false, small: true, cornerRadius: 8)

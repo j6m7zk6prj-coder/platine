@@ -177,6 +177,56 @@ final class Library {
         UserDefaults.standard.set(Array(hiddenFromCollection), forKey: "hiddenFromCollection")
     }
 
+    // MARK: Vinyles exposés
+
+    /// Albums que tu as choisi de ne pas mettre dans le bac à vinyles.
+    private(set) var hiddenFromVinyl: Set<String> =
+        Set(UserDefaults.standard.stringArray(forKey: "hiddenFromVinyl") ?? [])
+
+    func isVinylExposed(_ albumID: String) -> Bool { !hiddenFromVinyl.contains(VinylCatalog.base(albumID)) }
+
+    func setVinylExposed(_ albumID: String, _ on: Bool) {
+        let id = VinylCatalog.base(albumID)
+        if on { hiddenFromVinyl.remove(id) } else {
+            hiddenFromVinyl.insert(id)
+            // Rangé : il retrouve son blister neuf.
+            setSealed(VinylCatalog.prefix + id, true)
+        }
+        UserDefaults.standard.set(Array(hiddenFromVinyl), forKey: "hiddenFromVinyl")
+    }
+
+    func setAllVinylExposed(_ on: Bool) {
+        hiddenFromVinyl = on ? [] : Set(albums.map(\.id))
+        if !on {
+            unwrappedAlbums = unwrappedAlbums.filter { !VinylCatalog.isVinyl($0) }
+            UserDefaults.standard.set(Array(unwrappedAlbums), forKey: "unwrappedAlbums")
+        }
+        UserDefaults.standard.set(Array(hiddenFromVinyl), forKey: "hiddenFromVinyl")
+    }
+
+    /// Couleur du disque, pochette, sous-pochette… pour chaque album.
+    private(set) var vinylOptionsMap: [String: VinylOptions] = {
+        guard let data = UserDefaults.standard.data(forKey: "vinylOptions"),
+              let map = try? JSONDecoder().decode([String: VinylOptions].self, from: data) else { return [:] }
+        return map
+    }()
+
+    func setVinylOptions(_ options: VinylOptions, for albumID: String) {
+        vinylOptionsMap[VinylCatalog.base(albumID)] = options
+        if let data = try? JSONEncoder().encode(vinylOptionsMap) { UserDefaults.standard.set(data, forKey: "vinylOptions") }
+        artworkRevision += 1
+    }
+
+    /// Prix que tu as choisis (sinon un prix de disquaire est proposé).
+    private(set) var customPrices: [String: Double] =
+        (UserDefaults.standard.dictionary(forKey: "customPrices") as? [String: Double]) ?? [:]
+
+    func setPrice(_ price: Double?, for albumID: String) {
+        if let price, price > 0 { customPrices[albumID] = (price * 100).rounded() / 100 } else { customPrices[albumID] = nil }
+        UserDefaults.standard.set(customPrices, forKey: "customPrices")
+        artworkRevision += 1
+    }
+
     /// Albums dont tu as déjà retiré le blister (le film plastique) dans la Collection.
     private(set) var unwrappedAlbums: Set<String> =
         Set(UserDefaults.standard.stringArray(forKey: "unwrappedAlbums") ?? [])
@@ -789,6 +839,14 @@ final class Library {
             if let m = albumCovers.removeValue(forKey: Self.motionKey(albumID)) { albumCovers[Self.motionKey(newID)] = m }
             saveAlbumCovers()
         }
+        if newID != albumID, let v = vinylOptionsMap.removeValue(forKey: albumID) {
+            vinylOptionsMap[newID] = v
+            if let data = try? JSONEncoder().encode(vinylOptionsMap) { UserDefaults.standard.set(data, forKey: "vinylOptions") }
+        }
+        if newID != albumID, hiddenFromVinyl.remove(albumID) != nil {
+            hiddenFromVinyl.insert(newID)
+            UserDefaults.standard.set(Array(hiddenFromVinyl), forKey: "hiddenFromVinyl")
+        }
         if newID != albumID, let f = albumFormats.removeValue(forKey: albumID) {
             albumFormats[newID] = f
             saveFormats()
@@ -807,6 +865,7 @@ final class Library {
     func format(of albumID: String, default fallback: AlbumFormat) -> AlbumFormat {
         // Les cassettes ont été retirées : tous les albums sont des CD, les bandes-son des jeux.
         if albumID.hasPrefix(GameCatalog.prefix) { return .game }
+        if VinylCatalog.isVinyl(albumID) { return .vinyl }
         return .cd
     }
 

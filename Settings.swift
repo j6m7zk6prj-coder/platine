@@ -156,6 +156,17 @@ final class AppSettings {
     var lockScreenPlayer: Bool { didSet { UserDefaults.standard.set(lockScreenPlayer, forKey: "lockScreenPlayer") } }
     var liquidGlass: Bool { didSet { UserDefaults.standard.set(liquidGlass, forKey: "liquidGlass") } }
     var glassIntensity: Double { didSet { UserDefaults.standard.set(glassIntensity, forKey: "glassIntensity") } }
+    /// Étiquettes prix de disquaire sur les CD et les vinyles.
+    var priceStickers: Bool { didSet { UserDefaults.standard.set(priceStickers, forKey: "priceStickers") } }
+    /// Rangement des vinyles : bac à feuilleter ou étagère murale.
+    var vinylStorage: VinylStorage { didSet { UserDefaults.standard.set(vinylStorage.rawValue, forKey: "vinylStorage") } }
+    /// Craquements de vinyle ajoutés à l'écoute (le fichier n'est jamais modifié).
+    var vinylCrackle: Bool { didSet { UserDefaults.standard.set(vinylCrackle, forKey: "vinylCrackle") } }
+    var crackleAmount: Double { didSet { UserDefaults.standard.set(crackleAmount, forKey: "crackleAmount") } }
+    /// Craquements seulement quand un vinyle tourne sur la platine.
+    var crackleOnlyTurntable: Bool { didSet { UserDefaults.standard.set(crackleOnlyTurntable, forKey: "crackleOnlyTurntable") } }
+    /// Marque du cercle du disque sur les pochettes très écoutées.
+    var ringWear: Bool { didSet { UserDefaults.standard.set(ringWear, forKey: "ringWear") } }
 
     /// Couleur d'accent lisible sur le thème choisi (le blanc devient noir sur un thème clair).
     var tint: Color { activeTheme.isLight && accent == .white ? .black : accent.color }
@@ -185,6 +196,12 @@ final class AppSettings {
         shrinkWrap = d.object(forKey: "shrinkWrap") as? Bool ?? true
         liquidGlass = d.object(forKey: "liquidGlass") as? Bool ?? true
         glassIntensity = d.object(forKey: "glassIntensity") as? Double ?? 0.6
+        priceStickers = d.object(forKey: "priceStickers") as? Bool ?? true
+        vinylStorage = VinylStorage(rawValue: d.string(forKey: "vinylStorage") ?? "") ?? .crate
+        vinylCrackle = d.object(forKey: "vinylCrackle") as? Bool ?? true
+        crackleAmount = d.object(forKey: "crackleAmount") as? Double ?? 0.35
+        crackleOnlyTurntable = d.object(forKey: "crackleOnlyTurntable") as? Bool ?? true
+        ringWear = d.object(forKey: "ringWear") as? Bool ?? true
     }
 }
 

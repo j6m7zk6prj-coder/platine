@@ -87,9 +87,16 @@ struct ReverbParams {
     var room: Float = 0.5
     var damp: Float = 0.5
     var preDelay: Float = 0
+    /// Craquements de vinyle (0 = aucun).
+    var crackle: Float = 0
 }
 
 enum SoundEffects {
+    /// Intensité des craquements de vinyle (0 à 1).
+    static func setCrackle(_ amount: Double) {
+        params.pointee.crackle = Float(min(1, max(0, amount)))
+    }
+
     nonisolated(unsafe) static let params: UnsafeMutablePointer<ReverbParams> = {
         let p = UnsafeMutablePointer<ReverbParams>.allocate(capacity: 1)
         p.initialize(to: ReverbParams())
@@ -189,6 +196,19 @@ struct ReverbState {
     var preWrite = 0
     var wet: Float = 0
     var active = false
+    // Craquements : générateur aléatoire, « pop » en cours et souffle filtré.
+    var rng: UInt32 = 0x9E3779B9
+    var pop: Float = 0
+    var popTone: Float = 0
+    var hiss: Float = 0
+    var rumble: Float = 0
+
+    mutating func random() -> Float {
+        rng ^= rng << 13
+        rng ^= rng >> 17
+        rng ^= rng << 5
+        return Float(rng) / Float(UInt32.max)
+    }
 
     mutating func build(sampleRate sr: Double) {
         freeAll()
@@ -249,12 +269,13 @@ private let reverbProcess: MTAudioProcessingTapProcessCallback = { tap, frames, 
     guard s.pointee.ready, var pre = s.pointee.pre else { return }
     let p = s.pointee.params.pointee
     let target = p.wet
-    // Pas de réverbe : le son passe sans être touché.
-    if target < 0.001 && s.pointee.wet < 0.001 {
+    let crackle = p.crackle
+    // Pas de réverbe ni de craquements : le son passe sans être touché.
+    let reverbOn = !(target < 0.001 && s.pointee.wet < 0.001)
+    if !reverbOn {
         if s.pointee.active { s.pointee.active = false }
-        return
-    }
-    if !s.pointee.active {
+        if crackle < 0.001 { return }
+    } else if !s.pointee.active {
         // On repart d'un écho vide (pas de reste d'un ancien morceau).
         s.pointee.clearAll()
         s.pointee.active = true
@@ -266,6 +287,34 @@ private let reverbProcess: MTAudioProcessingTapProcessCallback = { tap, frames, 
           let right = buffers[1].mData?.assumingMemoryBound(to: Float.self) else { return }
     let n = Int(framesOut.pointee)
     guard n > 0 else { return }
+
+    if crackle >= 0.001 {
+        // Vinyle : petits « clics » aléatoires, quelques gros craquements, un souffle doux et un léger grondement.
+        let rate = Float(s.pointee.sampleRate)
+        let clickChance = crackle * 9 / rate          // ~9 clics par seconde au maximum
+        let popChance = crackle * 0.7 / rate          // ~0,7 gros craquement par seconde
+        let hissLevel = 0.0035 * crackle
+        for i in 0..<n {
+            let u = s.pointee.random()
+            if u < popChance {
+                s.pointee.pop = (0.12 + 0.2 * s.pointee.random()) * crackle
+                s.pointee.popTone = s.pointee.random() > 0.5 ? 1 : -1
+            } else if u < popChance + clickChance {
+                s.pointee.pop = (0.015 + 0.05 * s.pointee.random()) * crackle
+                s.pointee.popTone = s.pointee.random() > 0.5 ? 1 : -1
+            }
+            let noise = s.pointee.random() * 2 - 1
+            // Souffle : bruit blanc adouci (filtre passe-bas simple).
+            s.pointee.hiss += (noise - s.pointee.hiss) * 0.35
+            s.pointee.rumble += (noise - s.pointee.rumble) * 0.002
+            let click = s.pointee.pop * (s.pointee.popTone * 0.6 + noise * 0.4)
+            s.pointee.pop *= 0.6
+            let add = click + s.pointee.hiss * hissLevel + s.pointee.rumble * 0.02 * crackle
+            left[i] += add
+            right[i] += add * 0.92
+        }
+        if !reverbOn { return }
+    }
 
     let feedback = p.room * 0.28 + 0.7
     let damp = p.damp * 0.4

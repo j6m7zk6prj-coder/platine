@@ -132,7 +132,7 @@ struct SettingsView: View {
             }
 
             Section {
-                LabeledContent("Version", value: "7.3")
+                LabeledContent("Version", value: "8.0")
             } footer: {
                 Text("Platine lit ta propre musique. Seule la recherche de paroles contacte internet (LRCLIB), et uniquement quand tu ouvres des paroles absentes ou lances la recherche.")
             }
@@ -284,7 +284,32 @@ struct AppearanceSettingsView: View {
                 .pickerStyle(.segmented)
                 Toggle("Pochettes animées", isOn: $settings.animatedArtwork)
                 Toggle("Pochette étendue dans les albums", isOn: $settings.extendedAlbumArtwork)
-                Toggle("CD neufs sous blister", isOn: $settings.shrinkWrap)
+                Toggle("CD et vinyles neufs sous blister", isOn: $settings.shrinkWrap)
+                Toggle("Étiquettes prix du disquaire", isOn: $settings.priceStickers)
+            }
+
+            Section {
+                Picker("Rangement", selection: $settings.vinylStorage) {
+                    ForEach(VinylStorage.allCases) { Text($0.label).tag($0) }
+                }
+                Toggle("Pochettes marquées par l’usure", isOn: $settings.ringWear)
+                Toggle("Craquements vinyle", isOn: $settings.vinylCrackle)
+                    .onChange(of: settings.vinylCrackle) { _, _ in player.applyCrackle() }
+                if settings.vinylCrackle {
+                    HStack {
+                        Image(systemName: "speaker.wave.1")
+                        Slider(value: $settings.crackleAmount, in: 0.05...1)
+                            .onChange(of: settings.crackleAmount) { _, _ in player.applyCrackle() }
+                        Image(systemName: "speaker.wave.3")
+                    }
+                    .foregroundStyle(.secondary)
+                    Toggle("Seulement sur la platine", isOn: $settings.crackleOnlyTurntable)
+                        .onChange(of: settings.crackleOnlyTurntable) { _, _ in player.applyCrackle() }
+                }
+            } header: {
+                Text("Vinyles")
+            } footer: {
+                Text("Les craquements sont ajoutés pendant l’écoute : tes fichiers ne sont jamais modifiés. « Seulement sur la platine » : quand un vinyle tourne sur la platine de la Collection.")
             }
 
             Section {

@@ -115,13 +115,14 @@ struct ArtistInfo: Identifiable, Hashable {
 
 /// Format physique d'un album dans la Collection.
 enum AlbumFormat: String, CaseIterable, Identifiable {
-    case cd, cassette, game
+    case cd, cassette, game, vinyl
     var id: String { rawValue }
     var label: String {
         switch self {
         case .cd: return "CD"
         case .cassette: return "Cassette"
         case .game: return "Jeu vidéo"
+        case .vinyl: return "Vinyle"
         }
     }
     /// Formats proposés pour un album (le boîtier de jeu est réservé aux bandes-son).

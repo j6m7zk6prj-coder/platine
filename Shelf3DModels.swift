@@ -12,6 +12,8 @@ enum Physical {
         case .cd: return SCNVector3(1.42, 1.25, 0.1)
         case .cassette: return SCNVector3(1.42, 0.899, 0.17)
         case .game: return SCNVector3(1.35, 1.555, 0.14)
+        // Pochette de 33 tours : 315 × 315 mm.
+        case .vinyl: return SCNVector3(3.15, 3.15, 0.04)
         }
     }
 
@@ -37,6 +39,7 @@ struct ReflectionFace {
     let z: Float
 }
 
+@MainActor
 final class AlbumNode {
     let albumID: String
     let format: AlbumFormat
@@ -61,6 +64,8 @@ final class AlbumNode {
     var wrapNode: SCNNode?
     /// Appelé quand le blister est retiré (pour s'en souvenir).
     var onUnwrap: () -> Void = {}
+    /// Pièces propres aux vinyles (sous-pochette, platine, bras…).
+    var vinyl: VinylRig?
 
     /// Affiche ou cache le blister, sans animation (mise à jour de l'étagère).
     func setWrapVisible(_ on: Bool) {
@@ -79,18 +84,20 @@ final class AlbumNode {
     func unwrap() {
         guard let wrapNode, isWrapped else { return }
         onUnwrap()
+        // Les distances suivent la taille de l'objet (une pochette de vinyle est bien plus grande qu'un CD).
+        let k = Double(size.x / 1.42)
         // 1. Le film se détend (on vient de tirer la languette).
         let loosen = SCNAction.scale(to: 1.018, duration: 0.16)
         loosen.timingMode = .easeOut
         // 2. Il se décolle du coin droit, en pivotant un peu.
         let peel = SCNAction.group([
             .rotateBy(x: 0.05, y: -0.32, z: -0.06, duration: 0.34),
-            .moveBy(x: 0.12, y: 0.06, z: 0.16, duration: 0.34)
+            .moveBy(x: 0.12 * k, y: 0.06 * k, z: 0.16 * k, duration: 0.34)
         ])
         peel.timingMode = .easeInEaseOut
         // 3. Il part sur le côté et s'efface.
         let away = SCNAction.group([
-            .moveBy(x: 1.1, y: 0.3, z: 0.5, duration: 0.5),
+            .moveBy(x: 1.1 * k, y: 0.3 * k, z: 0.5 * k, duration: 0.5),
             .rotateBy(x: 0.1, y: -0.55, z: -0.18, duration: 0.5),
             .scale(to: 0.92, duration: 0.5),
             .fadeOut(duration: 0.5)
@@ -107,7 +114,13 @@ final class AlbumNode {
 
     var size: SCNVector3 { Physical.size(format) }
     /// Échelle d'affichage (le boîtier de jeu est réduit pour avoir la même présence qu'un CD).
-    var fit: Float { format == .game ? 0.78 : 1 }
+    var fit: Float {
+        switch format {
+        case .game: return 0.78
+        case .vinyl: return 0.47
+        default: return 1
+        }
+    }
     /// Taille telle qu'on la voit à l'écran.
     var shownSize: SCNVector3 { SCNVector3(size.x * fit, size.y * fit, size.z * fit) }
 
@@ -135,7 +148,8 @@ final class AlbumNode {
     }
 
     private var restDisc: SCNVector3 {
-        format == .game ? SCNVector3(0, 0.02, Physical.gameDiscZ) : SCNVector3(0.05, 0, 0)
+        if format == .vinyl { return SCNVector3(0, 0, 0) }
+        return format == .game ? SCNVector3(0, 0.02, Physical.gameDiscZ) : SCNVector3(0.05, 0, 0)
     }
     private var outDisc: SCNVector3 {
         // Boîtier de jeu : le disque reste dans son plateau, juste soulevé sur son ergot.
@@ -159,6 +173,7 @@ final class AlbumNode {
     /// Remet l'objet au repos sans animation.
     func settle() {
         discOut = false
+        if vinyl != nil { settleVinyl() }
         lidPivot?.eulerAngles = SCNVector3(0, 0, 0)
         for n in spineNodes { n.opacity = 1 }
         content.scale = SCNVector3(fit, fit, fit)
@@ -172,10 +187,13 @@ final class AlbumNode {
     func setSpinning(_ on: Bool) {
         guard on != spinning else { return }
         spinning = on
-        let spinners = reels + (discPivot.map { [$0] } ?? [])
+        // Vinyle : c'est le plateau de la platine qui tourne (avec le disque posé dessus).
+        let disc: SCNNode? = vinyl != nil ? vinyl?.turntable?.platterSpin : discPivot
+        let spinners = reels + (disc.map { [$0] } ?? [])
         for node in spinners {
             if on {
-                let duration = node === discPivot ? 1.8 : 2.4
+                // 33 tours par minute : un tour en 1,8 seconde.
+                let duration = node === disc ? 1.8 : 2.4
                 node.runAction(.repeatForever(.rotateBy(x: 0, y: 0, z: -2 * .pi, duration: duration)), forKey: "spin")
             } else {
                 // Le disque ralentit puis s'arrête, au lieu de se figer net.
@@ -189,7 +207,8 @@ final class AlbumNode {
 
     /// Le CD sort par le haut du boîtier, comme quand on le retire à la main.
     func setDiscOut(_ out: Bool, animated: Bool = true) {
-        guard let discPivot, out != discOut else { return }
+        // Vinyle : géré par ses étapes (pochette, sorti, platine).
+        guard vinyl == nil, let discPivot, out != discOut else { return }
         discOut = out
         if let lidPivot {
             // Boîtier de jeu : il s'ouvre à plat comme un livre ; on voit le livret à gauche,
@@ -254,7 +273,15 @@ struct AlbumNodeBuilder {
         let discName: String = library.extraImageName("disc", album.id) ?? "-"
         let frontName: String = library.extraImageName("front", album.id) ?? "-"
         let badgeList: String = earned + ";" + mine + ";" + placed + ";" + discName + ";" + frontName
-        let parts: [String] = [album.id, format.rawValue, art, badgeList, album.title, album.artist]
+        // Étiquette prix, et pour un vinyle : ses options, l'intérieur du gatefold et l'usure de la pochette.
+        var extra: String = settings.priceStickers ? PriceTag.text(library.price(for: album.id)) : "noprice"
+        if format == .vinyl {
+            let options = library.vinylOptions(album.id)
+            let inner: String = library.extraImageName("inner", album.id) ?? "-"
+            let wear: Int = settings.ringWear ? Int((library.ringWear(album) * 4).rounded()) : 0
+            extra += "#" + options.signature + "#" + inner + "#" + String(wear) + "#" + String(album.tracks.count)
+        }
+        let parts: [String] = [album.id, format.rawValue, art, badgeList, album.title, album.artist, extra]
         return parts.joined(separator: "|")
     }
 
@@ -270,6 +297,13 @@ struct AlbumNodeBuilder {
             return node
         case .cassette: return makeCassette(album, badges: badges, signature: sig)
         case .game: return makeGameCase(album, badges: badges, extras: extras, signature: sig)
+        case .vinyl:
+            let node = makeVinyl(album, badges: badges, signature: sig)
+            node.wrapNode?.isHidden = !(settings.shrinkWrap && library.isSealed(album.id))
+            let lib = library
+            let id = album.id
+            node.onUnwrap = { lib.setSealed(id, false) }
+            return node
         }
     }
 
@@ -387,6 +421,14 @@ struct AlbumNodeBuilder {
             parts.append(k)
         }
 
+        // Étiquette prix du disquaire, collée en haut à droite.
+        if settings.priceStickers {
+            let tag = Self.priceTagNode(price: library.price(for: album.id), width: 0.36)
+            tag.position = SCNVector3(Float(W / 2 - 0.27), Float(H / 2 - 0.16), Float(D / 2) + 0.0046)
+            tag.eulerAngles.z = -0.04
+            parts.append(tag)
+        }
+
         // Blister : le film plastique bien tendu d'un CD neuf, avec ses plis aux coins, ses soudures au dos
         // et la bande de sécurité sur le dessus. Il ne voile pas la pochette : il n'ajoute que des reflets.
         let wrap = SCNNode()
@@ -436,6 +478,7 @@ struct AlbumNodeBuilder {
     /// Le CD lui-même, rangé (invisible) dans le boîtier : un vrai disque de 120 mm,
     /// troué au centre, avec la face imprimée d'un côté et la face miroir irisée de l'autre.
     func makeDisc(_ album: AlbumInfo) -> SCNNode {
+        if VinylCatalog.isVinyl(album.id) { return makeVinylDisc(album) }
         let label: UIImage?
         if let custom = library.extraImage("disc", album.id) {
             let name: String = library.extraImageName("disc", album.id) ?? "-"
@@ -746,7 +789,7 @@ struct AlbumNodeBuilder {
         return node
     }
 
-    private func renderTransparent<V: View>(_ view: V, _ size: CGSize) -> UIImage? {
+    func renderTransparent<V: View>(_ view: V, _ size: CGSize) -> UIImage? {
         let content = view
             .frame(width: size.width, height: size.height)
             .environment(library)
@@ -1649,7 +1692,7 @@ struct AlbumNodeBuilder {
 
     // MARK: Outils
 
-    private func render<V: View>(_ view: V, _ size: CGSize, scale: CGFloat = 1.6) -> UIImage? {
+    func render<V: View>(_ view: V, _ size: CGSize, scale: CGFloat = 1.6) -> UIImage? {
         let content = view
             .frame(width: size.width, height: size.height)
             .environment(library)
@@ -1668,7 +1711,7 @@ struct AlbumNodeBuilder {
         return c
     }()
 
-    private func cached(_ key: String, _ make: () -> UIImage?) -> UIImage? {
+    func cached(_ key: String, _ make: () -> UIImage?) -> UIImage? {
         if let img = Self.textures.object(forKey: key as NSString) { return img }
         guard let img = make() else { return nil }
         Self.textures.setObject(img, forKey: key as NSString)

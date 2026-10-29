@@ -905,7 +905,7 @@ struct CaseCustomizer: View {
     @State private var cropping: CropSource?
 
     enum Slot: String, Identifiable {
-        case wrap, cover, back, spine, front, disc
+        case wrap, cover, back, spine, front, disc, inner
         var id: String { rawValue }
         var title: String {
             switch self {
@@ -915,6 +915,7 @@ struct CaseCustomizer: View {
             case .spine: return "Tranche"
             case .front: return "Pochette avant"
             case .disc: return "Disque"
+            case .inner: return "Intérieur du gatefold"
             }
         }
         var detail: String {
@@ -925,6 +926,7 @@ struct CaseCustomizer: View {
             case .spine: return "Le côté, visible sur l’étagère"
             case .front: return "L’image carrée sous le couvercle du boîtier"
             case .disc: return "Recadrée en cercle, comme une photo de profil"
+            case .inner: return "La double page qu’on voit en ouvrant la pochette"
             }
         }
         var symbol: String {
@@ -935,11 +937,17 @@ struct CaseCustomizer: View {
             case .spine: return "rectangle.split.3x1"
             case .front: return "square"
             case .disc: return "opticaldisc"
+            case .inner: return "book"
             }
         }
     }
 
-    private var slots: [Slot] { game == nil ? [.front, .disc] : [.wrap, .cover, .back, .spine, .disc] }
+    private var isVinyl: Bool { VinylCatalog.isVinyl(album.id) }
+
+    private var slots: [Slot] {
+        if isVinyl { return library.vinylOptions(album.id).gatefold ? [.front, .inner, .disc] : [.front, .disc] }
+        return game == nil ? [.front, .disc] : [.wrap, .cover, .back, .spine, .disc]
+    }
 
     var body: some View {
         NavigationStack {
@@ -947,7 +955,15 @@ struct CaseCustomizer: View {
                 Section {
                     ForEach(slots) { slot in row(slot) }
                 } footer: {
-                    Text("Le boîtier au-dessus se met à jour dès que tu valides une image.")
+                    Text(isVinyl ? "Le vinyle au-dessus se met à jour dès que tu valides un choix. Pour « Disque », l’image devient l’étiquette du centre."
+                                 : "Le boîtier au-dessus se met à jour dès que tu valides une image.")
+                }
+                if isVinyl {
+                    VinylOptionsSection(album: album)
+                }
+                if game == nil {
+                    PriceSection(album: album,
+                                 discs: isVinyl ? VinylLayout.discCount(album, library.vinylOptions(album.id)) : 1)
                 }
             }
             .navigationTitle("Personnaliser")
@@ -1026,7 +1042,7 @@ struct CaseCustomizer: View {
         switch slot {
         case .spine: return 10
         case .disc: return 52
-        case .wrap: return 92
+        case .wrap, .inner: return 92
         default: return 45
         }
     }
@@ -1039,6 +1055,7 @@ struct CaseCustomizer: View {
         case .spine: return game.flatMap { library.extraImage("spine", $0) }
         case .front: return library.extraImage("front", album.id)
         case .disc: return library.extraImage("disc", album.id)
+        case .inner: return library.extraImage("inner", album.id)
         }
     }
 
@@ -1065,6 +1082,7 @@ struct CaseCustomizer: View {
         case .cover, .back: return insert.width / insert.height
         case .spine: return Physical.insertSpine / insert.height
         case .front, .disc: return 1
+        case .inner: return 2
         }
     }
 
@@ -1084,6 +1102,7 @@ struct CaseCustomizer: View {
         case .spine: if let game { library.setExtraImage(image, kind: "spine", key: game) }
         case .front: library.setExtraImage(image, kind: "front", key: album.id)
         case .disc: library.setExtraImage(image, kind: "disc", key: album.id)
+        case .inner: library.setExtraImage(image, kind: "inner", key: album.id)
         }
     }
 
@@ -1100,6 +1119,7 @@ struct CaseCustomizer: View {
         case .spine: if let game { library.resetExtraImage("spine", game) }
         case .front: library.resetExtraImage("front", album.id)
         case .disc: library.resetExtraImage("disc", album.id)
+        case .inner: library.resetExtraImage("inner", album.id)
         }
     }
 }
