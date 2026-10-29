@@ -25,7 +25,7 @@ struct ShelfView: View {
     @State private var stickerAlbum: AlbumInfo?
     /// Sous-section de la Collection : albums (CD), bandes-son de jeux, ou vinyles.
     @State private var section = 0
-    /// Vinyle en main : dans sa pochette, sorti, ou sur la platine.
+    /// Vinyle en main : dans sa pochette, ou sorti.
     @State private var vinylStage: VinylStage = .jacket
     @State private var gatefoldOpen = false
 
@@ -78,7 +78,6 @@ struct ShelfView: View {
                                    motion: motion, active: isOpen, discOut: discOut,
                                    spinning: playing && player.isPlaying,
                                    vinylStage: vinylStage, gatefoldOpen: gatefoldOpen,
-                                   armState: armState(for: handAlbum),
                                    flipToken: flipToken, resetToken: resetToken,
                                    onBackChange: { isBack = $0 })
                     .id("inspector")
@@ -122,8 +121,6 @@ struct ShelfView: View {
         .animation(Self.quick, value: isOpen)
         .sensoryFeedback(trigger: discOut) { _, _ in settings.haptics ? .impact(weight: .medium) : nil }
         .sensoryFeedback(trigger: vinylStage) { _, _ in settings.haptics ? .impact(weight: .medium) : nil }
-        // Craquements : seulement pendant qu'un vinyle tourne sur la platine (si ce réglage est choisi).
-        .onChange(of: isOpen && vinylStage == .turntable, initial: true) { _, on in player.vinylOnTurntable = on }
         .sensoryFeedback(trigger: isBack) { _, _ in settings.haptics && isOpen ? .impact(weight: .light) : nil }
         .onAppear {
             if visible { motion.start() }
@@ -178,15 +175,6 @@ struct ShelfView: View {
     private func isPlaying(_ album: AlbumInfo) -> Bool {
         guard let id = player.currentID else { return false }
         return album.tracks.contains { $0.id == id }
-    }
-
-    /// Face en cours et avancée du bras de la platine (lu à chaque image).
-    private func armState(for album: AlbumInfo) -> () -> (side: Int, progress: Double)? {
-        guard VinylCatalog.isVinyl(album.id) else { return { nil } }
-        let options = library.vinylOptions(album.id)
-        let sides = VinylLayout.sides(album, discs: VinylLayout.discCount(album, options))
-        let player = player
-        return { VinylLayout.armState(sides, currentID: player.currentID, time: player.liveTime) }
     }
 
     private func open(_ album: AlbumInfo) {
@@ -369,12 +357,14 @@ final class ShelfSceneController: NSObject, UIGestureRecognizerDelegate {
         }
         c.layout()
         c.view.prepare([c.scene], completionHandler: nil)
-        // La vue « en main » aussi.
+        // La vue « en main » aussi (en haute définition).
+        var hiResBuilder = builder
+        hiResBuilder.hiRes = true
         let inspector = InspectorSceneController.obtain()
         inspector.show(album: albums[start.clamped(0, albums.count - 1)],
                        format: library.format(of: albums[start.clamped(0, albums.count - 1)].id, default: settings.shelfFormat),
                        badges: library.badges(for: albums[start.clamped(0, albums.count - 1)]),
-                       builder: builder, animated: false)
+                       builder: hiResBuilder, animated: false)
         inspector.view.prepare([inspector.scene], completionHandler: nil)
     }
 
@@ -424,17 +414,25 @@ final class ShelfSceneController: NSObject, UIGestureRecognizerDelegate {
         }
         crateNode?.isHidden = m != .crate
         ledgeNode?.isHidden = m != .wall
+        // Le brouillard du fond recule avec la caméra (sinon les pochettes s'assombrissent).
         switch m {
         case .flow:
             cameraNode.position = SCNVector3(0, 0.95, 8.6)
             cameraNode.look(at: SCNVector3(0, 0.16, 0))
+            scene.fogStartDistance = 8
+            scene.fogEndDistance = 15
         case .crate:
-            // Vu d'en haut, comme penché au-dessus d'un bac chez le disquaire.
-            cameraNode.position = SCNVector3(0, 2.95, 5.5)
-            cameraNode.look(at: SCNVector3(0, 0.9, -0.05))
+            // Vu de haut et de loin, comme debout devant un bac chez le disquaire : tout le bac
+            // et la pochette du dessus sont visibles en entier.
+            cameraNode.position = SCNVector3(0, 4.6, 10.6)
+            cameraNode.look(at: SCNVector3(0, 0.95, -0.1))
+            scene.fogStartDistance = 13
+            scene.fogEndDistance = 22
         case .wall:
-            cameraNode.position = SCNVector3(0, 1.1, 8.4)
-            cameraNode.look(at: SCNVector3(0, 0.72, 0))
+            cameraNode.position = SCNVector3(0, 1.2, 10.2)
+            cameraNode.look(at: SCNVector3(0, 0.8, 0))
+            scene.fogStartDistance = 12
+            scene.fogEndDistance = 20
         }
     }
 
@@ -694,8 +692,9 @@ final class ShelfSceneController: NSObject, UIGestureRecognizerDelegate {
         // Position du bas de la pochette et inclinaison (rotation autour de l'axe horizontal).
         func pose(_ d: Double) -> (y: Double, z: Double, rx: Double) {
             if d >= 1 { return (0.06, -0.16 - (d - 1) * 0.105, -0.16) }
-            if d <= -1 { return (0.06, 0.55 + (d + 1) * 0.045, 0.62) }
-            let focus = (y: 0.56, z: 0.2, rx: -0.04)
+            if d <= -1 { return (0.06, 0.55 + (d + 1) * 0.045, 0.66) }
+            // Celle du dessus est bien soulevée : on la voit en entier au-dessus des autres.
+            let focus = (y: 0.82, z: 0.22, rx: -0.06)
             let other = d > 0 ? pose(1) : pose(-1)
             let e = abs(d)
             let k = e * e * (3 - 2 * e)
@@ -823,6 +822,8 @@ struct ShelfInspector: View {
     @State private var cropping: CropSource?
     @State private var customizing = false
     @State private var unwrapTick = 0
+    /// Face visible du vinyle sorti.
+    @State private var shownSide = 0
 
     /// CD ou vinyle encore sous blister : il faut le déballer avant de sortir le disque.
     private var sealed: Bool { (format == .cd || format == .vinyl) && settings.shrinkWrap && library.isSealed(album.id) }
@@ -831,17 +832,12 @@ struct ShelfInspector: View {
         VinylLayout.sides(album, discs: VinylLayout.discCount(album, library.vinylOptions(album.id)))
     }
 
-    /// Face jouée en ce moment (A si l'album ne joue pas).
-    private var currentSide: Int {
-        VinylLayout.armState(vinylSides, currentID: player.currentID, time: player.currentTime)?.side ?? 0
-    }
-
-    /// La face suivante qui a des morceaux (A → B → C → D → A).
+    /// Face suivante du disque sorti (A → B → C → D → A), en sautant les faces vides.
     private var nextSide: Int? {
         let sides = vinylSides
         guard sides.count > 1 else { return nil }
         for k in 1..<sides.count {
-            let i = (currentSide + k) % sides.count
+            let i = (shownSide + k) % sides.count
             if !sides[i].tracks.isEmpty { return i }
         }
         return nil
@@ -873,24 +869,22 @@ struct ShelfInspector: View {
             }
             inspectorButton("Stickers", symbol: "seal.fill", action: onStickers)
         case .out:
-            inspectorButton("Ranger", symbol: "arrow.down.to.line") { vinylStage = .jacket }
-            inspectorButton("Sur la platine", symbol: "tuningfork") {
-                vinylStage = .turntable
-                if !playingThisAlbum { playAlbum() } else if !player.isPlaying { player.togglePlay() }
+            inspectorButton("Ranger", symbol: "arrow.down.to.line") {
+                shownSide = 0
+                InspectorSceneController.shared?.node?.flipDisc(toSide: 0)
+                vinylStage = .jacket
+            }
+            if let next = nextSide {
+                // Retourne le disque pour voir l'autre face (son étiquette et ses sillons).
+                inspectorButton("Face " + vinylSides[next].letter, symbol: "arrow.triangle.2.circlepath") {
+                    shownSide = next
+                    InspectorSceneController.shared?.node?.flipDisc(toSide: next)
+                }
             }
             inspectorButton(spinning ? "Pause" : "Lire", symbol: spinning ? "pause.fill" : "play.fill") {
-                if playingThisAlbum { player.togglePlay() } else { playAlbum() }
+                if playingThisAlbum { player.togglePlay() } else { playSide(shownSide) }
             }
             inspectorButton("Stickers", symbol: "seal.fill", action: onStickers)
-        case .turntable:
-            inspectorButton("Retirer", symbol: "arrow.uturn.up") { vinylStage = .out }
-            if let next = nextSide {
-                inspectorButton("Face " + vinylSides[next].letter, symbol: "arrow.triangle.2.circlepath") { playSide(next) }
-            }
-            inspectorButton(spinning ? "Pause" : "Lire", symbol: spinning ? "pause.fill" : "play.fill") {
-                if playingThisAlbum { player.togglePlay() } else { playSide(0) }
-            }
-            inspectorButton("Ranger", symbol: "arrow.down.to.line") { vinylStage = .jacket }
         }
     }
 
@@ -935,8 +929,8 @@ struct ShelfInspector: View {
             }
             .allowsHitTesting(false)
 
-            Text(format == .vinyl && vinylStage == .turntable
-                 ? "Le bras suit la chanson · « Face » retourne le disque · glisse pour tourner autour de la platine"
+            Text(format == .vinyl && vinylStage == .out
+                 ? "« Face » retourne le disque · « Lire » joue la face visible · glisse pour tourner"
                  : "Glisse pour tourner · touche pour retourner · pince pour zoomer · touche deux fois pour remettre droit · appui long sur un album pour ses stickers")
                 .font(.caption)
                 .foregroundStyle(.white.opacity(0.45))
@@ -1039,7 +1033,6 @@ struct InspectorSceneView: UIViewRepresentable {
     let spinning: Bool
     var vinylStage: VinylStage = .jacket
     var gatefoldOpen = false
-    var armState: () -> (side: Int, progress: Double)? = { nil }
     let flipToken: Int
     let resetToken: Int
     var onBackChange: (Bool) -> Void
@@ -1067,7 +1060,9 @@ struct InspectorSceneView: UIViewRepresentable {
     }
 
     private func apply(_ c: InspectorSceneController) {
-        let builder = AlbumNodeBuilder(library: library, settings: settings)
+        // En main : textures en haute définition.
+        var builder = AlbumNodeBuilder(library: library, settings: settings)
+        builder.hiRes = true
         if active {
             c.show(album: album, format: format, badges: badges, builder: builder, animated: true)
         } else {
@@ -1077,12 +1072,10 @@ struct InspectorSceneView: UIViewRepresentable {
         c.setActive(active)
         c.node?.setWrapVisible(settings.shrinkWrap && library.isSealed(album.id))
         if format == .vinyl {
-            // Vinyle : pochette, sorti, ou sur la platine (le bras suit la chanson, image par image).
-            c.armState = armState
+            // Vinyle : dans sa pochette, ou sorti à moitié de sa sous-pochette.
             if active && vinylStage != .jacket { c.ensureDisc() }
             c.node?.setVinylStage(active ? vinylStage : .jacket)
             c.node?.setGatefold(open: active && gatefoldOpen && vinylStage == .jacket)
-            c.node?.setSpinning(active && spinning && vinylStage == .turntable)
             return
         }
         if discOut { c.ensureDisc() }
@@ -1124,8 +1117,6 @@ final class InspectorSceneController: NSObject, UIGestureRecognizerDelegate {
     var onBackChange: (Bool) -> Void = { _ in }
     var flipToken = 0
     var resetToken = 0
-    /// Face et avancée de la lecture, pour le bras de la platine.
-    var armState: () -> (side: Int, progress: Double)? = { nil }
     private(set) var node: AlbumNode?
     private let cameraNode = SCNNode()
     private let holder = SCNNode()
@@ -1385,7 +1376,6 @@ final class InspectorSceneController: NSObject, UIGestureRecognizerDelegate {
         let my = motion?.y ?? 0
         holder.eulerAngles = SCNVector3(Float(rx - my * 0.05), Float(ry + mx * 0.08), 0)
         cameraNode.position = SCNVector3(0, 0, Float(6.6 / zoom))
-        if let node, node.vinyl?.stage == .turntable { node.updateVinyl(state: armState()) }
         let back = cos(ry) < 0
         if back != lastBack {
             lastBack = back
@@ -1422,8 +1412,7 @@ final class InspectorSceneController: NSObject, UIGestureRecognizerDelegate {
     }
 
     @objc private func handleTap(_ g: UITapGestureRecognizer) {
-        // Toucher l'objet le retourne (pas la platine).
-        guard node?.vinyl?.stage != .turntable else { return }
+        // Toucher l'objet le retourne.
         if !view.hitTest(g.location(in: view), options: nil).isEmpty { flip() }
     }
 

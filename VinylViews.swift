@@ -245,7 +245,7 @@ struct PriceSection: View {
                 HStack {
                     Text("Prix")
                     Spacer()
-                    TextField(PriceTag.text(library.price(for: album.id, discs: discs)), text: $draft)
+                    TextField(PriceTag.text(library.price(for: album, discs: discs)), text: $draft)
                         .keyboardType(.decimalPad)
                         .multilineTextAlignment(.trailing)
                         .frame(maxWidth: 120)
@@ -264,11 +264,11 @@ struct PriceSection: View {
         } header: {
             Text("Étiquette prix")
         } footer: {
-            Text("Collée sur le boîtier ou la pochette, comme chez un disquaire.")
+            Text("Collée sur le boîtier ou la pochette, comme en magasin. Certains albums sont en promotion (ancien prix barré) tant que tu ne changes pas leur prix.")
         }
         .onAppear {
             if library.hasCustomPrice(album.id) {
-                draft = String(format: "%.2f", library.price(for: album.id, discs: discs)).replacingOccurrences(of: ".", with: ",")
+                draft = String(format: "%.2f", library.price(for: album, discs: discs)).replacingOccurrences(of: ".", with: ",")
             }
         }
     }

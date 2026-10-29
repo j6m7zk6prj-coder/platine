@@ -4,7 +4,7 @@ import UIKit
 
 // MARK: - Les pièces d'un vinyle
 
-/// Ce qu'un vinyle a en plus d'un CD : sous-pochette, gatefold, platine et bras.
+/// Ce qu'un vinyle a en plus d'un CD : sous-pochette, gatefold, double disque.
 @MainActor
 final class VinylRig {
     var stage: VinylStage = .jacket
@@ -16,7 +16,6 @@ final class VinylRig {
     var discs = 1
     /// Volet avant du gatefold, qui s'ouvre comme un livre.
     var lidPivot: SCNNode?
-    var turntable: TurntableRig?
     /// Les deux faces de chaque disque (dessinées au besoin).
     var faces: @MainActor (Int) -> (front: UIImage?, back: UIImage?) = { _ in (nil, nil) }
     // Pièces du disque, retrouvées une fois.
@@ -25,8 +24,6 @@ final class VinylRig {
     var mesh: SCNNode?
     /// Change à chaque nouvelle étape : une ancienne animation ne termine jamais par-dessus la nouvelle.
     var token = 0
-    /// Vrai quand le disque est bien posé sur le plateau (le bras peut descendre).
-    var ready = false
 }
 
 @MainActor
@@ -45,27 +42,6 @@ extension AlbumNode {
         return (s, h, m)
     }
 
-    /// Change de parent sans que l'objet bouge à l'écran (on l'anime ensuite vers sa nouvelle place).
-    private func reparent(_ node: SCNNode, to parent: SCNNode) {
-        guard node.parent !== parent else { return }
-        let world = node.worldTransform
-        node.removeFromParentNode()
-        parent.addChildNode(node)
-        node.transform = parent.convertTransform(world, from: nil)
-    }
-
-    private func ensureTurntable() -> TurntableRig {
-        if let t = vinyl?.turntable { return t }
-        let t = TurntableRig()
-        t.root.isHidden = true
-        t.setVisible(false)
-        content.addChildNode(t.root)
-        vinyl?.turntable = t
-        if spinning {
-            t.platterSpin.runAction(.repeatForever(.rotateBy(x: 0, y: 0, z: -2 * .pi, duration: 1.8)), forKey: "spin")
-        }
-        return t
-    }
 
     /// Ouvre ou referme le gatefold (la pochette s'ouvre en deux comme un livre).
     func setGatefold(open: Bool, animated: Bool = true) {
@@ -81,12 +57,11 @@ extension AlbumNode {
         SCNTransaction.commit()
     }
 
-    /// Les trois étapes du vinyle : dans sa pochette, sorti (à moitié dans sa sous-pochette), sur la platine.
+    /// Les deux étapes du vinyle : dans sa pochette, ou sorti (à moitié dans sa sous-pochette).
     func setVinylStage(_ target: VinylStage, animated: Bool = true) {
         guard let rig = vinyl, target != rig.stage, let parts = vinylParts(), let pivot = discPivot else { return }
         let from = rig.stage
         rig.stage = target
-        rig.ready = false
         rig.token += 1
         let token = rig.token
         if rig.gatefoldOpen, let lid = rig.lidPivot {
@@ -121,51 +96,6 @@ extension AlbumNode {
                     self.poseJacket(pivot: pivot)
                 } done: {
                     if rig.token == token { pivot.opacity = 0 }
-                }
-            }
-
-        case (.out, .turntable), (.jacket, .turntable):
-            let tt = ensureTurntable()
-            tt.root.isHidden = false
-            pivot.opacity = 1
-            reparent(parts.holder, to: tt.platterSpin)
-            transaction(0.95 * speed, curve: (0.3, 0.8, 0.25, 1)) {
-                let s: Float = self.fit * 0.74
-                self.content.scale = SCNVector3(s, s, s)
-                self.content.position = SCNVector3(0, -0.05, 0)
-                self.body.position = SCNVector3(-1.8, -0.4, -0.8)
-                self.body.opacity = 0
-                pivot.position = SCNVector3(1.2, 0.5, -0.4)
-                parts.sleeve.opacity = 0
-                tt.setVisible(true)
-                parts.holder.position = SCNVector3(0, 0, TurntableRig.discZ)
-                parts.holder.eulerAngles = SCNVector3(0, rig.sideB ? Float.pi : 0, 0)
-            } done: {
-                if rig.token == token { rig.ready = true }
-            }
-
-        case (.turntable, .out), (.turntable, .jacket):
-            let tt = ensureTurntable()
-            tt.park()
-            // Le bras se range d'abord, puis le disque revient dans sa sous-pochette.
-            Task { @MainActor [weak self] in
-                if animated { try? await Task.sleep(for: .milliseconds(450)) }
-                guard let self, rig.token == token else { return }
-                self.reparent(parts.holder, to: pivot)
-                self.transaction(0.85 * speed, curve: (0.3, 0.8, 0.25, 1)) {
-                    tt.setVisible(false)
-                    parts.sleeve.opacity = 1
-                    self.body.opacity = 1
-                    self.poseOut(pivot: pivot, holderUp: true)
-                    parts.holder.eulerAngles = SCNVector3(0, rig.sideB ? Float.pi : 0, 0)
-                } done: {
-                    guard rig.token == token else { return }
-                    tt.root.isHidden = true
-                    if target == .jacket {
-                        // On repasse par l'étape « sorti » pour le ranger.
-                        rig.stage = .out
-                        self.setVinylStage(.jacket, animated: animated)
-                    }
                 }
             }
 
@@ -207,7 +137,6 @@ extension AlbumNode {
         guard let rig = vinyl else { return }
         rig.token += 1
         rig.stage = .jacket
-        rig.ready = false
         rig.gatefoldOpen = false
         rig.lidPivot?.eulerAngles = SCNVector3(0, 0, 0)
         if let parts = vinylParts(), let pivot = discPivot {
@@ -216,462 +145,58 @@ extension AlbumNode {
                 parts.holder.removeFromParentNode()
                 pivot.addChildNode(parts.holder)
             }
+            // Rangé : on repart toujours de la face A du premier disque.
+            if rig.discIndex != 0, let m = parts.mesh.geometry?.materials, m.count >= 2 {
+                let faces = rig.faces(0)
+                m[0].diffuse.contents = faces.front
+                m[1].diffuse.contents = faces.back
+            }
+            rig.sideB = false
+            rig.discIndex = 0
+            parts.holder.opacity = 1
             parts.holder.position = SCNVector3(0, 0, 0)
-            parts.holder.eulerAngles = SCNVector3(0, rig.sideB ? Float.pi : 0, 0)
+            parts.holder.eulerAngles = SCNVector3(0, 0, 0)
             parts.sleeve.opacity = 1
             pivot.position = SCNVector3(0, 0, 0)
             pivot.opacity = 0
         }
         body.position = SCNVector3(0, 0, 0)
         body.opacity = 1
-        if let tt = rig.turntable {
-            tt.root.isHidden = true
-            tt.setVisible(false)
-            tt.restNow()
-        }
     }
 
-    /// À chaque image, sur la platine : le bras suit la chanson, et le disque se retourne
-    /// (ou change de disque) quand la lecture passe sur l'autre face.
-    func updateVinyl(state: (side: Int, progress: Double)?) {
-        guard let rig = vinyl, rig.stage == .turntable, rig.ready, let tt = rig.turntable, let parts = vinylParts(),
-              parts.holder.parent === tt.platterSpin, parts.holder.action(forKey: "flip") == nil else { return }
-        if let state {
-            let disc = min(rig.discs - 1, state.side / 2)
-            let wantB = state.side % 2 == 1
-            if disc != rig.discIndex || wantB != rig.sideB {
-                changeFace(disc: disc, sideB: wantB, parts: parts, tt: tt)
-                return
-            }
-        }
-        tt.updateArm(progress: state?.progress)
-    }
-
-    /// Retourne le disque (face A ↔ B) ou le remplace par l'autre disque, comme à la main.
-    private func changeFace(disc: Int, sideB: Bool, parts: (sleeve: SCNNode, holder: SCNNode, mesh: SCNNode), tt: TurntableRig) {
-        guard let rig = vinyl else { return }
+    /// Retourne le disque sorti pour voir l'autre face (A ↔ B) ; sur un double vinyle,
+    /// la face suivante passe au 2e disque.
+    func flipDisc(toSide side: Int) {
+        guard let rig = vinyl, rig.stage == .out, let parts = vinylParts(),
+              parts.holder.action(forKey: "flip") == nil else { return }
+        let disc = min(rig.discs - 1, max(0, side / 2))
+        let wantB = side % 2 == 1
+        guard disc != rig.discIndex || wantB != rig.sideB else { return }
         let swap = disc != rig.discIndex
-        rig.sideB = sideB
+        rig.sideB = wantB
         rig.discIndex = disc
-        tt.park()
-        let up = SCNAction.moveBy(x: 0, y: 0, z: 0.55, duration: 0.35)
-        up.timingMode = .easeOut
-        let turn = SCNAction.rotateTo(x: 0, y: sideB ? CGFloat.pi : 0, z: 0, duration: 0.5, usesShortestUnitArc: true)
+        let turn = SCNAction.rotateTo(x: 0, y: wantB ? CGFloat.pi : 0, z: 0, duration: 0.6, usesShortestUnitArc: true)
         turn.timingMode = .easeInEaseOut
-        let down = SCNAction.moveBy(x: 0, y: 0, z: -0.55, duration: 0.4)
-        down.timingMode = .easeIn
-        var steps: [SCNAction] = [.wait(duration: 0.5), up]
         if swap {
-            // Double vinyle : le disque part, l'autre arrive.
+            // Double vinyle : un disque part, l'autre arrive.
             let faces = rig.faces(disc)
-            let mesh = parts.mesh
             let front = faces.front, back = faces.back
-            steps += [.fadeOut(duration: 0.25), .run { _ in
-                if let m = mesh.geometry?.materials, m.count >= 2 {
-                    m[0].diffuse.contents = front
-                    m[1].diffuse.contents = back
-                }
-            }, turn, .fadeIn(duration: 0.25)]
+            let mesh = parts.mesh
+            parts.holder.runAction(.sequence([
+                .fadeOut(duration: 0.2),
+                .run { _ in
+                    if let m = mesh.geometry?.materials, m.count >= 2 {
+                        m[0].diffuse.contents = front
+                        m[1].diffuse.contents = back
+                    }
+                },
+                turn,
+                .fadeIn(duration: 0.25)
+            ]), forKey: "flip")
         } else {
-            steps.append(turn)
-        }
-        steps.append(down)
-        parts.holder.runAction(.sequence(steps), forKey: "flip")
-    }
-}
-
-// MARK: - La platine
-
-/// Une platine tourne-disque : socle, plateau, bras qui se lève et se pose sur le sillon.
-@MainActor
-final class TurntableRig {
-    let root = SCNNode()
-    /// Le plateau qui tourne (le disque est posé dessus).
-    let platterSpin = SCNNode()
-    private let armPivot = SCNNode()
-    private let armLift = SCNNode()
-    private var visuals: [SCNNode] = []
-
-    enum ArmState { case rest, moving, playing }
-    private(set) var armState: ArmState = .rest
-
-    // Géométrie (unités du modèle : 1 = 10 cm). Le plateau est à gauche, le bras à droite.
-    static let plinthTop: Float = 0.25
-    static let platterCenter = SIMD2<Double>(-0.45, 0)
-    static let pivot = SIMD2<Double>(1.55, 1.15)
-    static let armLength = 2.3
-    /// Hauteur du disque posé sur le plateau (au-dessus du plateau qui tourne).
-    static let discZ: Float = 0.107
-    private static let armDown: Float = 0.26
-    private static let armUp: Float = 0.34
-
-    let restAngle = -Double.pi / 2 + 0.04
-    let leadIn: Double
-    let runOut: Double
-
-    init() {
-        leadIn = Self.angle(forRadius: 1.47)
-        runOut = Self.angle(forRadius: 0.6)
-        // Vue de trois quarts, comme posée sur un meuble devant toi.
-        root.position = SCNVector3(0.25, -0.25, 0)
-        root.eulerAngles.x = -0.95
-        build()
-    }
-
-    /// Angle du bras qui pose la pointe à cette distance du centre du disque.
-    private static func angle(forRadius r: Double) -> Double {
-        func radius(_ a: Double) -> Double {
-            let tip = pivot + armLength * SIMD2(cos(a), sin(a))
-            let d = tip - platterCenter
-            return (d.x * d.x + d.y * d.y).squareRoot()
-        }
-        let towardCenter = atan2(platterCenter.y - pivot.y, platterCenter.x - pivot.x)
-        var lo = -Double.pi / 2, hi = towardCenter
-        for _ in 0..<40 {
-            let mid = (lo + hi) / 2
-            if radius(mid) > r { lo = mid } else { hi = mid }
-        }
-        return (lo + hi) / 2
-    }
-
-    func setVisible(_ on: Bool) {
-        for v in visuals { v.opacity = on ? 1 : 0 }
-    }
-
-    /// Le bras suit l'avancée de la face (nil = pas de lecture : il retourne sur son support).
-    func updateArm(progress: Double?) {
-        guard armState != .moving else { return }
-        if let p = progress {
-            let target = leadIn + (runOut - leadIn) * p
-            if armState == .rest {
-                move(to: target, playing: true)
-            } else {
-                armPivot.eulerAngles.z = Float(target)
-            }
-        } else if armState == .playing {
-            park()
+            parts.holder.runAction(turn, forKey: "flip")
         }
     }
-
-    /// Le bras se lève et revient sur son support.
-    func park() {
-        guard armState != .rest || armPivot.action(forKey: "arm") != nil else { return }
-        move(to: restAngle, playing: false)
-    }
-
-    func restNow() {
-        armPivot.removeAllActions()
-        armLift.removeAllActions()
-        armPivot.eulerAngles.z = Float(restAngle)
-        armLift.position.z = Self.armDown
-        armState = .rest
-    }
-
-    private func move(to angle: Double, playing: Bool) {
-        armState = .moving
-        let lift = armLift
-        let raise = SCNAction.move(to: SCNVector3(0, 0, Self.armUp), duration: 0.3)
-        raise.timingMode = .easeOut
-        let drop = SCNAction.move(to: SCNVector3(0, 0, Self.armDown), duration: 0.5)
-        drop.timingMode = .easeIn
-        let swing = SCNAction.rotateTo(x: 0, y: 0, z: CGFloat(angle), duration: playing ? 1.1 : 0.8, usesShortestUnitArc: true)
-        swing.timingMode = .easeInEaseOut
-        armPivot.runAction(.sequence([
-            .run { _ in lift.runAction(raise) },
-            .wait(duration: 0.32),
-            swing,
-            .run { _ in lift.runAction(drop) },
-            .wait(duration: 0.5),
-            .run { [weak self] _ in Task { @MainActor in self?.armState = playing ? .playing : .rest } }
-        ]), forKey: "arm")
-    }
-
-    // MARK: Fabrication
-
-    private func build() {
-        let top = Self.plinthTop
-        // Socle : dessus noir satiné, côtés en noyer.
-        let plinth = SCNBox(width: 4.4, height: 3.5, length: CGFloat(top), chamferRadius: 0.05)
-        let wood = Self.woodMaterial
-        let topMat = SCNMaterial()
-        topMat.lightingModel = .physicallyBased
-        topMat.diffuse.contents = Self.plinthTopImage
-        topMat.roughness.contents = 0.42
-        topMat.metalness.contents = 0.0
-        topMat.clearCoat.contents = 0.35
-        topMat.clearCoatRoughness.contents = 0.3
-        let under = AlbumNodeBuilder.plastic(UIColor(white: 0.05, alpha: 1), roughness: 0.8, coat: 0)
-        plinth.materials = [topMat, wood, under, wood, wood, wood]
-        let plinthNode = SCNNode(geometry: plinth)
-        plinthNode.position = SCNVector3(0.05, 0, top / 2)
-        add(plinthNode)
-
-        // Pieds amortisseurs.
-        for (x, y) in [(-1.85, -1.45), (1.95, -1.45), (-1.85, 1.45), (1.95, 1.45)] {
-            let foot = SCNCylinder(radius: 0.22, height: 0.12)
-            foot.materials = [AlbumNodeBuilder.plastic(UIColor(white: 0.08, alpha: 1), roughness: 0.6, coat: 0)]
-            let n = SCNNode(geometry: foot)
-            n.eulerAngles.x = .pi / 2
-            n.position = SCNVector3(Float(x), Float(y), -0.06)
-            add(n)
-        }
-
-        // Plateau : aluminium avec ses points stroboscopiques, couvre-plateau en caoutchouc.
-        platterSpin.position = SCNVector3(Float(Self.platterCenter.x), Float(Self.platterCenter.y), top)
-        root.addChildNode(platterSpin)
-        let platter = SCNCylinder(radius: 1.55, height: 0.1)
-        let rim = SCNMaterial()
-        rim.lightingModel = .physicallyBased
-        rim.diffuse.contents = Self.strobeRim
-        rim.metalness.contents = 0.9
-        rim.roughness.contents = 0.28
-        let mat = SCNMaterial()
-        mat.lightingModel = .physicallyBased
-        mat.diffuse.contents = Self.platterMat
-        mat.roughness.contents = 0.9
-        platter.materials = [rim, mat, under]
-        let platterNode = SCNNode(geometry: platter)
-        platterNode.eulerAngles.x = .pi / 2
-        platterNode.position.z = 0.05
-        platterSpin.addChildNode(platterNode)
-        visuals.append(platterNode)
-        // Axe central.
-        let spindle = SCNCylinder(radius: 0.034, height: 0.16)
-        spindle.materials = [Self.chrome]
-        let spindleNode = SCNNode(geometry: spindle)
-        spindleNode.eulerAngles.x = .pi / 2
-        spindleNode.position.z = 0.13
-        platterSpin.addChildNode(spindleNode)
-        visuals.append(spindleNode)
-
-        // Boutons : marche/arrêt, 33 et 45 tours, curseur de vitesse, lampe stroboscopique.
-        let button = SCNBox(width: 0.46, height: 0.24, length: 0.05, chamferRadius: 0.025)
-        button.materials = [Self.brushed]
-        let start = SCNNode(geometry: button)
-        start.position = SCNVector3(-1.72, -1.47, top + 0.025)
-        add(start)
-        for (i, x) in [-1.17, -0.83].enumerated() {
-            let b = SCNBox(width: 0.24, height: 0.16, length: 0.04, chamferRadius: 0.02)
-            b.materials = [i == 0 ? Self.lit : Self.brushed]
-            let n = SCNNode(geometry: b)
-            n.position = SCNVector3(Float(x), -1.52, top + 0.02)
-            add(n)
-        }
-        let slot = SCNBox(width: 0.08, height: 1.15, length: 0.012, chamferRadius: 0.004)
-        slot.materials = [AlbumNodeBuilder.plastic(UIColor(white: 0.02, alpha: 1), roughness: 0.5, coat: 0)]
-        let slotNode = SCNNode(geometry: slot)
-        slotNode.position = SCNVector3(2.0, -0.85, top + 0.006)
-        add(slotNode)
-        let knob = SCNBox(width: 0.26, height: 0.12, length: 0.07, chamferRadius: 0.02)
-        knob.materials = [Self.brushed]
-        let knobNode = SCNNode(geometry: knob)
-        knobNode.position = SCNVector3(2.0, -0.85, top + 0.035)
-        add(knobNode)
-        let lamp = SCNCylinder(radius: 0.11, height: 0.12)
-        lamp.materials = [Self.chrome, Self.lit, Self.chrome]
-        let lampNode = SCNNode(geometry: lamp)
-        lampNode.eulerAngles.x = .pi / 2
-        lampNode.position = SCNVector3(-1.95, -1.05, top + 0.06)
-        add(lampNode)
-
-        // Bras : socle, pilier, tube chromé, contrepoids, coquille et cellule.
-        let p = Self.pivot
-        let base = SCNCylinder(radius: 0.3, height: 0.06)
-        base.materials = [Self.brushed, Self.chrome, Self.brushed]
-        let baseNode = SCNNode(geometry: base)
-        baseNode.eulerAngles.x = .pi / 2
-        baseNode.position = SCNVector3(Float(p.x), Float(p.y), top + 0.03)
-        add(baseNode)
-        armPivot.position = SCNVector3(Float(p.x), Float(p.y), top)
-        armPivot.eulerAngles.z = Float(restAngle)
-        root.addChildNode(armPivot)
-        let pillar = SCNCylinder(radius: 0.065, height: CGFloat(Self.armDown))
-        pillar.materials = [Self.chrome]
-        let pillarNode = SCNNode(geometry: pillar)
-        pillarNode.eulerAngles.x = .pi / 2
-        pillarNode.position.z = Self.armDown / 2
-        armPivot.addChildNode(pillarNode)
-        visuals.append(pillarNode)
-        armLift.position = SCNVector3(0, 0, Self.armDown)
-        armPivot.addChildNode(armLift)
-        let gimbal = SCNBox(width: 0.2, height: 0.2, length: 0.12, chamferRadius: 0.03)
-        gimbal.materials = [Self.brushed]
-        let gimbalNode = SCNNode(geometry: gimbal)
-        armLift.addChildNode(gimbalNode)
-        visuals.append(gimbalNode)
-        let L = Self.armLength
-        let tubeLength = L - 0.24
-        let tube = SCNCylinder(radius: 0.03, height: CGFloat(tubeLength))
-        tube.materials = [Self.chrome]
-        let tubeNode = SCNNode(geometry: tube)
-        tubeNode.eulerAngles.z = -.pi / 2
-        tubeNode.position = SCNVector3(Float(tubeLength / 2), 0, 0.02)
-        armLift.addChildNode(tubeNode)
-        visuals.append(tubeNode)
-        let weight = SCNCylinder(radius: 0.13, height: 0.3)
-        weight.materials = [Self.brushed, Self.chrome, Self.chrome]
-        let weightNode = SCNNode(geometry: weight)
-        weightNode.eulerAngles.z = -.pi / 2
-        weightNode.position = SCNVector3(-0.42, 0, 0.02)
-        armLift.addChildNode(weightNode)
-        visuals.append(weightNode)
-        let shell = SCNBox(width: 0.36, height: 0.19, length: 0.03, chamferRadius: 0.012)
-        shell.materials = [AlbumNodeBuilder.plastic(UIColor(white: 0.1, alpha: 1), roughness: 0.35, coat: 0.4)]
-        let shellNode = SCNNode(geometry: shell)
-        shellNode.position = SCNVector3(Float(L - 0.12), 0, 0)
-        armLift.addChildNode(shellNode)
-        visuals.append(shellNode)
-        let cartridge = SCNBox(width: 0.2, height: 0.13, length: 0.1, chamferRadius: 0.01)
-        cartridge.materials = [AlbumNodeBuilder.plastic(UIColor(red: 0.75, green: 0.08, blue: 0.08, alpha: 1), roughness: 0.3, coat: 0.5)]
-        let cartNode = SCNNode(geometry: cartridge)
-        cartNode.position = SCNVector3(Float(L - 0.08), 0, -0.07)
-        armLift.addChildNode(cartNode)
-        visuals.append(cartNode)
-        let finger = SCNBox(width: 0.16, height: 0.03, length: 0.02, chamferRadius: 0.008)
-        finger.materials = [Self.chrome]
-        let fingerNode = SCNNode(geometry: finger)
-        fingerNode.position = SCNVector3(Float(L + 0.08), -0.1, 0.01)
-        armLift.addChildNode(fingerNode)
-        visuals.append(fingerNode)
-
-        // Support du bras au repos.
-        let restPoint = p + 1.25 * SIMD2(cos(restAngle), sin(restAngle))
-        let post = SCNCylinder(radius: 0.04, height: CGFloat(Self.armDown))
-        post.materials = [Self.chrome]
-        let postNode = SCNNode(geometry: post)
-        postNode.eulerAngles.x = .pi / 2
-        postNode.position = SCNVector3(Float(restPoint.x), Float(restPoint.y), top + Self.armDown / 2 - 0.02)
-        add(postNode)
-    }
-
-    private func add(_ node: SCNNode) {
-        root.addChildNode(node)
-        visuals.append(node)
-    }
-
-    // MARK: Matières
-
-    static let chrome: SCNMaterial = {
-        let m = SCNMaterial()
-        m.lightingModel = .physicallyBased
-        m.diffuse.contents = UIColor(white: 0.85, alpha: 1)
-        m.metalness.contents = 1.0
-        m.roughness.contents = 0.16
-        return m
-    }()
-
-    static let brushed: SCNMaterial = {
-        let m = SCNMaterial()
-        m.lightingModel = .physicallyBased
-        m.diffuse.contents = UIColor(white: 0.62, alpha: 1)
-        m.metalness.contents = 0.9
-        m.roughness.contents = 0.38
-        return m
-    }()
-
-    /// Petit voyant allumé (bouton 33 tours, lampe stroboscopique).
-    static let lit: SCNMaterial = {
-        let m = SCNMaterial()
-        m.lightingModel = .constant
-        m.diffuse.contents = UIColor(red: 1, green: 0.42, blue: 0.2, alpha: 1)
-        return m
-    }()
-
-    static let woodMaterial: SCNMaterial = {
-        let m = SCNMaterial()
-        m.lightingModel = .physicallyBased
-        m.diffuse.contents = VinylTextures.wood(dark: true)
-        m.roughness.contents = 0.55
-        m.clearCoat.contents = 0.4
-        m.clearCoatRoughness.contents = 0.25
-        return m
-    }()
-
-    /// Dessus du socle : noir satiné brossé, marquages des boutons et logo.
-    static let plinthTopImage: UIImage = {
-        let w: CGFloat = 1100, h: CGFloat = 875
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = 1
-        return UIGraphicsImageRenderer(size: CGSize(width: w, height: h), format: format).image { ctx in
-            let c = ctx.cgContext
-            c.setFillColor(UIColor(white: 0.075, alpha: 1).cgColor)
-            c.fill(CGRect(x: 0, y: 0, width: w, height: h))
-            var rng = SeededRandom(seed: 99)
-            for _ in 0..<900 {
-                let y = rng.next(0, Double(h))
-                c.setFillColor(UIColor(white: 1, alpha: CGFloat(rng.next(0.008, 0.03))).cgColor)
-                c.fill(CGRect(x: 0, y: y, width: Double(w), height: rng.next(0.5, 1.5)))
-            }
-            // Position sur le socle (x de -2,15 à 2,25 ; y de 1,75 à -1,75) → pixels.
-            func px(_ x: Double, _ y: Double) -> CGPoint {
-                CGPoint(x: (x + 2.15) / 4.4 * Double(w), y: (1.75 - y) / 3.5 * Double(h))
-            }
-            func label(_ text: String, _ x: Double, _ y: Double, size: CGFloat, weight: UIFont.Weight = .semibold, alpha: CGFloat = 0.7) {
-                let a = NSAttributedString(string: text, attributes: [
-                    .font: UIFont.systemFont(ofSize: size, weight: weight),
-                    .foregroundColor: UIColor(white: 1, alpha: alpha),
-                    .kern: 1.5
-                ])
-                let s = a.size()
-                let p = px(x, y)
-                a.draw(at: CGPoint(x: p.x - s.width / 2, y: p.y - s.height / 2))
-            }
-            label("START · STOP", -1.72, -1.24, size: 13)
-            label("33", -1.17, -1.33, size: 13)
-            label("45", -0.83, -1.33, size: 13)
-            label("PITCH", 2.0, -0.15, size: 12)
-            label("+8", 2.17, -0.35, size: 10, alpha: 0.5)
-            label("−8", 2.17, -1.35, size: 10, alpha: 0.5)
-            label("PLATINE", 1.55, -1.5, size: 26, weight: .heavy, alpha: 0.85)
-            label("TD-33 · ENTRAÎNEMENT DIRECT", 1.4, -1.66, size: 9, alpha: 0.45)
-            // Graduations du curseur.
-            c.setFillColor(UIColor(white: 1, alpha: 0.35).cgColor)
-            for i in 0...8 {
-                let p = px(2.12, -0.33 - Double(i) * 0.13)
-                c.fill(CGRect(x: p.x, y: p.y, width: 10, height: 1.5))
-            }
-        }
-    }()
-
-    /// Couvre-plateau en caoutchouc, avec ses fines nervures.
-    static let platterMat: UIImage = {
-        let s: CGFloat = 1024
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = 1
-        return UIGraphicsImageRenderer(size: CGSize(width: s, height: s), format: format).image { ctx in
-            let c = ctx.cgContext
-            c.setFillColor(UIColor(white: 0.1, alpha: 1).cgColor)
-            c.fill(CGRect(x: 0, y: 0, width: s, height: s))
-            c.setLineWidth(2)
-            var r: CGFloat = 40
-            var k = 0
-            while r < s / 2 - 6 {
-                c.setStrokeColor(UIColor(white: k % 2 == 0 ? 0.16 : 0.06, alpha: 1).cgColor)
-                c.strokeEllipse(in: CGRect(x: s / 2 - r, y: s / 2 - r, width: 2 * r, height: 2 * r))
-                r += 7
-                k += 1
-            }
-        }
-    }()
-
-    /// Tranche du plateau : aluminium et rangées de points stroboscopiques.
-    static let strobeRim: UIImage = {
-        let w: CGFloat = 2048, h: CGFloat = 64
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = 1
-        return UIGraphicsImageRenderer(size: CGSize(width: w, height: h), format: format).image { ctx in
-            let c = ctx.cgContext
-            c.setFillColor(UIColor(white: 0.78, alpha: 1).cgColor)
-            c.fill(CGRect(x: 0, y: 0, width: w, height: h))
-            c.setFillColor(UIColor(white: 0.35, alpha: 1).cgColor)
-            for (row, count) in [(12.0, 180), (32.0, 167), (52.0, 154)] {
-                let step = w / CGFloat(count)
-                for i in 0..<count {
-                    c.fillEllipse(in: CGRect(x: CGFloat(i) * step, y: CGFloat(row) - 4, width: step * 0.5, height: 8))
-                }
-            }
-        }
-    }()
 }
 
 // MARK: - Fabrication du vinyle
@@ -692,13 +217,13 @@ extension AlbumNodeBuilder {
 
         // Recto, verso et tranche : impression sur carton, coins légèrement usés, cercle du disque marqué à force d'écoute.
         let front = cached("lpfront|" + signature) {
-            guard let base = render(CoverFace(album: album, badges: badges), CGSize(width: 640, height: 640), scale: 1.6) else { return nil }
-            return VinylTextures.agedPrint(base, ring: wear, seed: seed, edge: 1)
+            guard let base = render(CoverFace(album: album, badges: badges), CGSize(width: 640, height: 640), scale: hiRes ? 3.2 : 1.6) else { return nil }
+            return VinylTextures.agedPrint(base, ring: wear, seed: seed, edge: 1, size: hiRes ? 2048 : 1024)
         }
         let back = cached("lpback|" + signature) {
             guard let base = render(VinylBackInsert(album: album, discs: discs, catalog: catalog),
-                                    CGSize(width: 640, height: 640), scale: 1.6) else { return nil }
-            return VinylTextures.agedPrint(base, ring: wear * 0.8, seed: seed &+ 7, edge: 0.8)
+                                    CGSize(width: 640, height: 640), scale: hiRes ? 3.2 : 1.6) else { return nil }
+            return VinylTextures.agedPrint(base, ring: wear * 0.8, seed: seed &+ 7, edge: 0.8, size: hiRes ? 2048 : 1024)
         }
         let spine = cached("lpspine|" + signature) {
             VinylTextures.spine(title: album.title, artist: album.artist, catalog: catalog, color: edgeColor)
@@ -755,8 +280,9 @@ extension AlbumNodeBuilder {
 
         // Étiquette prix du disquaire, en haut à gauche.
         if settings.priceStickers {
-            let tag = Self.priceTagNode(price: library.price(for: album.id, discs: discs), width: 0.66)
-            tag.position = SCNVector3(Float(-W / 2 + 0.52), Float(H / 2 - 0.3), Float(D / 2) + 0.0085)
+            // Étiquette d'étiqueteuse (un peu plus grande sur les vinyles : 30 × 18 mm).
+            let tag = Self.priceTagNode(library.priceLabel(for: album, discs: discs), width: 0.3)
+            tag.position = SCNVector3(Float(-W / 2 + 0.32), Float(H / 2 - 0.2), Float(D / 2) + 0.0085)
             tag.eulerAngles.z = 0.03
             parts.append(tag)
         }
@@ -843,7 +369,7 @@ extension AlbumNodeBuilder {
         rim.lightingModel = .physicallyBased
         rim.diffuse.contents = UIColor(red: c.r, green: c.g, blue: c.b, alpha: max(0.5, c.a))
         rim.roughness.contents = 0.3
-        let geometry = Self.discGeometry(outer: 1.5, inner: 0.036, thickness: 0.014, segments: 220)
+        let geometry = Self.discGeometry(outer: 1.5, inner: 0.036, thickness: 0.014, segments: 384)
         geometry.materials = [face(faces.front), face(faces.back), rim, rim]
         let mesh = SCNNode(geometry: geometry)
         mesh.name = "discMesh"
@@ -885,15 +411,17 @@ extension AlbumNodeBuilder {
         return pivot
     }
 
-    /// Étiquette prix collée (papier jaune pâle, prix en rouge).
-    static func priceTagNode(price: Double, width: CGFloat) -> SCNNode {
-        let key = "price|" + PriceTag.text(price)
+    /// Étiquette prix collée, sortie de l'étiqueteuse du magasin.
+    static func priceTagNode(_ label: PriceLabel, width: CGFloat) -> SCNNode {
+        let key = "price3|" + label.key + "|" + label.reference
         let image: UIImage
         if let img = textures.object(forKey: key as NSString) { image = img } else {
-            image = VinylTextures.priceSticker(price)
+            image = VinylTextures.priceSticker(label)
             textures.setObject(image, forKey: key as NSString)
         }
-        let plane = SCNPlane(width: width, height: width / 2)
+        // `width` = largeur d'une étiquette ; une promo en a deux (la nouvelle collée par-dessus l'ancienne).
+        let k = width / 1024
+        let plane = SCNPlane(width: image.size.width * k, height: image.size.height * k)
         let m = printed(image)
         m.blendMode = .alpha
         m.writesToDepthBuffer = false
@@ -1012,8 +540,10 @@ enum VinylTextures {
     }()
 
     /// Impression sur carton : grain, coins et bords un peu usés, cercle du disque marqué (pochettes très écoutées).
-    static func agedPrint(_ base: UIImage, ring: Double, seed: UInt64, edge: Double) -> UIImage {
-        let size = CGSize(width: 1024, height: 1024)
+    static func agedPrint(_ base: UIImage, ring: Double, seed: UInt64, edge: Double, size side: CGFloat = 1024) -> UIImage {
+        let size = CGSize(width: side, height: side)
+        // Les détails (usure, cercle) gardent la même taille réelle quelle que soit la définition.
+        let k = Double(side / 1024)
         return renderer(size, opaque: true).image { ctx in
             let c = ctx.cgContext
             base.draw(in: CGRect(origin: .zero, size: size))
@@ -1034,14 +564,14 @@ enum VinylTextures {
                 let radius = size.width * 0.47
                 c.saveGState()
                 c.setBlendMode(.screen)
-                c.setShadow(offset: .zero, blur: 10, color: UIColor(white: 1, alpha: CGFloat(0.35 * ring)).cgColor)
+                c.setShadow(offset: .zero, blur: CGFloat(10 * k), color: UIColor(white: 1, alpha: CGFloat(0.35 * ring)).cgColor)
                 c.setStrokeColor(UIColor(white: 1, alpha: CGFloat(0.09 * ring)).cgColor)
-                c.setLineWidth(9)
+                c.setLineWidth(CGFloat(9 * k))
                 c.strokeEllipse(in: CGRect(x: center.x - radius, y: center.y - radius, width: 2 * radius, height: 2 * radius))
                 // Le relief du macaron central, plus discret.
                 let small = size.width * 0.17
                 c.setStrokeColor(UIColor(white: 1, alpha: CGFloat(0.05 * ring)).cgColor)
-                c.setLineWidth(6)
+                c.setLineWidth(CGFloat(6 * k))
                 c.strokeEllipse(in: CGRect(x: center.x - small, y: center.y - small, width: 2 * small, height: 2 * small))
                 c.restoreGState()
             }
@@ -1053,8 +583,8 @@ enum VinylTextures {
                 // Plus d'usure près des coins.
                 let cornerBias = pow(abs(along - 0.5) * 2, 3)
                 guard rng.next(0, 1) < 0.35 + 0.65 * cornerBias else { continue }
-                let depth = rng.next(0.5, 4 + 9 * cornerBias)
-                let len = rng.next(3, 18)
+                let depth = rng.next(0.5, 4 + 9 * cornerBias) * k
+                let len = rng.next(3, 18) * k
                 let alpha = CGFloat(rng.next(0.15, 0.5))
                 var rect: CGRect
                 switch side {
@@ -1070,7 +600,8 @@ enum VinylTextures {
             for (cx, cy) in [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (1.0, 1.0)] {
                 let p = CGPoint(x: cx * Double(size.width), y: cy * Double(size.height))
                 c.setFillColor(UIColor(white: 0.9, alpha: CGFloat(rng.next(0.25, 0.5) * edge)).cgColor)
-                c.fillEllipse(in: CGRect(x: p.x - 9, y: p.y - 9, width: 18, height: 18))
+                let rr = CGFloat(9 * k)
+                c.fillEllipse(in: CGRect(x: p.x - rr, y: p.y - rr, width: 2 * rr, height: 2 * rr))
             }
         }
     }
@@ -1132,13 +663,13 @@ enum VinylTextures {
 
     /// Sous-pochette en papier : blanc cassé, fibres, trou rond au centre pour voir l'étiquette.
     static let paperSleeve: UIImage = {
-        let s: CGFloat = 1024
+        let s: CGFloat = 2048
         return renderer(CGSize(width: s, height: s)).image { ctx in
             let c = ctx.cgContext
             c.setFillColor(UIColor(red: 0.95, green: 0.94, blue: 0.91, alpha: 1).cgColor)
             c.fill(CGRect(x: 0, y: 0, width: s, height: s))
             var rng = SeededRandom(seed: 17)
-            for _ in 0..<1400 {
+            for _ in 0..<3600 {
                 c.setStrokeColor(UIColor(white: rng.next(0, 1) > 0.5 ? 1 : 0.6, alpha: CGFloat(rng.next(0.04, 0.12))).cgColor)
                 c.setLineWidth(CGFloat(rng.next(0.5, 1.2)))
                 let x = rng.next(0, Double(s)), y = rng.next(0, Double(s))
@@ -1149,9 +680,9 @@ enum VinylTextures {
             c.fill(CGRect(x: s * 0.62, y: 0, width: 3, height: s))
             c.fill(CGRect(x: 0, y: s * 0.27, width: s, height: 2))
             let attrs: [NSAttributedString.Key: Any] = [
-                .font: UIFont.systemFont(ofSize: 15, weight: .medium), .foregroundColor: UIColor(white: 0.55, alpha: 1), .kern: 2
+                .font: UIFont.systemFont(ofSize: 30, weight: .medium), .foregroundColor: UIColor(white: 0.55, alpha: 1), .kern: 4
             ]
-            NSAttributedString(string: "PLATINE · À MANIPULER PAR LES BORDS", attributes: attrs).draw(at: CGPoint(x: 60, y: s - 70))
+            NSAttributedString(string: "PLATINE · À MANIPULER PAR LES BORDS", attributes: attrs).draw(at: CGPoint(x: 120, y: s - 140))
             // Le trou central (90 mm).
             c.setBlendMode(.clear)
             let hole = s * 0.146
@@ -1178,8 +709,10 @@ enum VinylTextures {
     /// entre chaque morceau, et l'étiquette centrale avec la pochette en rond, la face, l'année et la durée.
     static func face(label: UIImage?, side: VinylSide?, letter: String, color: VinylColor,
                      title: String, artist: String, year: Int, catalog: String, seed: UInt64) -> UIImage {
-        let size: CGFloat = 1536
+        let size: CGFloat = 2048
         let R = size / 2
+        // Tailles prévues pour 1536 px : tout est mis à l'échelle (sillons plus fins et plus nombreux).
+        let px = size / 1536
         return renderer(CGSize(width: size, height: size)).image { ctx in
             let c = ctx.cgContext
             let center = CGPoint(x: R, y: R)
@@ -1275,7 +808,7 @@ enum VinylTextures {
                     let f = outer - (outer - inner) * CGFloat(elapsed / total)
                     let r = f * R
                     c.setStrokeColor(baseColor.withAlphaComponent(max(0.6, base.a)).cgColor)
-                    c.setLineWidth(5)
+                    c.setLineWidth(5 * px)
                     c.strokeEllipse(in: CGRect(x: R - r, y: R - r, width: 2 * r, height: 2 * r))
                     c.setStrokeColor(UIColor(white: 1, alpha: lightVinyl ? 0.2 : 0.13).cgColor)
                     c.setLineWidth(1.2)
@@ -1292,7 +825,7 @@ enum VinylTextures {
             c.strokeEllipse(in: circle(0.36))
             // Numéro de matrice gravé dans la zone de fin.
             let etch: [NSAttributedString.Key: Any] = [
-                .font: UIFont.monospacedSystemFont(ofSize: 11, weight: .medium),
+                .font: UIFont.monospacedSystemFont(ofSize: 11 * px, weight: .medium),
                 .foregroundColor: UIColor(white: lightVinyl ? 0 : 1, alpha: 0.28)
             ]
             let matrix = catalog.replacingOccurrences(of: " ", with: "-") + "-" + letter + "1  ·  PLATINE PRESSAGE"
@@ -1306,7 +839,7 @@ enum VinylTextures {
                 c.saveGState()
                 c.translateBy(x: R, y: R)
                 c.rotate(by: angle + .pi / 2)
-                str.draw(at: CGPoint(x: -w / 2, y: -radius - 6), withAttributes: etch)
+                str.draw(at: CGPoint(x: -w / 2, y: -radius - 6 * px), withAttributes: etch)
                 c.restoreGState()
                 angle += step / 2
             }
@@ -1337,7 +870,7 @@ enum VinylTextures {
 
             func text(_ s: String, _ y: CGFloat, size: CGFloat, weight: UIFont.Weight, alpha: CGFloat = 1, x: CGFloat? = nil) {
                 let a = NSAttributedString(string: s, attributes: [
-                    .font: UIFont.systemFont(ofSize: size, weight: weight),
+                    .font: UIFont.systemFont(ofSize: size * px, weight: weight),
                     .foregroundColor: UIColor(white: 1, alpha: alpha),
                     .kern: 0.6
                 ])
@@ -1373,8 +906,10 @@ enum VinylTextures {
     /// Sticker rond collé sur le blister : « Inclut le single… » (ou ton texte).
     static func hypeSticker(text: String, single: String, discs: Int) -> UIImage {
         let s: CGFloat = 512
-        return renderer(CGSize(width: s, height: s)).image { ctx in
+        // Dessiné en 1024 px (deux fois plus net), avec les mesures d'une image de 512.
+        return renderer(CGSize(width: s * 2, height: s * 2)).image { ctx in
             let c = ctx.cgContext
+            c.scaleBy(x: 2, y: 2)
             let rect = CGRect(x: 8, y: 8, width: s - 16, height: s - 16)
             c.setShadow(offset: CGSize(width: 0, height: 3), blur: 6, color: UIColor(white: 0, alpha: 0.35).cgColor)
             c.setFillColor(UIColor(red: 0.98, green: 0.84, blue: 0.12, alpha: 1).cgColor)
@@ -1407,42 +942,146 @@ enum VinylTextures {
         }
     }
 
-    /// Étiquette prix de disquaire.
-    static func priceSticker(_ price: Double) -> UIImage {
-        let w: CGFloat = 512, h: CGFloat = 256
-        return renderer(CGSize(width: w, height: h)).image { ctx in
+    /// Étiquette prix sortie d'une étiqueteuse de magasin (la « pince à prix ») : petit rectangle
+    /// de papier aux coins arrondis, bandeau pré-imprimé en rouge, prix frappé à l'encre violette un peu
+    /// irrégulière (lettres légèrement décalées, encre plus pâle par endroits) et les deux petites
+    /// entailles de sécurité. Promo : une étiquette orange fluo collée de travers sur l'ancienne.
+    static func priceSticker(_ label: PriceLabel) -> UIImage {
+        let lw: CGFloat = 1024, lh: CGFloat = 630
+        let canvas = label.was == nil ? CGSize(width: lw, height: lh) : CGSize(width: lw + 300, height: lh + 250)
+        var rng = SeededRandom(seed: label.seed)
+        // Papier : surtout blanc ; parfois jaune ou orange fluo, comme les rouleaux des magasins.
+        let papers: [UIColor] = [UIColor(white: 0.975, alpha: 1), UIColor(white: 0.975, alpha: 1), UIColor(white: 0.975, alpha: 1),
+                                 UIColor(red: 1, green: 0.95, blue: 0.45, alpha: 1)]
+        let paper = papers[Int(label.seed % UInt64(papers.count))]
+        let fluo = UIColor(red: 1, green: 0.55, blue: 0.16, alpha: 1)
+        let code = (label.vinyl ? "LP " : "CD ") + label.reference
+
+        return renderer(canvas).image { ctx in
             let c = ctx.cgContext
-            let rect = CGRect(x: 6, y: 6, width: w - 12, height: h - 12)
-            let path = UIBezierPath(roundedRect: rect, cornerRadius: 22)
-            c.setShadow(offset: CGSize(width: 0, height: 2), blur: 5, color: UIColor(white: 0, alpha: 0.35).cgColor)
-            c.setFillColor(UIColor(red: 1, green: 0.97, blue: 0.82, alpha: 1).cgColor)
-            c.addPath(path.cgPath)
-            c.fillPath()
-            c.setShadow(offset: .zero, blur: 0, color: nil)
-            // Bandeau rouge et texte.
-            c.saveGState()
-            c.addPath(path.cgPath)
-            c.clip()
-            c.setFillColor(UIColor(red: 0.82, green: 0.08, blue: 0.1, alpha: 1).cgColor)
-            c.fill(CGRect(x: 0, y: 0, width: w, height: 62))
-            c.restoreGState()
-            let style = NSMutableParagraphStyle()
-            style.alignment = .center
-            NSAttributedString(string: "PLATINE DISQUES", attributes: [
-                .font: UIFont.systemFont(ofSize: 34, weight: .heavy), .foregroundColor: UIColor.white, .kern: 3, .paragraphStyle: style
-            ]).draw(in: CGRect(x: 0, y: 12, width: w, height: 50))
-            NSAttributedString(string: PriceTag.text(price), attributes: [
-                .font: UIFont.systemFont(ofSize: 104, weight: .black), .foregroundColor: UIColor(red: 0.8, green: 0.06, blue: 0.08, alpha: 1),
-                .paragraphStyle: style
-            ]).draw(in: CGRect(x: 0, y: 66, width: w, height: 130))
-            NSAttributedString(string: "TTC · NEUF", attributes: [
-                .font: UIFont.systemFont(ofSize: 22, weight: .bold), .foregroundColor: UIColor(white: 0.25, alpha: 1), .kern: 2,
-                .paragraphStyle: style
-            ]).draw(in: CGRect(x: 0, y: 200, width: w, height: 30))
-            // Légère pliure dans un coin.
-            c.setFillColor(UIColor(white: 0, alpha: 0.06).cgColor)
-            c.fill(CGRect(x: w - 60, y: h - 26, width: 50, height: 16))
+            if let was = label.was {
+                // L'ancienne étiquette dessous, la nouvelle collée par-dessus, un peu de travers.
+                drawGunLabel(c, at: CGPoint(x: 20, y: 20), size: CGSize(width: lw - 40, height: lh - 40), angle: -0.02,
+                             paper: UIColor(white: 0.975, alpha: 1), price: was, code: code, header: "PLATINE DISQUES", rng: &rng)
+                drawGunLabel(c, at: CGPoint(x: 280, y: 230), size: CGSize(width: lw - 40, height: lh - 40), angle: 0.035,
+                             paper: fluo, price: label.price, code: "PROMO", header: "PRIX CHOC", rng: &rng)
+            } else {
+                drawGunLabel(c, at: CGPoint(x: 20, y: 20), size: CGSize(width: lw - 40, height: lh - 40), angle: 0,
+                             paper: paper, price: label.price, code: code, header: "PLATINE DISQUES", rng: &rng)
+            }
         }
+    }
+
+    private static func drawGunLabel(_ c: CGContext, at origin: CGPoint, size: CGSize, angle: CGFloat,
+                                     paper: UIColor, price: Double, code: String, header: String, rng: inout SeededRandom) {
+        c.saveGState()
+        c.translateBy(x: origin.x + size.width / 2, y: origin.y + size.height / 2)
+        c.rotate(by: angle)
+        c.translateBy(x: -size.width / 2, y: -size.height / 2)
+        let rect = CGRect(origin: .zero, size: size)
+        let shape = UIBezierPath(roundedRect: rect, cornerRadius: size.height * 0.1)
+
+        // Le papier, avec une ombre très fine (il est collé, à peine relevé sur un bord).
+        c.setShadow(offset: CGSize(width: 0, height: 4), blur: 8, color: UIColor(white: 0, alpha: 0.32).cgColor)
+        c.setFillColor(paper.cgColor)
+        c.addPath(shape.cgPath)
+        c.fillPath()
+        c.setShadow(offset: .zero, blur: 0, color: nil)
+        c.saveGState()
+        c.addPath(shape.cgPath)
+        c.clip()
+
+        // Fibres du papier.
+        for _ in 0..<500 {
+            c.setFillColor(UIColor(white: rng.next(0, 1) > 0.5 ? 1 : 0, alpha: CGFloat(rng.next(0.015, 0.05))).cgColor)
+            c.fill(CGRect(x: rng.next(0, Double(size.width)), y: rng.next(0, Double(size.height)),
+                          width: rng.next(1, 5), height: rng.next(0.6, 1.6)))
+        }
+
+        // Bandeau pré-imprimé (rouge) : nom du magasin entre deux filets.
+        let pre = UIColor(red: 0.85, green: 0.1, blue: 0.14, alpha: 0.92)
+        c.setFillColor(pre.cgColor)
+        c.fill(CGRect(x: 0, y: size.height * 0.07, width: size.width, height: 5))
+        c.fill(CGRect(x: 0, y: size.height * 0.25, width: size.width, height: 5))
+        let style = NSMutableParagraphStyle()
+        style.alignment = .center
+        NSAttributedString(string: header, attributes: [
+            .font: UIFont.systemFont(ofSize: size.height * 0.11, weight: .heavy), .foregroundColor: pre,
+            .kern: size.height * 0.02, .paragraphStyle: style
+        ]).draw(in: CGRect(x: 0, y: size.height * 0.095, width: size.width, height: size.height * 0.15))
+
+        // Encre de l'étiqueteuse : violet foncé, caractères frappés un à un.
+        let ink = UIColor(red: 0.2, green: 0.08, blue: 0.32, alpha: 1)
+        func stamp(_ text: String, x: CGFloat, baseline: CGFloat, height: CGFloat, spacing: CGFloat) -> CGFloat {
+            let font = UIFont.monospacedDigitSystemFont(ofSize: height, weight: .heavy)
+            var cx = x
+            for ch in text {
+                let alpha = CGFloat(rng.next(0.72, 0.95))
+                let a = NSAttributedString(string: String(ch), attributes: [
+                    .font: font, .foregroundColor: ink.withAlphaComponent(alpha)
+                ])
+                let s = a.size()
+                let dy = CGFloat(rng.next(-2.5, 2.5))
+                c.saveGState()
+                // Caractères étroits et hauts, comme sur les molettes d'une étiqueteuse.
+                c.translateBy(x: cx, y: baseline - s.height + dy)
+                c.scaleBy(x: 0.8, y: 1)
+                a.draw(at: .zero)
+                // Frappe doublée à peine décalée : l'encre bave un peu.
+                NSAttributedString(string: String(ch), attributes: [
+                    .font: font, .foregroundColor: ink.withAlphaComponent(alpha * 0.25)
+                ]).draw(at: CGPoint(x: 1.6, y: 1.2))
+                c.restoreGState()
+                cx += s.width * 0.8 + spacing
+            }
+            return cx
+        }
+        // Le prix : « 14,99 € », centré.
+        let text = PriceTag.text(price).replacingOccurrences(of: " €", with: "")
+        let digitH = size.height * 0.46
+        let probe = NSAttributedString(string: text, attributes: [.font: UIFont.monospacedDigitSystemFont(ofSize: digitH, weight: .heavy)])
+        let euroH = digitH * 0.55
+        let total = probe.size().width * 0.8 + CGFloat(text.count) * 4 + euroH * 0.75
+        var x = (size.width - total) / 2 + CGFloat(rng.next(-10, 10))
+        let baseline = size.height * 0.8 + CGFloat(rng.next(-4, 4))
+        x = stamp(text, x: x, baseline: baseline, height: digitH, spacing: 4)
+        _ = stamp("€", x: x + 6, baseline: baseline - digitH * 0.05, height: euroH, spacing: 0)
+        // Petite ligne de code en bas (rayon et référence).
+        let codeAttrs: [NSAttributedString.Key: Any] = [
+            .font: UIFont.monospacedSystemFont(ofSize: size.height * 0.075, weight: .bold),
+            .foregroundColor: ink.withAlphaComponent(0.7), .kern: 3
+        ]
+        NSAttributedString(string: code, attributes: codeAttrs).draw(at: CGPoint(x: size.width * 0.07, y: size.height * 0.86))
+
+        // Encre manquante par endroits (petits points couleur papier sur la frappe).
+        for _ in 0..<260 {
+            let px = rng.next(0, Double(size.width)), py = rng.next(Double(size.height * 0.3), Double(size.height * 0.95))
+            let r = rng.next(1, 3.5)
+            c.setFillColor(paper.withAlphaComponent(CGFloat(rng.next(0.4, 0.9))).cgColor)
+            c.fillEllipse(in: CGRect(x: px, y: py, width: r, height: r))
+        }
+        c.restoreGState()
+
+        // Les deux entailles de sécurité (l'étiquette se déchire si on essaie de la décoller).
+        c.setBlendMode(.clear)
+        c.setLineWidth(4)
+        c.setLineCap(.round)
+        for side in [0.0, 1.0] {
+            let cx = side == 0 ? size.width * 0.09 : size.width * 0.91
+            let cy = size.height * 0.62
+            c.addArc(center: CGPoint(x: cx, y: cy), radius: size.height * 0.07,
+                     startAngle: side == 0 ? .pi * 0.6 : .pi * 1.6, endAngle: side == 0 ? .pi * 1.4 : .pi * 0.4, clockwise: false)
+            c.strokePath()
+        }
+        c.setBlendMode(.normal)
+        // Reflet discret du papier glacé.
+        c.addPath(shape.cgPath)
+        c.clip()
+        let gloss = [UIColor(white: 1, alpha: 0.22).cgColor, UIColor(white: 1, alpha: 0).cgColor] as CFArray
+        if let grad = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: gloss, locations: [0, 1]) {
+            c.drawLinearGradient(grad, start: .zero, end: CGPoint(x: size.width * 0.5, y: size.height), options: [])
+        }
+        c.restoreGState()
     }
 
     /// Double page intérieure du gatefold : photo à gauche, crédits et morceaux à droite.

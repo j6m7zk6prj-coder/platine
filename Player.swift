@@ -38,15 +38,9 @@ final class Player {
         return t.isFinite ? t : currentTime
     }
 
-    /// Un vinyle tourne sur la platine de la Collection (sert aux craquements).
-    var vinylOnTurntable = false {
-        didSet { if vinylOnTurntable != oldValue { applyCrackle() } }
-    }
-
     /// Craquements de vinyle : ajoutés en direct à l'écoute, jamais dans le fichier.
     func applyCrackle() {
-        let on = settings.vinylCrackle && (!settings.crackleOnlyTurntable || vinylOnTurntable)
-        SoundEffects.setCrackle(on ? settings.crackleAmount : 0)
+        SoundEffects.setCrackle(settings.vinylCrackle ? settings.crackleAmount : 0)
     }
 
     /// Vitesse réelle : ta vitesse habituelle × celle de l'effet.

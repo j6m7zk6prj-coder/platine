@@ -103,8 +103,6 @@ enum VinylStage: Equatable {
     case jacket
     /// Sorti, à moitié dans sa sous-pochette.
     case out
-    /// Posé sur la platine.
-    case turntable
 }
 
 /// Réglages d'un vinyle (gardés pour chaque album).
@@ -207,13 +205,33 @@ enum PriceTag {
         return hash
     }
 
-    /// Un prix de disquaire crédible, toujours le même pour un album donné.
-    static func defaultPrice(albumID: String, vinyl: Bool, discs: Int) -> Double {
-        let cd: [Double] = [9.99, 11.99, 12.99, 13.99, 14.99, 15.99, 16.99, 17.99, 19.99]
-        let lp: [Double] = [21.99, 22.99, 24.99, 25.99, 26.99, 27.99, 29.99, 32.99]
-        let list = vinyl ? lp : cd
-        let base = list[Int(stableHash(VinylCatalog.base(albumID)) % UInt64(list.count))]
-        return vinyl && discs > 1 ? base + 9 : base
+    /// Un prix comme en magasin, toujours le même pour un album donné : les nouveautés sont plus chères,
+    /// les albums plus anciens passent en « prix découverte ».
+    static func defaultPrice(album: AlbumInfo, vinyl: Bool, discs: Int) -> Double {
+        let now = Calendar.current.component(.year, from: Date())
+        let age = album.year > 0 ? now - album.year : 8
+        let list: [Double]
+        if vinyl {
+            if age <= 1 { list = [27.99, 29.99, 31.99, 34.99] }
+            else if age <= 8 { list = [24.99, 26.99, 27.99, 29.99] }
+            else { list = [19.99, 22.99, 24.99, 25.99] }
+        } else {
+            if age <= 1 { list = [14.99, 15.99, 16.99, 17.99] }
+            else if age <= 8 { list = [11.99, 12.99, 13.99, 14.99] }
+            else { list = [7.99, 8.99, 9.99, 10.99] }
+        }
+        let base = list[Int(stableHash(VinylCatalog.base(album.id)) % UInt64(list.count))]
+        return vinyl && discs > 1 ? base + 10 : base
+    }
+
+    /// Environ un album sur cinq est en promotion (ancien prix barré, comme en magasin).
+    static func promo(album: AlbumInfo, price: Double) -> Double? {
+        let h = stableHash("promo|" + VinylCatalog.base(album.id))
+        guard h % 5 == 0 else { return nil }
+        // Remise de 20 à 30 %, arrondie en ,99 comme sur les étiquettes.
+        let rate = [0.2, 0.25, 0.3][Int((h / 5) % 3)]
+        let cut = (price * (1 - rate)).rounded(.down) + 0.99
+        return cut < price - 1 ? cut : nil
     }
 
     static func text(_ price: Double) -> String {
@@ -223,6 +241,19 @@ enum PriceTag {
         f.maximumFractionDigits = 2
         return (f.string(from: NSNumber(value: price)) ?? String(format: "%.2f", price)) + " €"
     }
+}
+
+/// Ce qui est imprimé sur l'étiquette prix.
+struct PriceLabel {
+    let price: Double
+    /// Ancien prix barré (promotion).
+    let was: Double?
+    let vinyl: Bool
+    let seed: UInt64
+
+    var key: String { PriceTag.text(price) + "|" + (was.map(PriceTag.text) ?? "-") + (vinyl ? "|lp" : "|cd") }
+    /// Référence interne du magasin, comme sur les vraies étiquettes.
+    var reference: String { String(format: "%06d", Int(seed % 1_000_000)) }
 }
 
 // MARK: - Bibliothèque
@@ -240,8 +271,18 @@ extension Library {
         vinylOptionsMap[VinylCatalog.base(albumID)] ?? VinylOptions()
     }
 
-    func price(for albumID: String, discs: Int = 1) -> Double {
-        customPrices[albumID] ?? PriceTag.defaultPrice(albumID: albumID, vinyl: VinylCatalog.isVinyl(albumID), discs: discs)
+    /// Prix normal (le tien si tu l'as changé).
+    func price(for album: AlbumInfo, discs: Int = 1) -> Double {
+        customPrices[album.id] ?? PriceTag.defaultPrice(album: album, vinyl: VinylCatalog.isVinyl(album.id), discs: discs)
+    }
+
+    /// L'étiquette : prix affiché, et ancien prix barré si l'album est en promotion.
+    func priceLabel(for album: AlbumInfo, discs: Int = 1) -> PriceLabel {
+        let normal = price(for: album, discs: discs)
+        if customPrices[album.id] == nil, let promo = PriceTag.promo(album: album, price: normal) {
+            return PriceLabel(price: promo, was: normal, vinyl: VinylCatalog.isVinyl(album.id), seed: PriceTag.stableHash(album.id))
+        }
+        return PriceLabel(price: normal, was: nil, vinyl: VinylCatalog.isVinyl(album.id), seed: PriceTag.stableHash(album.id))
     }
 
     func hasCustomPrice(_ albumID: String) -> Bool { customPrices[albumID] != nil }

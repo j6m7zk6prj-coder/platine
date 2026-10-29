@@ -161,10 +161,8 @@ final class AppSettings {
     /// Rangement des vinyles : bac à feuilleter ou étagère murale.
     var vinylStorage: VinylStorage { didSet { UserDefaults.standard.set(vinylStorage.rawValue, forKey: "vinylStorage") } }
     /// Craquements de vinyle ajoutés à l'écoute (le fichier n'est jamais modifié).
-    var vinylCrackle: Bool { didSet { UserDefaults.standard.set(vinylCrackle, forKey: "vinylCrackle") } }
+    var vinylCrackle: Bool { didSet { UserDefaults.standard.set(vinylCrackle, forKey: "vinylCrackleOn") } }
     var crackleAmount: Double { didSet { UserDefaults.standard.set(crackleAmount, forKey: "crackleAmount") } }
-    /// Craquements seulement quand un vinyle tourne sur la platine.
-    var crackleOnlyTurntable: Bool { didSet { UserDefaults.standard.set(crackleOnlyTurntable, forKey: "crackleOnlyTurntable") } }
     /// Marque du cercle du disque sur les pochettes très écoutées.
     var ringWear: Bool { didSet { UserDefaults.standard.set(ringWear, forKey: "ringWear") } }
 
@@ -198,9 +196,8 @@ final class AppSettings {
         glassIntensity = d.object(forKey: "glassIntensity") as? Double ?? 0.6
         priceStickers = d.object(forKey: "priceStickers") as? Bool ?? true
         vinylStorage = VinylStorage(rawValue: d.string(forKey: "vinylStorage") ?? "") ?? .crate
-        vinylCrackle = d.object(forKey: "vinylCrackle") as? Bool ?? true
+        vinylCrackle = d.object(forKey: "vinylCrackleOn") as? Bool ?? false
         crackleAmount = d.object(forKey: "crackleAmount") as? Double ?? 0.35
-        crackleOnlyTurntable = d.object(forKey: "crackleOnlyTurntable") as? Bool ?? true
         ringWear = d.object(forKey: "ringWear") as? Bool ?? true
     }
 }

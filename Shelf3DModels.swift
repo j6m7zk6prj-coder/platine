@@ -64,7 +64,7 @@ final class AlbumNode {
     var wrapNode: SCNNode?
     /// Appelé quand le blister est retiré (pour s'en souvenir).
     var onUnwrap: () -> Void = {}
-    /// Pièces propres aux vinyles (sous-pochette, platine, bras…).
+    /// Pièces propres aux vinyles (sous-pochette, gatefold, double disque).
     var vinyl: VinylRig?
 
     /// Affiche ou cache le blister, sans animation (mise à jour de l'étagère).
@@ -187,8 +187,8 @@ final class AlbumNode {
     func setSpinning(_ on: Bool) {
         guard on != spinning else { return }
         spinning = on
-        // Vinyle : c'est le plateau de la platine qui tourne (avec le disque posé dessus).
-        let disc: SCNNode? = vinyl != nil ? vinyl?.turntable?.platterSpin : discPivot
+        // Un vinyle tenu en main ne tourne pas.
+        let disc: SCNNode? = vinyl != nil ? nil : discPivot
         let spinners = reels + (disc.map { [$0] } ?? [])
         for node in spinners {
             if on {
@@ -254,6 +254,11 @@ final class AlbumNode {
 struct AlbumNodeBuilder {
     let library: Library
     let settings: AppSettings
+    /// Vue « en main » : textures en haute définition (le carrousel garde des textures plus légères).
+    var hiRes = false
+
+    /// Échelle de rendu des faces dessinées : bien plus fine quand l'objet est tenu en main.
+    var faceScale: CGFloat { hiRes ? 3.4 : 2.0 }
 
     func signature(_ album: AlbumInfo, _ format: AlbumFormat, _ badges: [AlbumBadge]) -> String {
         var art = library.artworkURL(album.cover)?.lastPathComponent ?? "-"
@@ -274,14 +279,14 @@ struct AlbumNodeBuilder {
         let frontName: String = library.extraImageName("front", album.id) ?? "-"
         let badgeList: String = earned + ";" + mine + ";" + placed + ";" + discName + ";" + frontName
         // Étiquette prix, et pour un vinyle : ses options, l'intérieur du gatefold et l'usure de la pochette.
-        var extra: String = settings.priceStickers ? PriceTag.text(library.price(for: album.id)) : "noprice"
+        var extra: String = settings.priceStickers ? library.priceLabel(for: album).key : "noprice"
         if format == .vinyl {
             let options = library.vinylOptions(album.id)
             let inner: String = library.extraImageName("inner", album.id) ?? "-"
             let wear: Int = settings.ringWear ? Int((library.ringWear(album) * 4).rounded()) : 0
             extra += "#" + options.signature + "#" + inner + "#" + String(wear) + "#" + String(album.tracks.count)
         }
-        let parts: [String] = [album.id, format.rawValue, art, badgeList, album.title, album.artist, extra]
+        let parts: [String] = [album.id, format.rawValue, art, badgeList, album.title, album.artist, extra, hiRes ? "hd" : "sd"]
         return parts.joined(separator: "|")
     }
 
@@ -316,7 +321,7 @@ struct AlbumNodeBuilder {
 
         // Plateau : noir fumé, le dos porte la jaquette arrière.
         let backImage = cached("back|" + signature) {
-            render(CDBackInsert(album: album, lightX: 0), CGSize(width: 568, height: 500), scale: 2.2)
+            render(CDBackInsert(album: album, lightX: 0), CGSize(width: 568, height: 500), scale: faceScale)
         }
         let spine = cached("spine|" + signature) {
             Self.spineImage(title: album.title, artist: album.artist, color: UIColor(library.palette(for: album.cover)[0]))
@@ -334,7 +339,7 @@ struct AlbumNodeBuilder {
         // Pochette : un carré de 120 mm glissé sous le couvercle, décalé vers la droite.
         let cover = SCNPlane(width: 1.2, height: 1.2)
         let coverImage = cached("cover|" + signature) {
-            render(CoverFace(album: album, badges: badges), CGSize(width: 600, height: 600), scale: 2.2)
+            render(CoverFace(album: album, badges: badges), CGSize(width: 600, height: 600), scale: faceScale)
         }
         // Couleurs exactes de la pochette : elle n'est pas « brûlée » par les lumières.
         cover.materials = [Self.printed(coverImage ?? UIColor.darkGray)]
@@ -423,8 +428,9 @@ struct AlbumNodeBuilder {
 
         // Étiquette prix du disquaire, collée en haut à droite.
         if settings.priceStickers {
-            let tag = Self.priceTagNode(price: library.price(for: album.id), width: 0.36)
-            tag.position = SCNVector3(Float(W / 2 - 0.27), Float(H / 2 - 0.16), Float(D / 2) + 0.0046)
+            // Étiquette d'étiqueteuse : 26 × 16 mm, collée en haut à droite.
+            let tag = Self.priceTagNode(library.priceLabel(for: album), width: 0.26)
+            tag.position = SCNVector3(Float(W / 2 - 0.22), Float(H / 2 - 0.14), Float(D / 2) + 0.0046)
             tag.eulerAngles.z = -0.04
             parts.append(tag)
         }
@@ -538,7 +544,7 @@ struct AlbumNodeBuilder {
     enum DiscFaces { case all, front }
 
     /// Anneau plat (vrai trou central) : face avant, face arrière, tranche extérieure et intérieure.
-    static func discGeometry(outer r1: Float, inner r0: Float, thickness: Float, faces: DiscFaces = .all, segments n: Int = 160) -> SCNGeometry {
+    static func discGeometry(outer r1: Float, inner r0: Float, thickness: Float, faces: DiscFaces = .all, segments n: Int = 256) -> SCNGeometry {
         var positions: [SCNVector3] = []
         var normals: [SCNVector3] = []
         var uvs: [CGPoint] = []
@@ -600,7 +606,7 @@ struct AlbumNodeBuilder {
     /// Face imprimée : la pochette sur la zone d'impression, puis l'anneau miroir,
     /// l'anneau d'empilage et le moyeu en plastique transparent, comme un vrai CD.
     static func discLabel(_ cover: UIImage?) -> UIImage {
-        let size: CGFloat = 1024
+        let size: CGFloat = 1800
         let R = size / 2
         let format = UIGraphicsImageRendererFormat()
         format.opaque = false
@@ -816,8 +822,9 @@ struct AlbumNodeBuilder {
     /// Face gravée (le dessous d'un vrai CD) : miroir de l'anneau central, zone de données,
     /// fines pistes, et le numéro de série gravé autour du centre.
     static func discDataSide(matrix: String) -> UIImage {
-        let size: CGFloat = 1024
+        let size: CGFloat = 1800
         let R = size / 2
+        let k = size / 1024
         let format = UIGraphicsImageRendererFormat()
         format.opaque = false
         format.scale = 1
@@ -858,7 +865,7 @@ struct AlbumNodeBuilder {
             ring(0.135, 0.125, UIColor(white: 1, alpha: 0.35))
 
             // Numéro de série gravé en tout petit dans l'anneau miroir.
-            let font = UIFont.monospacedSystemFont(ofSize: 15, weight: .medium)
+            let font = UIFont.monospacedSystemFont(ofSize: 15 * k, weight: .medium)
             let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: UIColor(white: 0.45, alpha: 0.9)]
             let radius = R * 0.325
             var angle: CGFloat = -.pi / 2
@@ -870,7 +877,7 @@ struct AlbumNodeBuilder {
                 c.saveGState()
                 c.translateBy(x: R, y: R)
                 c.rotate(by: angle + .pi / 2)
-                str.draw(at: CGPoint(x: -w / 2, y: -radius - 8), withAttributes: attrs)
+                str.draw(at: CGPoint(x: -w / 2, y: -radius - 8 * k), withAttributes: attrs)
                 c.restoreGState()
                 angle += step / 2
                 if angle > 1.5 * .pi - 0.05 { break }
@@ -1707,14 +1714,17 @@ struct AlbumNodeBuilder {
     /// Les faces dessinées sont gardées en mémoire : rouvrir un album ne les redessine pas.
     static let textures: NSCache<NSString, UIImage> = {
         let c = NSCache<NSString, UIImage>()
-        c.countLimit = 80
+        c.countLimit = 140
+        // Limite en mémoire (les faces en haute définition sont lourdes).
+        c.totalCostLimit = 320 * 1024 * 1024
         return c
     }()
 
     func cached(_ key: String, _ make: () -> UIImage?) -> UIImage? {
         if let img = Self.textures.object(forKey: key as NSString) { return img }
         guard let img = make() else { return nil }
-        Self.textures.setObject(img, forKey: key as NSString)
+        let cost = img.cgImage.map { $0.bytesPerRow * $0.height } ?? 1
+        Self.textures.setObject(img, forKey: key as NSString, cost: cost)
         return img
     }
 

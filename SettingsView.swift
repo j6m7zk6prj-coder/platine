@@ -132,7 +132,7 @@ struct SettingsView: View {
             }
 
             Section {
-                LabeledContent("Version", value: "8.0")
+                LabeledContent("Version", value: "8.2")
             } footer: {
                 Text("Platine lit ta propre musique. Seule la recherche de paroles contacte internet (LRCLIB), et uniquement quand tu ouvres des paroles absentes ou lances la recherche.")
             }
@@ -303,13 +303,11 @@ struct AppearanceSettingsView: View {
                         Image(systemName: "speaker.wave.3")
                     }
                     .foregroundStyle(.secondary)
-                    Toggle("Seulement sur la platine", isOn: $settings.crackleOnlyTurntable)
-                        .onChange(of: settings.crackleOnlyTurntable) { _, _ in player.applyCrackle() }
                 }
             } header: {
                 Text("Vinyles")
             } footer: {
-                Text("Les craquements sont ajoutés pendant l’écoute : tes fichiers ne sont jamais modifiés. « Seulement sur la platine » : quand un vinyle tourne sur la platine de la Collection.")
+                Text("Les craquements sont ajoutés pendant l’écoute, comme sur un vrai vinyle : tes fichiers ne sont jamais modifiés.")
             }
 
             Section {
