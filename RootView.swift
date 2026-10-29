@@ -20,6 +20,9 @@ struct RootView: View {
                 .modifier(MiniPlayerInset())
                 .tabItem { Label("Accueil", systemImage: "house.fill") }
                 .tag(0)
+            NavigationStack { FeedView() }
+                .tabItem { Label("Découvrir", systemImage: "play.rectangle.on.rectangle.fill") }
+                .tag(4)
             NavigationStack { LibraryHomeView() }
                 .modifier(MiniPlayerInset())
                 .tabItem { Label("Bibliothèque", systemImage: "square.stack.fill") }
