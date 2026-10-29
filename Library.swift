@@ -313,6 +313,12 @@ final class Library {
         try? data.write(to: Self.albumCoversURL, options: .atomic)
     }
 
+    func setExplicit(_ id: UUID, _ on: Bool) {
+        guard let i = tracks.firstIndex(where: { $0.id == id }), tracks[i].explicit != on else { return }
+        tracks[i].explicit = on
+        save()
+    }
+
     var artists: [ArtistInfo] {
         let allAlbums = albums
         return Dictionary(grouping: tracks, by: { $0.displayArtist.lowercased() }).map { key, list in
