@@ -20,6 +20,9 @@ struct Track: Identifiable, Codable, Hashable {
     /// Pochette choisie dans l'app : image, GIF ou vidéo.
     var customArtwork: String?
     var customKind: ArtworkKind?
+    /// Pochette animée (vidéo ou GIF), gardée à côté de la pochette normale : on peut avoir les deux.
+    var motionArtwork: String?
+    var motionKind: ArtworkKind?
     var addedAt: Date = Date()
     var isFavorite: Bool = false
     var playCount: Int = 0
@@ -51,7 +54,7 @@ struct Track: Identifiable, Codable, Hashable {
 extension Track {
     enum CodingKeys: String, CodingKey {
         case id, title, artist, album, trackNumber, year, duration, audioFile
-        case embeddedArtwork, customArtwork, customKind, addedAt
+        case embeddedArtwork, customArtwork, customKind, motionArtwork, motionKind, addedAt
         case isFavorite, playCount, lastPlayed, lyrics, games, explicit
     }
 
@@ -68,6 +71,8 @@ extension Track {
         embeddedArtwork = try c.decodeIfPresent(String.self, forKey: .embeddedArtwork)
         customArtwork = try c.decodeIfPresent(String.self, forKey: .customArtwork)
         customKind = try c.decodeIfPresent(ArtworkKind.self, forKey: .customKind)
+        motionArtwork = try c.decodeIfPresent(String.self, forKey: .motionArtwork)
+        motionKind = try c.decodeIfPresent(ArtworkKind.self, forKey: .motionKind)
         addedAt = try c.decodeIfPresent(Date.self, forKey: .addedAt) ?? Date()
         isFavorite = try c.decodeIfPresent(Bool.self, forKey: .isFavorite) ?? false
         playCount = try c.decodeIfPresent(Int.self, forKey: .playCount) ?? 0

@@ -95,22 +95,39 @@ struct ArtworkEditor: View {
                     Button { showFiles = true } label: {
                         row("Choisir dans Fichiers", detail: "JPG, PNG, HEIC, GIF, MOV, MP4", symbol: "folder")
                     }
-                    if let albumID, library.hasAlbumCover(albumID) {
-                        Button { library.resetAlbumCover(albumID) } label: {
-                            row("Pochette d’origine", detail: "Celle du fichier audio", symbol: "arrow.uturn.backward")
+                    if let albumID {
+                        if library.hasAlbumCover(albumID) {
+                            Button { library.resetAlbumCover(albumID) } label: {
+                                row("Pochette d’origine", detail: "Celle du fichier audio", symbol: "arrow.uturn.backward")
+                            }
+                            .transition(.opacity.combined(with: .scale(scale: 0.96)))
                         }
-                        .transition(.opacity.combined(with: .scale(scale: 0.96)))
-                    } else if albumID == nil, t.customArtwork != nil {
-                        Button { library.resetArtwork(targetIDs(t)) } label: {
-                            row("Pochette d’origine", detail: t.embeddedArtwork == nil ? "Aucune dans le fichier" : "Celle du fichier audio",
-                                symbol: "arrow.uturn.backward")
+                        if library.hasAlbumMotion(albumID) {
+                            Button { library.resetAlbumMotion(albumID) } label: {
+                                row("Retirer la pochette animée", detail: "La pochette normale reste", symbol: "play.slash")
+                            }
+                            .transition(.opacity.combined(with: .scale(scale: 0.96)))
                         }
-                        .transition(.opacity.combined(with: .scale(scale: 0.96)))
+                    } else {
+                        if let c = t.customArtwork, (t.customKind ?? .image) == .image, !c.isEmpty {
+                            Button { library.resetArtwork(targetIDs(t)) } label: {
+                                row("Pochette d’origine", detail: t.embeddedArtwork == nil ? "Aucune dans le fichier" : "Celle du fichier audio",
+                                    symbol: "arrow.uturn.backward")
+                            }
+                            .transition(.opacity.combined(with: .scale(scale: 0.96)))
+                        }
+                        if hasOwnMotion(t) {
+                            Button { library.resetMotion(targetIDs(t)) } label: {
+                                row("Retirer la pochette animée", detail: "La pochette normale reste", symbol: "play.slash")
+                            }
+                            .transition(.opacity.combined(with: .scale(scale: 0.96)))
+                        }
                     }
                 }
                 .buttonStyle(PressStyle(circle: false))
                 .disabled(working)
                 .animation(.smooth, value: t.customArtwork)
+                .animation(.smooth, value: t.motionArtwork)
 
                 if albumID != nil {
                     Text("Seule la pochette de l’album change (bibliothèque, page de l’album, Collection). Chaque morceau garde la sienne dans le lecteur.")
@@ -129,7 +146,9 @@ struct ArtworkEditor: View {
                     .glass(18)
                 }
 
-                Text("Les vidéos et GIF tournent en boucle, sans le son, dans l’app. L’écran verrouillé affiche leur première image.")
+                statusCard(t)
+
+                Text("Une image devient la pochette normale, une vidéo ou un GIF la pochette animée : tu peux avoir les deux. L’animée tourne en boucle, sans le son ; s’il n’y a pas de pochette normale, c’est elle qui s’affiche partout.")
                     .font(.footnote)
                     .foregroundStyle(.white.opacity(0.5))
                     .multilineTextAlignment(.center)
@@ -138,6 +157,36 @@ struct ArtworkEditor: View {
             .padding(20)
         }
         .scrollIndicators(.hidden)
+    }
+
+    private func hasOwnMotion(_ t: Track) -> Bool {
+        t.motionArtwork != nil || (t.customArtwork != nil && (t.customKind ?? .image) != .image)
+    }
+
+    /// Ce que ce morceau ou cet album a déjà : pochette normale, pochette animée.
+    private func statusCard(_ t: Track) -> some View {
+        let still = library.stillURL(t) != nil
+        let moving = library.motion(t) != nil
+        return HStack(spacing: 0) {
+            status("Normale", on: still, symbol: "photo")
+            Divider().frame(height: 30).overlay(.white.opacity(0.15))
+            status("Animée", on: moving, symbol: "play.rectangle")
+        }
+        .padding(.vertical, 12)
+        .glass(18)
+    }
+
+    private func status(_ title: String, on: Bool, symbol: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: on ? "checkmark.circle.fill" : symbol)
+                .foregroundStyle(on ? Color.green : .white.opacity(0.45))
+                .contentTransition(.symbolEffect(.replace))
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title).font(.subheadline.weight(.semibold))
+                Text(on ? "En place" : "Aucune").font(.caption).foregroundStyle(.white.opacity(0.55))
+            }
+        }
+        .frame(maxWidth: .infinity)
     }
 
     private func row(_ title: String, detail: String, symbol: String) -> some View {

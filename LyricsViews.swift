@@ -86,27 +86,28 @@ struct LyricsPane: View {
     }
 }
 
-/// Paroles synchronisées façon Musique : la ligne chantée se remplit au fil du chant,
+/// Paroles synchronisées façon Musique : la ligne chantée se remplit en continu (à chaque image),
 /// et les lignes montent en vague (celles du dessous suivent avec un léger retard).
+/// La liste n'est recalculée qu'au changement de ligne : seul le balayage de la ligne chantée bouge à 60/120 i/s.
 struct SyncedLyricsView: View {
     let lines: [LyricLine]
     var onInteract: () -> Void = {}
     @Environment(Player.self) private var player
     @Environment(AppSettings.self) private var settings
     @State private var heights: [Int: CGFloat] = [:]
+    @State private var active: Int?
     /// Décalage quand tu fais défiler toi-même les paroles.
     @State private var browse: CGFloat = 0
     @State private var dragging: CGFloat = 0
     @State private var isDragging = false
-    @State private var lastUserScroll = Date.distantPast
+    @State private var browsing = false
+    @State private var browseEnd: Task<Void, Never>?
 
     private let spacing: CGFloat = 30
+    /// Petit temps d'avance pour que la ligne s'allume au moment où elle est chantée.
+    static let lead = 0.2
 
     var body: some View {
-        // Petit temps d'avance pour que la ligne s'allume au moment où elle est chantée.
-        let now = player.currentTime + 0.2
-        let active = activeIndex(at: now)
-        let browsing = isDragging || Date().timeIntervalSince(lastUserScroll) < 3
         let fontSize = settings.lyricsSize.points
         let tops = lineTops(estimate: fontSize * 1.3)
 
@@ -121,10 +122,9 @@ struct SyncedLyricsView: View {
                     if y > -400 && y < geo.size.height + 300 {
                         LyricLineView(line: line,
                                       distance: distance,
-                                      interludeProgress: interludeProgress(line, now: now),
+                                      end: endTime(line),
                                       browsing: browsing,
                                       fontSize: fontSize,
-                                      fill: fill(line, distance: distance, now: now),
                                       height: heights[line.id] ?? 0)
                             .frame(width: max(0, geo.size.width - 12), alignment: .leading)
                             .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { h in
@@ -134,12 +134,15 @@ struct SyncedLyricsView: View {
                             .onTapGesture {
                                 player.seek(to: line.time)
                                 if !player.isPlaying { player.resume() }
-                                lastUserScroll = .distantPast
-                                withAnimation(.spring(response: 0.6, dampingFraction: 0.86)) { browse = 0 }
+                                endBrowsing(after: 0)
+                                withAnimation(.spring(response: 0.6, dampingFraction: 0.86)) {
+                                    active = line.id
+                                    browse = 0
+                                }
                             }
                             .offset(y: y)
                             // La vague : chaque ligne part un peu après celle du dessus.
-                            .animation(isDragging ? nil : .spring(response: 0.66, dampingFraction: 0.84).delay(stagger(distance)), value: y)
+                            .animation(isDragging ? nil : .spring(response: 0.72, dampingFraction: 0.86).delay(stagger(distance)), value: y)
                     }
                 }
             }
@@ -150,7 +153,8 @@ struct SyncedLyricsView: View {
                     .onChanged { g in
                         isDragging = true
                         dragging = g.translation.height
-                        lastUserScroll = Date()
+                        browseEnd?.cancel()
+                        if !browsing { browsing = true }
                         onInteract()
                     }
                     .onEnded { g in
@@ -158,17 +162,33 @@ struct SyncedLyricsView: View {
                         let landed = browse + g.translation.height + (g.predictedEndTranslation.height - g.translation.height) * 0.6
                         isDragging = false
                         dragging = 0
-                        lastUserScroll = Date()
                         withAnimation(.spring(response: 0.55, dampingFraction: 0.9)) {
                             browse = min(max(landed, -total), total)
                         }
+                        endBrowsing(after: 3)
                     }
             )
         }
         .mask(LyricsFade())
-        .onChange(of: active) { _, _ in
-            // Après 3 secondes sans toucher, les paroles reviennent sur la ligne chantée.
-            if !isDragging && Date().timeIntervalSince(lastUserScroll) > 3 && browse != 0 {
+        // Suit la chanson sans redessiner toute la liste : la ligne active n'est mise à jour qu'à son changement.
+        .task(id: lines) {
+            while !Task.isCancelled {
+                let now = player.liveTime + Self.lead
+                let a = activeIndex(at: now)
+                if a != active { active = a }
+                try? await Task.sleep(for: .milliseconds(40))
+            }
+        }
+    }
+
+    /// Après quelques secondes sans toucher, les paroles reviennent toutes seules sur la ligne chantée.
+    private func endBrowsing(after seconds: Double) {
+        browseEnd?.cancel()
+        browseEnd = Task {
+            try? await Task.sleep(for: .seconds(seconds))
+            guard !Task.isCancelled else { return }
+            withAnimation(.spring(response: 0.75, dampingFraction: 0.88)) {
+                browsing = false
                 browse = 0
             }
         }
@@ -187,33 +207,21 @@ struct SyncedLyricsView: View {
     }
 
     private func stagger(_ distance: Int) -> Double {
-        distance <= 0 ? 0 : min(Double(distance) * 0.045, 0.32)
+        distance <= 0 ? 0 : min(Double(distance) * 0.038, 0.28)
     }
 
-    /// Remplissage de la ligne : 1 pour les lignes déjà chantées, progression pour la ligne en cours.
-    private func fill(_ line: LyricLine, distance: Int, now: Double) -> Double {
-        if distance < 0 { return 1 }
-        if distance > 0 { return 0 }
-        let end = line.id + 1 < lines.count ? lines[line.id + 1].time : max(player.duration, line.time + 4)
-        // Le chant occupe rarement toute la durée jusqu'à la ligne suivante.
-        let length = max(0.6, min(end - line.time, 8) * 0.9)
-        return min(1, max(0, (now - line.time) / length))
+    private func endTime(_ line: LyricLine) -> Double {
+        line.id + 1 < lines.count ? lines[line.id + 1].time : max(player.duration, line.time + 4)
     }
 
     private func activeIndex(at time: Double) -> Int? {
-        var result: Int?
-        for line in lines {
-            if line.time <= time { result = line.id } else { break }
+        // Recherche dichotomique : les lignes sont triées par temps.
+        var lo = 0, hi = lines.count - 1, result: Int?
+        while lo <= hi {
+            let mid = (lo + hi) / 2
+            if lines[mid].time <= time { result = lines[mid].id; lo = mid + 1 } else { hi = mid - 1 }
         }
         return result
-    }
-
-    /// Progression (0 à 1) d'une pause instrumentale en cours.
-    private func interludeProgress(_ line: LyricLine, now: Double) -> Double? {
-        guard line.isInterlude else { return nil }
-        let end = line.id + 1 < lines.count ? lines[line.id + 1].time : max(player.duration, line.time + 1)
-        guard now >= line.time, now < end, end - line.time >= 2.5 else { return nil }
-        return (now - line.time) / (end - line.time)
     }
 }
 
@@ -221,22 +229,26 @@ struct LyricLineView: View {
     let line: LyricLine
     /// 0 = ligne chantée, négatif = déjà passée, positif = à venir.
     let distance: Int
-    let interludeProgress: Double?
+    /// Début de la ligne suivante.
+    let end: Double
     let browsing: Bool
     var fontSize: CGFloat = 31
-    /// Part de la ligne déjà chantée (0 à 1).
-    var fill: Double = 0
     /// Hauteur mesurée de la ligne (pour remplir rangée par rangée).
     var height: CGFloat = 0
+    @Environment(Player.self) private var player
 
     private var isActive: Bool { distance == 0 }
+    private var showsInterlude: Bool { line.isInterlude && isActive && end - line.time >= 2.5 }
 
     var body: some View {
         Group {
             if line.isInterlude {
-                if let p = interludeProgress {
-                    InterludeDots(progress: p)
-                        .transition(.scale(scale: 0.6, anchor: .leading).combined(with: .opacity))
+                if showsInterlude {
+                    TimelineView(.animation(paused: !player.isPlaying)) { _ in
+                        let now = player.liveTime + SyncedLyricsView.lead
+                        InterludeDots(progress: min(1, max(0, (now - line.time) / (end - line.time))))
+                    }
+                    .transition(.scale(scale: 0.6, anchor: .leading).combined(with: .opacity))
                 } else {
                     Color.clear.frame(height: 0)
                 }
@@ -245,26 +257,38 @@ struct LyricLineView: View {
                     .foregroundStyle(.white.opacity(isActive ? 0.38 : (browsing ? 0.55 : 0.3)))
                     .overlay(alignment: .topLeading) {
                         if isActive {
-                            // Le blanc avance sur la ligne au fil du chant, rangée après rangée.
-                            text
-                                .foregroundStyle(.white)
-                                .shadow(color: .white.opacity(0.5), radius: 2.5)
-                                .mask(alignment: .topLeading) { SweepMask(progress: fill, rows: rows) }
-                                .animation(.linear(duration: 0.12), value: fill)
+                            // Le blanc avance sur la ligne au fil du chant, rangée après rangée, à chaque image.
+                            TimelineView(.animation(paused: !player.isPlaying)) { _ in
+                                // Lecture de currentTime : à l'arrêt, un saut dans le morceau met aussi la ligne à jour.
+                                let _ = player.currentTime
+                                text
+                                    .foregroundStyle(.white)
+                                    .mask(alignment: .topLeading) { SweepMask(progress: fill(at: player.liveTime), rows: rows) }
+                            }
+                            .shadow(color: .white.opacity(0.35), radius: 3)
+                            .transition(.opacity)
                         }
                     }
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .scaleEffect(isActive ? 1 : 0.96, anchor: .leading)
-                    .blur(radius: (isActive || browsing || abs(distance) > 6) ? 0 : min(Double(abs(distance)) * 0.7, 2.4))
+                    .scaleEffect(isActive ? 1 : 0.955, anchor: .leading)
+                    .blur(radius: (isActive || browsing || abs(distance) > 5) ? 0 : min(Double(abs(distance)) * 0.6, 2))
             }
         }
-        .animation(.spring(response: 0.55, dampingFraction: 0.82), value: isActive)
-        .animation(.easeInOut(duration: 0.3), value: browsing)
-        .animation(.spring(response: 0.5, dampingFraction: 0.8), value: interludeProgress == nil)
+        .animation(.spring(response: 0.6, dampingFraction: 0.84), value: isActive)
+        .animation(.easeInOut(duration: 0.35), value: browsing)
+        .animation(.spring(response: 0.5, dampingFraction: 0.8), value: showsInterlude)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(line.isInterlude ? "Pause instrumentale" : line.text)
         .accessibilityAddTraits(isActive ? AccessibilityTraits.isSelected : AccessibilityTraits())
+    }
+
+    /// Part de la ligne déjà chantée (0 à 1), avec un départ et une arrivée en douceur.
+    private func fill(at time: Double) -> Double {
+        // Le chant occupe rarement toute la durée jusqu'à la ligne suivante.
+        let length = max(0.6, min(end - line.time, 8) * 0.9)
+        let p = min(1, max(0, (time + SyncedLyricsView.lead - line.time) / length))
+        return p * p * (3 - 2 * p) * 0.25 + p * 0.75
     }
 
     private var text: some View {

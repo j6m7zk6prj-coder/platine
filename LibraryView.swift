@@ -258,7 +258,7 @@ struct AlbumCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            ArtworkView(track: album.first, animated: false, cornerRadius: 10)
+            ArtworkView(track: album.cover, animated: false, cornerRadius: 10)
                 .aspectRatio(1, contentMode: .fit)
                 .shadow(color: .black.opacity(0.3), radius: 10, y: 6)
             Text(album.title).font(.subheadline.weight(.semibold)).lineLimit(1)

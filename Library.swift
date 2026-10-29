@@ -86,14 +86,49 @@ final class Library {
 
     func audioURL(_ t: Track) -> URL { Self.musicDir.appendingPathComponent(t.audioFile) }
 
-    func artworkURL(_ t: Track) -> URL? {
-        if let c = t.customArtwork { return Self.artDir.appendingPathComponent(c) }
+    /// La pochette normale (image) : celle que tu as choisie, sinon celle du fichier audio.
+    func stillURL(_ t: Track) -> URL? {
+        if let c = t.customArtwork, (t.customKind ?? .image) == .image { return Self.artDir.appendingPathComponent(c) }
         if let e = t.embeddedArtwork { return Self.artDir.appendingPathComponent(e) }
+        // Un morceau sans aucune pochette prend celle choisie pour son album.
+        if !hasOwnArtwork(t), let c = albumCovers[t.albumKey], c.kind == .image { return Self.artDir.appendingPathComponent(c.file) }
         return nil
     }
 
+    /// Le morceau a-t-il une pochette à lui (fichier audio, choisie, ou animée) ?
+    private func hasOwnArtwork(_ t: Track) -> Bool {
+        t.customArtwork != nil || t.embeddedArtwork != nil || t.motionArtwork != nil
+    }
+
+    private static func motionKey(_ albumID: String) -> String { "motion|" + albumID }
+
+    /// La pochette animée choisie pour un album (anciennes versions : rangée à la place de la normale).
+    private func albumMotion(_ albumID: String) -> AlbumCoverFile? {
+        if let m = albumCovers[Self.motionKey(albumID)] { return m }
+        if let c = albumCovers[albumID], c.kind != .image { return c }
+        return nil
+    }
+
+    private func albumStill(_ albumID: String) -> AlbumCoverFile? {
+        if let c = albumCovers[albumID], c.kind == .image { return c }
+        return nil
+    }
+
+    /// La pochette animée (vidéo ou GIF), si le morceau en a une.
+    func motion(_ t: Track) -> (url: URL, kind: ArtworkKind)? {
+        if let m = t.motionArtwork { return (Self.artDir.appendingPathComponent(m), t.motionKind ?? .video) }
+        // Anciennes versions : la pochette animée était rangée à la place de la pochette normale.
+        if let c = t.customArtwork, let k = t.customKind, k != .image { return (Self.artDir.appendingPathComponent(c), k) }
+        if !hasOwnArtwork(t), let m = albumMotion(t.albumKey) { return (Self.artDir.appendingPathComponent(m.file), m.kind) }
+        return nil
+    }
+
+    /// La pochette à montrer : la normale ; s'il n'y en a pas, l'animée.
+    func artworkURL(_ t: Track) -> URL? { stillURL(t) ?? motion(t)?.url }
+
+    /// Type du fichier renvoyé par `artworkURL`.
     func artworkKind(_ t: Track) -> ArtworkKind {
-        t.customArtwork != nil ? (t.customKind ?? .image) : .image
+        stillURL(t) != nil ? .image : (motion(t)?.kind ?? .image)
     }
 
     var totalDuration: Double { tracks.reduce(0) { $0 + $1.duration } }
@@ -125,12 +160,20 @@ final class Library {
     func isExposed(_ albumID: String) -> Bool { !hiddenFromCollection.contains(albumID) }
 
     func setExposed(_ albumID: String, _ on: Bool) {
-        if on { hiddenFromCollection.remove(albumID) } else { hiddenFromCollection.insert(albumID) }
+        if on { hiddenFromCollection.remove(albumID) } else {
+            hiddenFromCollection.insert(albumID)
+            // Rangé : il retrouve son blister neuf la prochaine fois qu'il est exposé.
+            setSealed(albumID, true)
+        }
         UserDefaults.standard.set(Array(hiddenFromCollection), forKey: "hiddenFromCollection")
     }
 
     func setAllExposed(_ on: Bool) {
         hiddenFromCollection = on ? [] : Set(albums.map(\.id))
+        if !on {
+            unwrappedAlbums = []
+            UserDefaults.standard.set([String](), forKey: "unwrappedAlbums")
+        }
         UserDefaults.standard.set(Array(hiddenFromCollection), forKey: "hiddenFromCollection")
     }
 
@@ -149,18 +192,37 @@ final class Library {
     /// 1. celle choisie pour l'album ; 2. celle appliquée à tous ses morceaux ;
     /// 3. la pochette d'origine (celle du fichier audio) ; 4. sinon celle du premier morceau.
     private func albumCoverTrack(_ key: String, _ list: [Track]) -> Track? {
-        guard let first = list.first else { return nil }
-        if let c = albumCovers[key] {
-            var t = first
-            t.customArtwork = c.file
-            t.customKind = c.kind
-            return t
+        guard let base = baseCoverTrack(list) else { return nil }
+        let still = albumStill(key), moving = albumMotion(key)
+        guard still != nil || moving != nil else { return base }
+        // Les deux cohabitent : la normale partout, l'animée là où l'animation est permise.
+        var t = base
+        if let still {
+            t.customArtwork = still.file
+            t.customKind = .image
+        } else if t.customKind != nil && t.customKind != .image {
+            t.customArtwork = nil
+            t.customKind = nil
         }
+        if let moving {
+            t.motionArtwork = moving.file
+            t.motionKind = moving.kind
+        }
+        return t
+    }
+
+    private func baseCoverTrack(_ list: [Track]) -> Track? {
+        guard let first = list.first else { return nil }
         if let shared = first.customArtwork, list.allSatisfy({ $0.customArtwork == shared }) {
+            return first
+        }
+        if let shared = first.motionArtwork, list.allSatisfy({ $0.motionArtwork == shared }) {
             return first
         }
         if let original = list.first(where: { $0.embeddedArtwork != nil }) {
             var t = original
+            t.motionArtwork = nil
+            t.motionKind = nil
             t.customArtwork = nil
             t.customKind = nil
             return t
@@ -168,7 +230,22 @@ final class Library {
         return first
     }
 
-    func hasAlbumCover(_ albumID: String) -> Bool { albumCovers[albumID] != nil }
+    func hasAlbumCover(_ albumID: String) -> Bool { albumStill(albumID) != nil }
+    func hasAlbumMotion(_ albumID: String) -> Bool { albumMotion(albumID) != nil }
+
+    func resetAlbumMotion(_ albumID: String) {
+        var removed: AlbumCoverFile?
+        if let m = albumCovers.removeValue(forKey: Self.motionKey(albumID)) { removed = m }
+        else if let c = albumCovers[albumID], c.kind != .image {
+            albumCovers.removeValue(forKey: albumID)
+            removed = c
+        }
+        guard let old = removed else { return }
+        saveAlbumCovers()
+        cleanupArtwork(old.file)
+        artworkRevision += 1
+        message = "Pochette animée de l’album retirée"
+    }
 
     func setAlbumCover(_ albumID: String, image: UIImage) {
         guard let name = saveImage(image, prefix: "album-") else {
@@ -202,7 +279,7 @@ final class Library {
     }
 
     func resetAlbumCover(_ albumID: String) {
-        guard let old = albumCovers.removeValue(forKey: albumID) else { return }
+        guard albumStill(albumID) != nil, let old = albumCovers.removeValue(forKey: albumID) else { return }
         saveAlbumCovers()
         cleanupArtwork(old.file)
         artworkRevision += 1
@@ -210,8 +287,15 @@ final class Library {
     }
 
     private func assignAlbumCover(_ name: String, kind: ArtworkKind, to albumID: String) {
-        let old = albumCovers[albumID]
-        albumCovers[albumID] = AlbumCoverFile(file: name, kind: kind)
+        // Image → pochette normale ; vidéo ou GIF → pochette animée. Les deux restent en place.
+        let key = kind == .image ? albumID : Self.motionKey(albumID)
+        // Anciennes versions : une vidéo rangée à la place de la normale passe à sa vraie place.
+        if let legacy = albumCovers[albumID], legacy.kind != .image {
+            albumCovers.removeValue(forKey: albumID)
+            if albumCovers[Self.motionKey(albumID)] == nil { albumCovers[Self.motionKey(albumID)] = legacy }
+        }
+        let old = albumCovers[key]
+        albumCovers[key] = AlbumCoverFile(file: name, kind: kind)
         saveAlbumCovers()
         if let old { cleanupArtwork(old.file) }
         artworkRevision += 1
@@ -700,8 +784,9 @@ final class Library {
             carryArtistImage(from: oldArtistKey, to: tracks[i].displayArtist.lowercased())
             newID = tracks[i].albumKey
         }
-        if newID != albumID, let c = albumCovers.removeValue(forKey: albumID) {
-            albumCovers[newID] = c
+        if newID != albumID {
+            if let c = albumCovers.removeValue(forKey: albumID) { albumCovers[newID] = c }
+            if let m = albumCovers.removeValue(forKey: Self.motionKey(albumID)) { albumCovers[Self.motionKey(newID)] = m }
             saveAlbumCovers()
         }
         if newID != albumID, let f = albumFormats.removeValue(forKey: albumID) {
@@ -1099,6 +1184,8 @@ final class Library {
 
     func resetArtwork(_ ids: Set<UUID>) {
         for i in tracks.indices where ids.contains(tracks[i].id) {
+            // La pochette normale revient à celle du fichier ; une pochette animée reste en place.
+            moveLegacyMotion(i)
             let previous = tracks[i].customArtwork
             tracks[i].customArtwork = nil
             tracks[i].customKind = nil
@@ -1109,12 +1196,44 @@ final class Library {
         message = "Pochette d’origine rétablie"
     }
 
+    /// Retire la pochette animée (la pochette normale reste).
+    func resetMotion(_ ids: Set<UUID>) {
+        for i in tracks.indices where ids.contains(tracks[i].id) {
+            moveLegacyMotion(i)
+            let previous = tracks[i].motionArtwork
+            tracks[i].motionArtwork = nil
+            tracks[i].motionKind = nil
+            if let previous { cleanupArtwork(previous) }
+        }
+        artworkRevision += 1
+        save()
+        message = "Pochette animée retirée"
+    }
+
+    /// Anciennes versions : une vidéo rangée comme pochette normale passe à sa vraie place.
+    private func moveLegacyMotion(_ i: Int) {
+        guard let c = tracks[i].customArtwork, let k = tracks[i].customKind, k != .image, tracks[i].motionArtwork == nil else { return }
+        tracks[i].motionArtwork = c
+        tracks[i].motionKind = k
+        tracks[i].customArtwork = nil
+        tracks[i].customKind = nil
+    }
+
+    /// Une image remplace la pochette normale, une vidéo ou un GIF la pochette animée : les deux cohabitent.
     private func assign(_ name: String, kind: ArtworkKind, to ids: Set<UUID>) {
         for i in tracks.indices where ids.contains(tracks[i].id) {
-            let previous = tracks[i].customArtwork
-            tracks[i].customArtwork = name
-            tracks[i].customKind = kind
-            if let previous { cleanupArtwork(previous) }
+            moveLegacyMotion(i)
+            if kind == .image {
+                let previous = tracks[i].customArtwork
+                tracks[i].customArtwork = name
+                tracks[i].customKind = .image
+                if let previous { cleanupArtwork(previous) }
+            } else {
+                let previous = tracks[i].motionArtwork
+                tracks[i].motionArtwork = name
+                tracks[i].motionKind = kind
+                if let previous { cleanupArtwork(previous) }
+            }
         }
         artworkRevision += 1
         save()
@@ -1178,7 +1297,7 @@ final class Library {
 
     /// Supprime un fichier de pochette s'il n'est plus utilisé par aucun morceau.
     private func cleanupArtwork(_ name: String) {
-        guard !tracks.contains(where: { $0.customArtwork == name || $0.embeddedArtwork == name }),
+        guard !tracks.contains(where: { $0.customArtwork == name || $0.embeddedArtwork == name || $0.motionArtwork == name }),
               !albumCovers.values.contains(where: { $0.file == name }) else { return }
         try? FileManager.default.removeItem(at: Self.artDir.appendingPathComponent(name))
         images.removeObject(forKey: name as NSString)

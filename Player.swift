@@ -31,6 +31,13 @@ final class Player {
     private(set) var effectIntensity: Double = UserDefaults.standard.object(forKey: "effectIntensity") as? Double ?? 0.5
     @ObservationIgnored private var rateTask: Task<Void, Never>?
 
+    /// Position exacte, lue à l'instant même (pour les animations image par image, comme les paroles).
+    var liveTime: Double {
+        if isScrubbing { return currentTime }
+        let t = player.currentTime().seconds
+        return t.isFinite ? t : currentTime
+    }
+
     /// Vitesse réelle : ta vitesse habituelle × celle de l'effet.
     private var effectiveRate: Float { Float(settings.playbackSpeed * effect.rate) }
 
@@ -563,8 +570,8 @@ final class Player {
     private func warmUpcomingLockArtwork() {
         guard settings.lockScreenAnimation else { return }
         for i in upcomingInQueue.prefix(2) {
-            guard let t = library.track(queue[i]), let url = library.artworkURL(t) else { continue }
-            LockScreenArtwork.shared.warm(source: url, kind: library.artworkKind(t))
+            guard let t = library.track(queue[i]), let m = library.motion(t) else { continue }
+            LockScreenArtwork.shared.warm(source: m.url, kind: m.kind)
         }
     }
 
@@ -598,10 +605,10 @@ final class Player {
             info[MPMediaItemPropertyArtwork] = Player.makeArtwork(img)
         }
         // Pochette animée (vidéo ou GIF) en plein écran sur l'écran verrouillé.
-        if settings.lockScreenAnimation, let url = library.artworkURL(t) {
+        if settings.lockScreenAnimation, let m = library.motion(t) {
             let lock = LockScreenArtwork.shared
             lock.onReady = { [weak self] in self?.updateNowPlaying() }
-            for (key, value) in lock.entries(source: url, kind: library.artworkKind(t), preview: still) {
+            for (key, value) in lock.entries(source: m.url, kind: m.kind, preview: still) {
                 info[key] = value
             }
         }

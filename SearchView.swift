@@ -61,7 +61,7 @@ struct SearchView: View {
                 ForEach(albums.prefix(6)) { album in
                     NavigationLink { AlbumDetailView(albumID: album.id) } label: {
                         HStack(spacing: 12) {
-                            ArtworkView(track: album.first, animated: false, small: true, cornerRadius: 6)
+                            ArtworkView(track: album.cover, animated: false, small: true, cornerRadius: 6)
                                 .frame(width: 44, height: 44)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(album.title).lineLimit(1)

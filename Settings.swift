@@ -151,7 +151,7 @@ final class AppSettings {
     var extendedAlbumArtwork: Bool { didSet { UserDefaults.standard.set(extendedAlbumArtwork, forKey: "extendedAlbumArtwork") } }
     /// Liquid Glass activé (sinon surfaces pleines) et sa transparence (0 = sombre, 1 = très transparent).
     /// Afficher le lecteur de Platine sur l'écran verrouillé et dans le Centre de contrôle.
-    /// Les CD neufs gardent leur blister (film plastique) jusqu'à ce qu'on sorte le disque.
+    /// Les CD neufs gardent leur blister (film plastique) jusqu'à ce qu'on appuie sur « Déballer ».
     var shrinkWrap: Bool { didSet { UserDefaults.standard.set(shrinkWrap, forKey: "shrinkWrap") } }
     var lockScreenPlayer: Bool { didSet { UserDefaults.standard.set(lockScreenPlayer, forKey: "lockScreenPlayer") } }
     var liquidGlass: Bool { didSet { UserDefaults.standard.set(liquidGlass, forKey: "liquidGlass") } }

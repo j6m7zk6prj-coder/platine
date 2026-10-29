@@ -82,7 +82,16 @@ struct ArtworkGalleryView: View {
         func add(_ file: String, kind: ArtworkKind, base: Track, title: String, subtitle: String, custom: Bool) {
             guard seen.insert(file).inserted else { return }
             var t = base
-            if custom {
+            t.motionArtwork = nil
+            t.motionKind = nil
+            if kind != .image {
+                // Pochette animée : montrée seule, en mouvement.
+                t.customArtwork = nil
+                t.customKind = nil
+                t.embeddedArtwork = nil
+                t.motionArtwork = file
+                t.motionKind = kind
+            } else if custom {
                 t.customArtwork = file
                 t.customKind = kind
             } else {
@@ -99,12 +108,18 @@ struct ArtworkGalleryView: View {
             } else if let e = cover.embeddedArtwork {
                 add(e, kind: .image, base: cover, title: album.title, subtitle: album.artist, custom: false)
             }
+            if let m = library.motion(cover) {
+                add(m.url.lastPathComponent, kind: m.kind, base: cover, title: album.title, subtitle: album.artist, custom: true)
+            }
             for t in album.tracks {
                 if let c = t.customArtwork {
                     add(c, kind: t.customKind ?? .image, base: t, title: t.title, subtitle: t.displayArtist, custom: true)
                 }
                 if let e = t.embeddedArtwork {
                     add(e, kind: .image, base: t, title: album.title, subtitle: album.artist, custom: false)
+                }
+                if let m = t.motionArtwork {
+                    add(m, kind: t.motionKind ?? .video, base: t, title: t.title, subtitle: t.displayArtist, custom: true)
                 }
             }
         }

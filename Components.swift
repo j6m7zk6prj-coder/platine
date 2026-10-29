@@ -81,20 +81,15 @@ struct GlassStyle<S: InsettableShape>: ViewModifier {
 // MARK: - Bouton qui s'enfonce
 
 struct PressStyle: ButtonStyle {
+    /// Gardé pour compatibilité : plus aucun rond blanc derrière les boutons.
     var circle = true
 
     func makeBody(configuration: Configuration) -> some View {
+        // Comme Apple : le bouton s'enfonce et s'assombrit légèrement, sans halo ni rond.
         configuration.label
-            .background {
-                if circle {
-                    Circle()
-                        .fill(.white.opacity(configuration.isPressed ? 0.14 : 0))
-                        .scaleEffect(configuration.isPressed ? 1 : 0.6)
-                }
-            }
-            .scaleEffect(configuration.isPressed ? 0.88 : 1)
-            // Réaction immédiate au toucher (enfoncement très court), puis rebond doux au relâchement.
-            .animation(configuration.isPressed ? .easeOut(duration: 0.08) : .spring(response: 0.32, dampingFraction: 0.58),
+            .scaleEffect(configuration.isPressed ? (circle ? 0.86 : 0.97) : 1)
+            .opacity(configuration.isPressed ? 0.62 : 1)
+            .animation(configuration.isPressed ? .easeOut(duration: 0.06) : .spring(response: 0.34, dampingFraction: 0.62),
                        value: configuration.isPressed)
     }
 }
@@ -133,12 +128,13 @@ struct ArtworkView: View {
 
     @ViewBuilder private var content: some View {
         if let t = track, let url = library.artworkURL(t) {
-            let kind = library.artworkKind(t)
+            // La pochette animée s'affiche là où l'animation est permise ; sinon la normale.
+            let moving = animated && settings.animatedArtwork ? library.motion(t) : nil
             Group {
-                if animated && settings.animatedArtwork && kind == .video {
-                    LoopingVideoView(url: url)
-                } else if animated && settings.animatedArtwork && kind == .gif {
-                    AnimatedImageView(url: url)
+                if let moving, moving.kind == .video {
+                    LoopingVideoView(url: moving.url)
+                } else if let moving, moving.kind == .gif {
+                    AnimatedImageView(url: moving.url)
                 } else if let img = small ? library.thumbnail(for: t) : library.image(for: t) {
                     Image(uiImage: img).resizable().scaledToFill()
                 }

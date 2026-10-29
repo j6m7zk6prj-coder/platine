@@ -73,12 +73,12 @@ struct RootView: View {
             if settings.lockScreenAnimation {
                 try? await Task.sleep(for: .seconds(20))
                 let recent = library.tracks
-                    .filter { let k = library.artworkKind($0); return (k == .video || k == .gif) && library.artworkURL($0) != nil }
+                    .filter { library.motion($0) != nil }
                     .sorted { ($0.lastPlayed ?? .distantPast) > ($1.lastPlayed ?? .distantPast) }
                     .prefix(4)
                 for t in recent {
-                    if let url = library.artworkURL(t) {
-                        LockScreenArtwork.shared.warm(source: url, kind: library.artworkKind(t))
+                    if let m = library.motion(t) {
+                        LockScreenArtwork.shared.warm(source: m.url, kind: m.kind)
                     }
                 }
             }

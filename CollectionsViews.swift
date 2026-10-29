@@ -111,9 +111,7 @@ struct AlbumDetailView: View {
     @ViewBuilder private var content: some View {
         if let album = library.album(currentID) {
             // Comme Musique : seule une pochette animée (vidéo ou GIF) s'étend en haut de la page.
-            let kind = library.artworkKind(album.cover)
-            let extended = settings.extendedAlbumArtwork && settings.animatedArtwork
-                && library.artworkURL(album.cover) != nil && (kind == .video || kind == .gif)
+            let extended = settings.extendedAlbumArtwork && settings.animatedArtwork && library.motion(album.cover) != nil
             List {
                 VStack(spacing: 16) {
                     if extended {
@@ -125,7 +123,7 @@ struct AlbumDetailView: View {
                                 headerY = y
                             }
                     } else {
-                        ArtworkView(track: album.first, animated: false, cornerRadius: 14)
+                        ArtworkView(track: album.cover, animated: false, cornerRadius: 14)
                             .frame(width: 250, height: 250)
                             .shadow(color: .black.opacity(0.45), radius: 24, y: 14)
                     }
@@ -199,9 +197,9 @@ struct AlbumDetailView: View {
             }
             .background {
                 ZStack(alignment: .top) {
-                    AmbientBackground(track: album.first, dim: 0.5)
+                    AmbientBackground(track: album.cover, dim: 0.5)
                     if extended {
-                        ExtendedArtwork(track: album.first, scroll: headerBase.map { headerY - $0 } ?? 0)
+                        ExtendedArtwork(track: album.cover, scroll: headerBase.map { headerY - $0 } ?? 0)
                     }
                 }
                 .ignoresSafeArea()

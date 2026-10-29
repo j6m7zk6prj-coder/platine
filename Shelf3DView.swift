@@ -691,9 +691,14 @@ struct ShelfInspector: View {
     var onClose: () -> Void
     @Environment(Player.self) private var player
     @Environment(Library.self) private var library
+    @Environment(AppSettings.self) private var settings
     @State private var photoItem: PhotosPickerItem?
     @State private var cropping: CropSource?
     @State private var customizing = false
+    @State private var unwrapTick = 0
+
+    /// CD encore sous blister : il faut le déballer avant de sortir le disque.
+    private var sealed: Bool { format == .cd && settings.shrinkWrap && library.isSealed(album.id) }
 
     var body: some View {
         let spinning = playingThisAlbum && player.isPlaying
@@ -746,7 +751,17 @@ struct ShelfInspector: View {
             HStack(spacing: 10) {
                 inspectorButton(format == .cassette ? (isBack ? "Face A" : "Face B") : (isBack ? "Face" : "Dos"),
                                 symbol: "arrow.left.and.right.righttriangle.left.righttriangle.right", action: onFlip)
-                if format == .cd || format == .game {
+                if sealed {
+                    inspectorButton("Déballer", symbol: "scissors") {
+                        unwrapTick += 1
+                        if let node = InspectorSceneController.shared?.node, node.isWrapped {
+                            node.unwrap()
+                        } else {
+                            library.setSealed(album.id, false)
+                        }
+                    }
+                    .transition(.blurReplace)
+                } else if format == .cd || format == .game {
                     inspectorButton(discTitle, symbol: discSymbol) {
                         let out = !discOut
                         onDisc(out)
@@ -761,7 +776,9 @@ struct ShelfInspector: View {
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 26)
+            .animation(.spring(response: 0.4, dampingFraction: 0.85), value: sealed)
         }
+        .sensoryFeedback(trigger: unwrapTick) { _, _ in settings.haptics ? .impact(flexibility: .soft, intensity: 0.8) : nil }
         .onChange(of: photoItem) { _, item in loadCover(item) }
         .sheet(isPresented: $customizing) {
             // Feuille à mi-hauteur : le boîtier reste visible au-dessus et se met à jour en direct.
@@ -855,6 +872,7 @@ struct InspectorSceneView: UIViewRepresentable {
         }
         c.setActive(active)
         if discOut { c.ensureDisc() }
+        c.node?.setWrapVisible(settings.shrinkWrap && library.isSealed(album.id))
         c.node?.setDiscOut(discOut && active)
         c.node?.setSpinning(active && spinning && (format == .cassette || discOut))
     }

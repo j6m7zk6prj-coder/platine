@@ -17,9 +17,8 @@ struct TravelModeView: View {
         var seen = Set<URL>()
         var result: [(URL, ArtworkKind)] = []
         for t in library.tracks {
-            let kind = library.artworkKind(t)
-            guard kind == .video || kind == .gif, let url = library.artworkURL(t), seen.insert(url).inserted else { continue }
-            result.append((url, kind))
+            guard let m = library.motion(t), seen.insert(m.url).inserted else { continue }
+            result.append((m.url, m.kind))
         }
         return result
     }

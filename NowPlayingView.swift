@@ -180,9 +180,7 @@ struct NowPlayingView: View {
     }
 
     private func isAnimated(_ t: Track) -> Bool {
-        guard settings.animatedArtwork, library.artworkURL(t) != nil else { return false }
-        let kind = library.artworkKind(t)
-        return kind == .video || kind == .gif
+        settings.animatedArtwork && library.motion(t) != nil
     }
 
     // MARK: Pochette

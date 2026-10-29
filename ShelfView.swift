@@ -159,7 +159,7 @@ struct CDCaseView: View {
                     .fill(Color(white: 0.06))
 
                 ZStack(alignment: .topTrailing) {
-                    ArtworkView(track: album.first, animated: animated, cornerRadius: 1)
+                    ArtworkView(track: album.cover, animated: animated, cornerRadius: 1)
                     if badges.contains(.platinum) { HoloSheen(light: lightX) }
                     VStack(alignment: .trailing, spacing: 4) {
                         ForEach(badges) { HoloBadge(badge: $0, light: lightX, scale: w / 260) }
@@ -212,68 +212,223 @@ struct CaseHinge: View {
     }
 }
 
-/// Le dos du boîtier : la liste des morceaux, comme sur un vrai CD.
+/// Le dos du boîtier, comme sur un vrai CD : liste des morceaux, durée totale, mentions ℗ / ©,
+/// numéro de catalogue et un vrai code-barres EAN-13 (unique pour chaque album).
 struct CDBackInsert: View {
     let album: AlbumInfo
     var lightX: Double
     @Environment(Library.self) private var library
 
+    /// L'année de sortie ; à défaut, l'année où l'album est entré dans la bibliothèque.
+    private var year: Int {
+        if album.year > 0 { return album.year }
+        let added = album.tracks.map(\.addedAt).min() ?? Date()
+        return Calendar.current.component(.year, from: added)
+    }
+
+    private var code: EAN13 { EAN13(seed: album.id) }
+    private var catalog: String { "PLT \(code.digits.dropFirst(7).prefix(5).map(String.init).joined())-\(code.digits[12])" }
+
     var body: some View {
         let colors = library.palette(for: album.cover)
+        let art = library.image(for: album.cover)
         GeometryReader { geo in
-            let w = geo.size.width
+            let w = geo.size.width, h = geo.size.height
+            let tracks = Array(album.tracks.prefix(24))
+            let twoColumns = tracks.count > 11
+            let half = Int((Double(tracks.count) / 2).rounded(.up))
+            let fs = w * (twoColumns ? 0.0215 : 0.026)
             HStack(spacing: 0) {
-                spineLabel.frame(width: w * 0.06)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(album.title.uppercased())
-                        .font(.system(size: w * 0.05, weight: .heavy))
+                spine(w: w, h: h)
+                VStack(alignment: .leading, spacing: 0) {
+                    // En-tête : artiste et titre.
+                    Text(album.artist.uppercased())
+                        .font(.system(size: w * 0.026, weight: .semibold))
+                        .tracking(w * 0.004)
+                        .foregroundStyle(.white.opacity(0.75))
                         .lineLimit(1)
-                    Text(album.artist)
-                        .font(.system(size: w * 0.035, weight: .medium))
+                    Text(album.title)
+                        .font(.system(size: w * 0.048, weight: .bold))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.6)
+                        .padding(.bottom, h * 0.025)
+
+                    // Liste des morceaux.
+                    HStack(alignment: .top, spacing: w * 0.04) {
+                        VStack(alignment: .leading, spacing: fs * 0.42) {
+                            TrackListing(tracks: Array(tracks.prefix(twoColumns ? half : tracks.count)),
+                                         fontSize: fs, numberWidth: fs * 1.4)
+                        }
+                        if twoColumns {
+                            VStack(alignment: .leading, spacing: fs * 0.42) {
+                                TrackListing(tracks: Array(tracks.dropFirst(half)), startNumber: half + 1,
+                                             fontSize: fs, numberWidth: fs * 1.4)
+                            }
+                        }
+                    }
+                    if album.tracks.count > tracks.count {
+                        Text("+ \(album.tracks.count - tracks.count) titres")
+                            .font(.system(size: fs, weight: .medium)).foregroundStyle(.white.opacity(0.55))
+                            .padding(.top, 2)
+                    }
+                    Text("Durée totale \(formatDuration(album.duration))")
+                        .font(.system(size: fs * 0.95, weight: .semibold))
                         .foregroundStyle(.white.opacity(0.7))
-                        .lineLimit(1)
-                    Divider().overlay(Color.white.opacity(0.3)).padding(.vertical, 2)
-                    TrackListing(tracks: Array(album.tracks.prefix(16)), fontSize: w * 0.03, numberWidth: w * 0.04)
+                        .padding(.top, h * 0.02)
+
                     Spacer(minLength: 0)
-                    HStack {
-                        Text("Platine · \(formatDuration(album.duration))")
-                            .font(.system(size: w * 0.025, weight: .semibold))
-                            .foregroundStyle(.white.opacity(0.5))
-                        Spacer()
-                        Barcode().frame(width: w * 0.16, height: w * 0.06)
+
+                    // Pied : mentions légales à gauche, code-barres à droite.
+                    HStack(alignment: .bottom, spacing: w * 0.03) {
+                        VStack(alignment: .leading, spacing: w * 0.006) {
+                            HStack(spacing: w * 0.012) {
+                                badge("STÉRÉO", w: w)
+                                badge("DDD", w: w)
+                                Text(catalog)
+                                    .font(.system(size: w * 0.017, weight: .bold, design: .monospaced))
+                                    .foregroundStyle(.white.opacity(0.8))
+                            }
+                            Text("℗ \(String(year)) Platine Records · © \(String(year)) Platine Records")
+                                .font(.system(size: w * 0.0165, weight: .semibold))
+                                .foregroundStyle(.white.opacity(0.8))
+                            Text("Tous droits du producteur phonographique et du propriétaire de l’œuvre enregistrée réservés. Sauf autorisation, la duplication, la location, le prêt, l’utilisation de ce disque pour exécution publique et radiodiffusion sont interdits.")
+                                .font(.system(size: w * 0.0118))
+                                .foregroundStyle(.white.opacity(0.55))
+                                .lineLimit(3)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Text("Fabriqué dans l’UE · Distribué par Platine · www.platine.example")
+                                .font(.system(size: w * 0.0118, weight: .medium))
+                                .foregroundStyle(.white.opacity(0.55))
+                        }
+                        Spacer(minLength: 0)
+                        EAN13View(code: code)
+                            .frame(width: w * 0.2, height: w * 0.112)
                     }
                 }
-                .padding(w * 0.04)
-                spineLabel.frame(width: w * 0.06)
+                .padding(.horizontal, w * 0.04)
+                .padding(.vertical, h * 0.05)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                spine(w: w, h: h)
             }
-            .background(
-                LinearGradient(colors: [colors[0], colors[1].opacity(0.85), colors[0]],
-                               startPoint: .topLeading, endPoint: .bottomTrailing)
-            )
+            .foregroundStyle(.white)
+            .background {
+                ZStack {
+                    LinearGradient(colors: [colors[0], colors[1].opacity(0.9), colors[0]],
+                                   startPoint: .topLeading, endPoint: .bottomTrailing)
+                    // La pochette, très floue, comme le fond imprimé d'un vrai livret.
+                    if let art {
+                        Image(uiImage: art).resizable().scaledToFill()
+                            .frame(width: w, height: h).clipped()
+                            .blur(radius: w * 0.05)
+                            .opacity(0.55)
+                    }
+                    LinearGradient(colors: [.black.opacity(0.55), .black.opacity(0.35), .black.opacity(0.7)],
+                                   startPoint: .top, endPoint: .bottom)
+                }
+            }
             .overlay(
-                LinearGradient(colors: [.clear, .white.opacity(0.25), .clear],
+                LinearGradient(colors: [.clear, .white.opacity(0.18), .clear],
                                startPoint: UnitPoint(x: 0.1 - lightX * 0.6, y: 0), endPoint: UnitPoint(x: 0.6 - lightX * 0.6, y: 1))
                     .blendMode(.screen)
             )
-            .clipShape(RoundedRectangle(cornerRadius: w * 0.025, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: w * 0.025, style: .continuous)
-                    .strokeBorder(.white.opacity(0.35), lineWidth: 1.2)
-            )
+            .clipped()
         }
     }
 
-    private var spineLabel: some View {
-        GeometryReader { geo in
-            Text("\(album.artist.uppercased()) — \(album.title.uppercased())")
-                .font(.system(size: max(6, geo.size.width * 0.45), weight: .bold))
-                .lineLimit(1)
-                .fixedSize()
-                .rotationEffect(.degrees(-90))
-                .frame(width: geo.size.width, height: geo.size.height)
+    private func badge(_ text: String, w: CGFloat) -> some View {
+        Text(text)
+            .font(.system(size: w * 0.0135, weight: .heavy))
+            .padding(.horizontal, w * 0.006)
+            .padding(.vertical, w * 0.002)
+            .overlay(RoundedRectangle(cornerRadius: w * 0.003).strokeBorder(.white.opacity(0.8), lineWidth: 0.8))
+            .foregroundStyle(.white.opacity(0.85))
+    }
+
+    /// Tranche latérale : artiste — titre, puis le numéro de catalogue, lus de haut en bas.
+    private func spine(w: CGFloat, h: CGFloat) -> some View {
+        let width = w * 0.045
+        return HStack(spacing: width * 0.5) {
+            Text(album.artist.uppercased()).font(.system(size: width * 0.42, weight: .heavy))
+            Text(album.title).font(.system(size: width * 0.42, weight: .medium)).opacity(0.85)
+            Spacer(minLength: 0)
+            Text(catalog).font(.system(size: width * 0.32, weight: .semibold, design: .monospaced)).opacity(0.7)
         }
-        .background(.black.opacity(0.35))
+        .lineLimit(1)
+        .padding(.horizontal, h * 0.04)
+        .frame(width: h, height: width)
+        .rotationEffect(.degrees(90))
+        .frame(width: width, height: h)
+        .background(.black.opacity(0.45))
+        .overlay(alignment: .leading) { Rectangle().fill(.white.opacity(0.12)).frame(width: 0.6) }
+        .overlay(alignment: .trailing) { Rectangle().fill(.white.opacity(0.12)).frame(width: 0.6) }
         .clipped()
+    }
+}
+
+/// Code EAN-13 valide (avec sa clé de contrôle), toujours le même pour un album donné.
+struct EAN13 {
+    let digits: [Int]
+
+    init(seed: String) {
+        // Empreinte FNV-1a : stable d'un lancement à l'autre (contrairement à hashValue).
+        var hash: UInt64 = 0xcbf29ce484222325
+        for b in seed.utf8 { hash = (hash ^ UInt64(b)) &* 0x100000001b3 }
+        var d = [3, 7, 0, 1, 2]                       // préfixe et « éditeur » fictifs
+        for _ in 0..<7 { d.append(Int(hash % 10)); hash /= 10 }
+        let sum = d.enumerated().reduce(0) { $0 + $1.element * ($1.offset % 2 == 0 ? 1 : 3) }
+        d.append((10 - sum % 10) % 10)
+        digits = d
+    }
+
+    private static let l = ["0001101", "0011001", "0010011", "0111101", "0100011",
+                            "0110001", "0101111", "0111011", "0110111", "0001011"]
+    private static let parity = ["LLLLLL", "LLGLGG", "LLGGLG", "LLGGGL", "LGLLGG",
+                                 "LGGLLG", "LGGGLL", "LGLGLG", "LGLGGL", "LGGLGL"]
+
+    private static func r(_ d: Int) -> String { String(l[d].map { $0 == "0" ? "1" : "0" }) }
+    private static func g(_ d: Int) -> String { String(r(d).reversed()) }
+
+    /// Les 95 modules : `bar` = barre noire, `tall` = barres de garde (plus longues).
+    var modules: [(bar: Bool, tall: Bool)] {
+        var out: [(bar: Bool, tall: Bool)] = []
+        func add(_ s: String, _ isGuard: Bool) { for c in s { out.append((bar: c == "1", tall: isGuard)) } }
+        add("101", true)
+        let p = Array(Self.parity[digits[0]])
+        for i in 1...6 { add(p[i - 1] == "L" ? Self.l[digits[i]] : Self.g(digits[i]), false) }
+        add("01010", true)
+        for i in 7...12 { add(Self.r(digits[i]), false) }
+        add("101", true)
+        return out
+    }
+}
+
+struct EAN13View: View {
+    let code: EAN13
+
+    var body: some View {
+        Canvas { context, size in
+            context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(.white))
+            let total: CGFloat = 95 + 11 + 7
+            let unit = size.width / total
+            let left = 11 * unit
+            let textH = size.height * 0.2
+            let top = size.height * 0.07
+            let barBottom = size.height - textH - size.height * 0.04
+            for (i, m) in code.modules.enumerated() where m.bar {
+                let bottom = m.tall ? barBottom + textH * 0.55 : barBottom
+                context.fill(Path(CGRect(x: left + CGFloat(i) * unit, y: top, width: unit, height: bottom - top)),
+                             with: .color(.black))
+            }
+            let font = Font.system(size: textH * 0.95, weight: .medium, design: .monospaced)
+            let y = barBottom + textH * 0.55
+            func digit(_ d: Int, _ x: CGFloat) {
+                context.draw(Text(String(d)).font(font).foregroundStyle(.black), at: CGPoint(x: x, y: y))
+            }
+            digit(code.digits[0], left - 4.5 * unit)
+            for i in 1...6 { digit(code.digits[i], left + (3 + 7 * CGFloat(i - 1) + 3.5) * unit) }
+            for i in 7...12 { digit(code.digits[i], left + (50 + 7 * CGFloat(i - 7) + 3.5) * unit) }
+        }
+        .accessibilityLabel("Code-barres \(code.digits.map(String.init).joined())")
     }
 }
 
@@ -338,7 +493,7 @@ struct CDDisc: View {
                             Color(red: 1, green: 0.7, blue: 0.9), Color(white: 0.7), Color(red: 1, green: 0.95, blue: 0.6),
                             .white, Color(white: 0.75)
                         ], center: .center))
-                    ArtworkView(track: album.first, animated: false, cornerRadius: 0)
+                    ArtworkView(track: album.cover, animated: false, cornerRadius: 0)
                         .frame(width: d * 0.93, height: d * 0.93)
                         .clipShape(Circle())
                         .opacity(0.92)
@@ -436,7 +591,7 @@ struct CassetteView: View {
 
     private func label(w: CGFloat, h: CGFloat) -> some View {
         ZStack(alignment: .top) {
-            ArtworkView(track: album.first, animated: false, cornerRadius: 0)
+            ArtworkView(track: album.cover, animated: false, cornerRadius: 0)
             if badges.contains(.platinum) { HoloSheen(light: lightX) }
             VStack(spacing: 0) {
                 HStack(spacing: w * 0.02) {

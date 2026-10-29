@@ -57,7 +57,7 @@ final class AlbumNode {
     private(set) var discOut = false
     /// Image déjà retournée et fondue, pour le reflet sur le sol de la Collection.
     var reflection: ReflectionFace?
-    /// Le blister : film plastique d'un CD neuf, retiré la première fois qu'on sort le disque.
+    /// Le blister : film plastique d'un CD neuf, retiré seulement avec le bouton « Déballer ».
     var wrapNode: SCNNode?
     /// Appelé quand le blister est retiré (pour s'en souvenir).
     var onUnwrap: () -> Void = {}
@@ -69,20 +69,40 @@ final class AlbumNode {
         wrapNode.opacity = 1
         wrapNode.scale = SCNVector3(1, 1, 1)
         wrapNode.position = SCNVector3(0, 0, 0)
+        wrapNode.eulerAngles = SCNVector3(0, 0, 0)
     }
 
-    /// Le film se détache : il gonfle un peu, glisse vers le haut et disparaît.
-    private func peelWrap() {
-        guard let wrapNode, !wrapNode.isHidden else { return }
+    /// Le blister est-il encore sur le boîtier ?
+    var isWrapped: Bool { wrapNode.map { !$0.isHidden && $0.action(forKey: "unwrap") == nil } ?? false }
+
+    /// Déballer : le film se détend, se décolle par un coin, puis glisse hors du boîtier en se froissant.
+    func unwrap() {
+        guard let wrapNode, isWrapped else { return }
         onUnwrap()
-        let lift = SCNAction.group([
-            .fadeOut(duration: 0.55),
-            .scale(to: 1.05, duration: 0.55),
-            .moveBy(x: 0.18, y: 0.45, z: 0.25, duration: 0.55),
-            .rotateBy(x: 0, y: 0, z: -0.12, duration: 0.55)
+        // 1. Le film se détend (on vient de tirer la languette).
+        let loosen = SCNAction.scale(to: 1.018, duration: 0.16)
+        loosen.timingMode = .easeOut
+        // 2. Il se décolle du coin droit, en pivotant un peu.
+        let peel = SCNAction.group([
+            .rotateBy(x: 0.05, y: -0.32, z: -0.06, duration: 0.34),
+            .moveBy(x: 0.12, y: 0.06, z: 0.16, duration: 0.34)
         ])
-        lift.timingMode = .easeIn
-        wrapNode.runAction(.sequence([lift, .hide()]), forKey: "unwrap")
+        peel.timingMode = .easeInEaseOut
+        // 3. Il part sur le côté et s'efface.
+        let away = SCNAction.group([
+            .moveBy(x: 1.1, y: 0.3, z: 0.5, duration: 0.5),
+            .rotateBy(x: 0.1, y: -0.55, z: -0.18, duration: 0.5),
+            .scale(to: 0.92, duration: 0.5),
+            .fadeOut(duration: 0.5)
+        ])
+        away.timingMode = .easeIn
+        wrapNode.runAction(.sequence([loosen, peel, away, .hide(), .run { node in
+            // Remis en place (caché) pour la prochaine fois qu'il reviendra.
+            node.opacity = 1
+            node.scale = SCNVector3(1, 1, 1)
+            node.position = SCNVector3(0, 0, 0)
+            node.eulerAngles = SCNVector3(0, 0, 0)
+        }]), forKey: "unwrap")
     }
 
     var size: SCNVector3 { Physical.size(format) }
@@ -171,7 +191,6 @@ final class AlbumNode {
     func setDiscOut(_ out: Bool, animated: Bool = true) {
         guard let discPivot, out != discOut else { return }
         discOut = out
-        if out { peelWrap() }
         if let lidPivot {
             // Boîtier de jeu : il s'ouvre à plat comme un livre ; on voit le livret à gauche,
             // le disque dans son plateau à droite. Le tout recule un peu pour tenir à l'écran.
@@ -1948,7 +1967,7 @@ struct CoverFace: View {
                         .frame(width: geo.size.width, height: geo.size.height)
                         .clipped()
                 } else {
-                    ArtworkView(track: album.first, animated: false, cornerRadius: 0)
+                    ArtworkView(track: album.cover, animated: false, cornerRadius: 0)
                 }
                 if badges.contains(.platinum) { HoloSheen(light: -0.2) }
                 PlacedStickers(album: album, badges: badges, size: geo.size)
