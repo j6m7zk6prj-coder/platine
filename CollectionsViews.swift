@@ -240,6 +240,9 @@ struct ArtistsView: View {
 struct ArtistDetailView: View {
     let artistID: String
     @Environment(Library.self) private var library
+    @Environment(Player.self) private var player
+    @State private var heroY: CGFloat = 0
+    @State private var heroBase: CGFloat?
     /// Nouvel identifiant après un renommage.
     @State private var renamedID: String?
     @State private var showRename = false
@@ -298,54 +301,153 @@ struct ArtistDetailView: View {
         }
     }
 
+    /// Page d'artiste façon Musique (iOS 27) : grande photo en haut qui se fond dans la page,
+    /// son nom en grand, ses morceaux populaires, ses albums, puis tous ses morceaux.
     private func content(_ artist: ArtistInfo) -> some View {
-            List {
-                VStack(spacing: 14) {
-                    Button { showPhotoPicker = true } label: {
-                        ArtistAvatar(artist: artist)
-                            .frame(width: 180, height: 180)
-                            .shadow(color: .black.opacity(0.45), radius: 20, y: 10)
+        let popular = Array(artist.tracks
+            .sorted { $0.playCount != $1.playCount ? $0.playCount > $1.playCount : $0.title < $1.title }
+            .prefix(5))
+        return List {
+            VStack(alignment: .leading, spacing: 0) {
+                Color.clear
+                    .frame(height: UIScreen.main.bounds.width * 0.78)
+                    .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minY } action: { y in
+                        if heroBase == nil { heroBase = y }
+                        heroY = y
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Changer la photo de l’artiste")
-                    Text(artist.name).font(.title.bold()).multilineTextAlignment(.center)
-                    PlayShuffleButtons(ids: artist.tracks.map(\.id))
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 8)
-                .listRowBackground(Color.clear)
-                .listRowSeparator(.hidden)
-
-                if !artist.albums.isEmpty {
-                    Section {
-                        ScrollView(.horizontal) {
-                            HStack(alignment: .top, spacing: 14) {
-                                ForEach(artist.albums) { album in
-                                    NavigationLink { AlbumDetailView(albumID: album.id) } label: {
-                                        AlbumCard(album: album).frame(width: 150)
-                                    }
-                                    .buttonStyle(.plain)
-                                }
-                            }
-                            .padding(.horizontal, 4)
-                        }
-                        .scrollIndicators(.hidden)
-                        .listRowBackground(Color.clear)
-                        .listRowSeparator(.hidden)
-                    } header: {
-                        Text("Albums").font(.title3.bold()).foregroundStyle(.primary).textCase(nil)
+                HStack(alignment: .bottom) {
+                    Text(artist.name)
+                        .font(.system(size: 34, weight: .heavy))
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.7)
+                        .shadow(color: .black.opacity(0.4), radius: 12, y: 2)
+                    Spacer()
+                    Button {
+                        player.play(ids: artist.tracks.map(\.id), shuffled: false)
+                    } label: {
+                        Image(systemName: "play.fill")
+                            .font(.title2)
+                            .foregroundStyle(.white)
+                            .frame(width: 54, height: 54)
+                            .background(Circle().fill(.tint))
+                            .shadow(color: .black.opacity(0.3), radius: 10, y: 4)
                     }
+                    .buttonStyle(PressStyle())
+                    .accessibilityLabel("Lire " + artist.name)
                 }
+                .padding(.bottom, 6)
+            }
+            .listRowInsets(EdgeInsets(top: 0, leading: 20, bottom: 8, trailing: 20))
+            .listRowBackground(Color.clear)
+            .listRowSeparator(.hidden)
 
+            if !popular.isEmpty {
                 Section {
-                    TrackRows(tracks: artist.tracks)
+                    ForEach(Array(popular.enumerated()), id: \.element.id) { i, t in
+                        Button {
+                            player.play(ids: popular.map(\.id), startAt: t.id)
+                        } label: {
+                            HStack(spacing: 12) {
+                                ArtworkView(track: t, animated: false, small: true, cornerRadius: 6)
+                                    .frame(width: 48, height: 48)
+                                Text("\(i + 1)").font(.headline).foregroundStyle(.secondary).frame(width: 18)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    HStack(spacing: 5) {
+                                        Text(t.title).font(.body.weight(.medium)).lineLimit(1)
+                                        if t.explicit { ExplicitBadge(size: 13) }
+                                    }
+                                    Text(t.displayAlbum).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                                }
+                                Spacer(minLength: 0)
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .listRowBackground(Color.clear)
+                    }
                 } header: {
-                    Text("Morceaux").font(.title3.bold()).foregroundStyle(.primary).textCase(nil)
+                    Text("Morceaux populaires").font(.title3.bold()).foregroundStyle(.primary).textCase(nil)
                 }
             }
-            .plainList()
-            .navigationBarTitleDisplayMode(.inline)
-            .background { AmbientBackground(track: artist.tracks.first, dim: 0.5) }
+
+            if !artist.albums.isEmpty {
+                Section {
+                    ScrollView(.horizontal) {
+                        HStack(alignment: .top, spacing: 14) {
+                            ForEach(artist.albums) { album in
+                                NavigationLink { AlbumDetailView(albumID: album.id) } label: {
+                                    AlbumCard(album: album).frame(width: 150)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .padding(.horizontal, 4)
+                    }
+                    .scrollIndicators(.hidden)
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+                } header: {
+                    Text("Albums").font(.title3.bold()).foregroundStyle(.primary).textCase(nil)
+                }
+            }
+
+            Section {
+                PlayShuffleButtons(ids: artist.tracks.map(\.id))
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+                TrackRows(tracks: artist.tracks)
+            } header: {
+                Text("Tous les morceaux").font(.title3.bold()).foregroundStyle(.primary).textCase(nil)
+            }
+        }
+        .plainList()
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbarBackground(.hidden, for: .navigationBar)
+        .background {
+            ZStack(alignment: .top) {
+                AmbientBackground(track: artist.tracks.first, dim: 0.5)
+                ArtistHero(artist: artist, scroll: heroBase.map { heroY - $0 } ?? 0)
+            }
+            .ignoresSafeArea()
+        }
+    }
+}
+
+/// La grande photo de l'artiste (ou la pochette de son album) en haut de sa page.
+struct ArtistHero: View {
+    let artist: ArtistInfo
+    let scroll: CGFloat
+    @Environment(Library.self) private var library
+
+    var body: some View {
+        GeometryReader { geo in
+            let w = geo.size.width
+            let h = w * 1.05
+            let pull = max(0, scroll)
+            let up = max(0, -scroll)
+            Group {
+                if let img = library.artistImage(artist.id) ?? artist.albums.first.flatMap({ library.image(for: $0.cover) }) {
+                    Image(uiImage: img).resizable().scaledToFill()
+                } else {
+                    Color(white: 0.15)
+                }
+            }
+            .frame(width: w, height: h)
+            .clipped()
+            .mask(
+                LinearGradient(stops: [
+                    .init(color: .black, location: 0),
+                    .init(color: .black, location: 0.55),
+                    .init(color: .black.opacity(0.7), location: 0.72),
+                    .init(color: .black.opacity(0.3), location: 0.86),
+                    .init(color: .clear, location: 1)
+                ], startPoint: .top, endPoint: .bottom)
+            )
+            .scaleEffect(1 + pull / w, anchor: .top)
+            .offset(y: -up * 0.6)
+            .opacity(Double(max(0, 1 - up / (w * 0.8))))
+        }
+        .allowsHitTesting(false)
     }
 }
 

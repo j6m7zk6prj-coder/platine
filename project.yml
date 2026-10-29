@@ -22,8 +22,8 @@ targets:
         UIBackgroundModes: [audio]
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true
-        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
-        UIUserInterfaceStyle: Dark
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
+        NSPhotoLibraryAddUsageDescription: "Platine enregistre les pochettes que tu choisis dans tes Photos."
         ITSAppUsesNonExemptEncryption: false
     settings:
       base:

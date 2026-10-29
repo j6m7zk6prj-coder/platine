@@ -360,10 +360,10 @@ final class PhoneSceneController: NSObject, UIGestureRecognizerDelegate {
         let camera = SCNCamera()
         camera.fieldOfView = 30
         cameraNode.camera = camera
-        cameraNode.position = SCNVector3(0, 0, 5.8)
+        cameraNode.position = SCNVector3(0, 0, 7.0)
         scene.rootNode.addChildNode(cameraNode)
         // Bien centré entre le titre et les boutons du bas : on le voit en entier.
-        holder.position = SCNVector3(0, 0.2, 0)
+        holder.position = SCNVector3(0, 0.24, 0)
         scene.rootNode.addChildNode(holder)
         holder.addChildNode(buildPhone())
 
@@ -433,46 +433,23 @@ final class PhoneSceneController: NSObject, UIGestureRecognizerDelegate {
         let path = UIBezierPath(roundedRect: CGRect(x: -W / 2, y: -H / 2, width: W, height: H), cornerRadius: Phone.corner)
         path.flatness = 0.001
         let body = SCNShape(path: path, extrusionDepth: D)
-        // Côtés bien arrondis : l'aluminium fait le tour en arrondi, le verre est à plat devant et derrière.
-        body.chamferRadius = 0.03
+        // Une seule pièce, arrondie en continu comme le vrai : le verre plat se courbe jusqu'à la tranche,
+        // sans marche ni couche en plus. Seule une fine bande d'aluminium reste au milieu de la tranche.
+        body.chamferRadius = 0.028
         body.chamferMode = .both
         let profile = UIBezierPath()
         profile.move(to: CGPoint(x: 0, y: 1))
         profile.addQuadCurve(to: CGPoint(x: 1, y: 0), controlPoint: CGPoint(x: 1, y: 1))
         body.chamferProfile = profile
         let front = Self.glass(white: 0.015)
-        // Dos en verre gris sidéral (gris foncé, pas noir), comme sur la photo.
-        let back = Self.glass(white: 0.11)
+        // Dos en verre gris sidéral (gris foncé, pas noir), comme sur les photos.
+        let back = Self.glass(white: 0.13)
         let band = Self.metal()
-        body.materials = [band, band, band, band, band]
+        // Ordre des matières : face avant, face arrière, tranche, arrondi avant, arrondi arrière.
+        body.materials = [front, back, band, front, back]
         phone.addChildNode(SCNNode(geometry: body))
 
-        // Verres avant et arrière : ils vont presque jusqu'au bord (liseré d'aluminium très fin,
-        // comme sur le vrai), avec un bord légèrement arrondi.
-        let glassInset: CGFloat = 0.005
-        let glassPath = UIBezierPath(roundedRect: CGRect(x: -W / 2 + glassInset, y: -H / 2 + glassInset,
-                                                         width: W - 2 * glassInset, height: H - 2 * glassInset),
-                                     cornerRadius: Phone.corner - glassInset)
-        glassPath.flatness = 0.001
-        let glassThickness: CGFloat = 0.006
-        let frontGlass = SCNShape(path: glassPath, extrusionDepth: glassThickness)
-        frontGlass.chamferRadius = 0.004
-        frontGlass.chamferMode = .front
-        frontGlass.chamferProfile = profile
-        frontGlass.materials = [front, front, front, front, front]
-        let frontNode = SCNNode(geometry: frontGlass)
-        frontNode.position.z = Float(D / 2 - glassThickness / 2 + 0.0006)
-        phone.addChildNode(frontNode)
-        let backGlass = SCNShape(path: glassPath, extrusionDepth: glassThickness)
-        backGlass.chamferRadius = 0.004
-        backGlass.chamferMode = .back
-        backGlass.chamferProfile = profile
-        backGlass.materials = [back, back, back, back, back]
-        let backNode = SCNNode(geometry: backGlass)
-        backNode.position.z = Float(-D / 2 + glassThickness / 2 - 0.0006)
-        phone.addChildNode(backNode)
-
-        let fz = Float(D / 2 + 0.0006)
+        let fz = Float(D / 2 + 0.0003)
 
         // Écran : la musique en cours, en direct.
         let screen = SCNPlane(width: Phone.screen.width, height: Phone.screen.height)
@@ -485,8 +462,8 @@ final class PhoneSceneController: NSObject, UIGestureRecognizerDelegate {
         phone.addChildNode(screenNode)
 
         // Reflet du verre par-dessus l'écran.
-        let gloss = SCNPlane(width: W - 0.02, height: H - 0.02)
-        gloss.cornerRadius = Phone.corner - 0.01
+        let gloss = SCNPlane(width: W - 0.06, height: H - 0.06)
+        gloss.cornerRadius = Phone.corner - 0.03
         let gm = SCNMaterial()
         gm.lightingModel = .blinn
         gm.diffuse.contents = UIColor.black
@@ -556,10 +533,11 @@ final class PhoneSceneController: NSObject, UIGestureRecognizerDelegate {
         phone.addChildNode(homeNode)
 
         // Dos en verre : reflet brillant par-dessus, et les stickers collés au dos.
-        let bz = Float(-D / 2 - 0.0006)
-        let backW = W - 0.02, backH = H - 0.02
+        let bz = Float(-D / 2 - 0.0003)
+        // Les reflets et les stickers restent sur la partie plate du dos.
+        let backW = W - 0.06, backH = H - 0.06
         let stickers = SCNPlane(width: backW, height: backH)
-        stickers.cornerRadius = Phone.corner - 0.01
+        stickers.cornerRadius = Phone.corner - 0.03
         stickerMaterial.lightingModel = .physicallyBased
         stickerMaterial.diffuse.contents = UIColor.clear
         stickerMaterial.roughness.contents = 0.25
@@ -573,7 +551,7 @@ final class PhoneSceneController: NSObject, UIGestureRecognizerDelegate {
         phone.addChildNode(sNode)
         stickerNode = sNode
         let backGloss = SCNPlane(width: backW, height: backH)
-        backGloss.cornerRadius = Phone.corner - 0.01
+        backGloss.cornerRadius = Phone.corner - 0.03
         backGloss.materials = [gm]
         let bgNode = SCNNode(geometry: backGloss)
         bgNode.eulerAngles.y = .pi
@@ -607,7 +585,7 @@ final class PhoneSceneController: NSObject, UIGestureRecognizerDelegate {
         // Boutons sur les côtés : silencieux et volume à gauche, verrouillage à droite.
         // Boutons en forme de pilule, bien arrondis, qui dépassent à peine de la tranche.
         func sideButton(_ name: String, x: CGFloat, y: CGFloat, length: CGFloat) {
-            let b = SCNBox(width: 0.014, height: length, length: 0.024, chamferRadius: 0.0068)
+            let b = SCNBox(width: 0.014, height: length, length: 0.015, chamferRadius: 0.006)
             b.materials = [Self.metal()]
             let n = SCNNode(geometry: b)
             n.name = name
@@ -616,7 +594,7 @@ final class PhoneSceneController: NSObject, UIGestureRecognizerDelegate {
             buttons[name] = n
         }
         // Bouton silencieux : un petit interrupteur dans son logement creusé.
-        let slot = SCNBox(width: 0.008, height: 0.062, length: 0.026, chamferRadius: 0.004)
+        let slot = SCNBox(width: 0.008, height: 0.062, length: 0.015, chamferRadius: 0.004)
         slot.materials = [Self.flat(UIColor(white: 0.04, alpha: 1))]
         let slotNode = SCNNode(geometry: slot)
         slotNode.position = SCNVector3(Float(-W / 2 + 0.001), 0.47, 0)
@@ -630,7 +608,7 @@ final class PhoneSceneController: NSObject, UIGestureRecognizerDelegate {
         let antenna = Self.flat(UIColor(white: 0.12, alpha: 1))
         for y in [H / 2 - 0.115, -H / 2 + 0.115] {
             for x in [-W / 2 - 0.0002, W / 2 + 0.0002] {
-                let line = SCNBox(width: 0.003, height: 0.004, length: 0.03, chamferRadius: 0.0015)
+                let line = SCNBox(width: 0.003, height: 0.004, length: 0.017, chamferRadius: 0.0015)
                 line.materials = [antenna]
                 let n = SCNNode(geometry: line)
                 n.position = SCNVector3(Float(x), Float(y), 0)
@@ -639,7 +617,7 @@ final class PhoneSceneController: NSObject, UIGestureRecognizerDelegate {
         }
 
         // Dessous : prise et grilles du haut-parleur.
-        let port = SCNBox(width: 0.08, height: 0.006, length: 0.03, chamferRadius: 0.003)
+        let port = SCNBox(width: 0.08, height: 0.006, length: 0.012, chamferRadius: 0.003)
         port.materials = [Self.flat(UIColor(white: 0.02, alpha: 1))]
         let portNode = SCNNode(geometry: port)
         portNode.position = SCNVector3(0, Float(-H / 2 + 0.001), 0)
@@ -740,7 +718,7 @@ final class PhoneSceneController: NSObject, UIGestureRecognizerDelegate {
         }
         zoom += (zoomTarget - zoom) * min(1, dt * 12)
         holder.eulerAngles = SCNVector3(Float(rx), Float(ry), 0)
-        cameraNode.position = SCNVector3(0, 0, Float(5.8 / zoom))
+        cameraNode.position = SCNVector3(0, 0, Float(7.0 / zoom))
         // La barre de progression avance chaque seconde.
         sinceRefresh += dt
         if sinceRefresh > 1, player?.isPlaying == true { refreshScreen() }

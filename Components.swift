@@ -92,8 +92,10 @@ struct PressStyle: ButtonStyle {
                         .scaleEffect(configuration.isPressed ? 1 : 0.6)
                 }
             }
-            .scaleEffect(configuration.isPressed ? 0.86 : 1)
-            .animation(.spring(response: 0.3, dampingFraction: 0.6), value: configuration.isPressed)
+            .scaleEffect(configuration.isPressed ? 0.88 : 1)
+            // Réaction immédiate au toucher (enfoncement très court), puis rebond doux au relâchement.
+            .animation(configuration.isPressed ? .easeOut(duration: 0.08) : .spring(response: 0.32, dampingFraction: 0.58),
+                       value: configuration.isPressed)
     }
 }
 
@@ -299,7 +301,7 @@ struct AmbientBackground: View {
     @State private var drift = false
 
     private var theme: AppTheme {
-        let t = settings.theme
+        let t = settings.activeTheme
         if forceDark && t.isLight { return .dynamic }
         return t
     }
@@ -323,7 +325,7 @@ struct AmbientBackground: View {
             }
         }
         .ignoresSafeArea()
-        .animation(.easeInOut(duration: 0.5), value: settings.theme)
+        .animation(.easeInOut(duration: 0.5), value: settings.activeTheme)
     }
 
     private func dynamicBackground(light: Bool) -> some View {

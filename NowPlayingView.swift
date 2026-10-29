@@ -19,58 +19,41 @@ struct NowPlayingView: View {
     @State private var controlsHidden = false
     @State private var hideTask: Task<Void, Never>?
     @State private var showEffects = false
+    /// File d'attente affichée dans le lecteur (comme Musique), pas dans une feuille à part.
+    @State private var queueOpen = false
+    @State private var remixTarget: EditTarget?
+    @Namespace private var artSpace
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
 
     var body: some View {
         let track = player.currentID.flatMap { library.track($0) }
+        let landscape = verticalSizeClass == .compact
         // Comme Musique : une pochette animée remplit tout le haut de l'écran ; une image reste un carré.
-        let fullBleed = track.map { isAnimated($0) } ?? false
-        VStack(spacing: 0) {
-            if player.sleepActive {
-                sleepBadge.padding(.top, 14)
-            }
-            if showLyrics, let t = track {
-                lyricsHeader(t)
-                    .padding(.top, 20)
-                    .padding(.bottom, 4)
-                    .transition(.opacity.combined(with: .offset(y: -10)))
-                LyricsPane(track: t, onInteract: pokeControls)
-                .transition(.opacity.combined(with: .scale(scale: 0.98)))
-                .simultaneousGesture(TapGesture().onEnded { pokeControls() })
-            } else if fullBleed {
-                // L'image est derrière : on laisse juste l'espace pour la voir.
-                Color.clear
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .contentShape(Rectangle())
-                    .onTapGesture { if let t = track { editing = EditTarget(id: t.id) } }
+        // En paysage, la pochette (animée ou non) reste un carré à gauche.
+        let fullBleed = !landscape && (track.map { isAnimated($0) } ?? false)
+        Group {
+            if landscape {
+                // Mode paysage : la pochette, les paroles ou la file à gauche, les commandes à droite.
+                HStack(spacing: 34) {
+                    VStack(spacing: 0) { mainArea(track, fullBleed: false) }
+                        .frame(maxWidth: .infinity)
+                    VStack(spacing: 0) {
+                        Spacer(minLength: 0)
+                        controls(track, landscape: true)
+                    }
+                    .frame(maxWidth: 400)
+                }
+                .padding(.horizontal, 36)
+                .padding(.vertical, 14)
             } else {
-                Spacer(minLength: 24)
-                artwork(track)
-                Spacer(minLength: 24)
-            }
-            if !(showLyrics && controlsHidden) {
-            VStack(spacing: 0) {
-                if !showLyrics {
-                    header(track)
-                        .padding(.bottom, 22)
-                        .transition(.opacity)
+                VStack(spacing: 0) {
+                    mainArea(track, fullBleed: fullBleed)
+                    controls(track, landscape: false)
                 }
-                Scrubber()
-                    .padding(.bottom, 18)
-                transport
-                    .padding(.bottom, 26)
-                if !showLyrics {
-                    volume
-                        .padding(.bottom, 26)
-                        .transition(.opacity)
-                }
-                bottomBar
-            }
-            .padding(.top, showLyrics ? 14 : 0)
-            .transition(.move(edge: .bottom).combined(with: .opacity))
+                .padding(.horizontal, 30)
+                .padding(.bottom, 6)
             }
         }
-        .padding(.horizontal, 30)
-        .padding(.bottom, 6)
         .foregroundStyle(.white)
         .background {
             ZStack(alignment: .top) {
@@ -86,6 +69,7 @@ struct NowPlayingView: View {
         }
         .animation(.smooth(duration: 0.45), value: player.currentID)
         .animation(.spring(response: 0.5, dampingFraction: 0.86), value: showLyrics)
+        .animation(.spring(response: 0.42, dampingFraction: 0.86), value: queueOpen)
         .animation(.spring(response: 0.5, dampingFraction: 0.9), value: controlsHidden)
         .onChange(of: showLyrics) { _, on in
             if on { pokeControls() } else { controlsHidden = false; hideTask?.cancel() }
@@ -103,6 +87,9 @@ struct NowPlayingView: View {
         .sheet(isPresented: $showQueue) {
             QueueView()
         }
+        .fullScreenCover(item: $remixTarget) { target in
+            RemixStudioView(trackID: target.id)
+        }
         .sheet(isPresented: $showEffects) {
             EffectsSheet()
                 .presentationDetents([.medium, .large])
@@ -112,6 +99,64 @@ struct NowPlayingView: View {
         .animation(.spring(response: 0.4, dampingFraction: 0.8), value: player.effect)
         .onChange(of: player.currentID) { _, id in
             if id == nil { dismiss() }
+        }
+    }
+
+    /// La grande zone : pochette, paroles ou file d'attente.
+    @ViewBuilder private func mainArea(_ track: Track?, fullBleed: Bool) -> some View {
+        if player.sleepActive {
+            sleepBadge.padding(.top, 14)
+        }
+        if showLyrics, let t = track {
+            lyricsHeader(t)
+                .padding(.top, 20)
+                .padding(.bottom, 4)
+                .transition(.opacity.combined(with: .offset(y: -10)))
+            LyricsPane(track: t, onInteract: pokeControls)
+                .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                .simultaneousGesture(TapGesture().onEnded { pokeControls() })
+        } else if queueOpen, let t = track {
+            // Comme Musique : la pochette rétrécit en haut à gauche et la file apparaît dessous.
+            lyricsHeader(t)
+                .padding(.top, 20)
+                .padding(.bottom, 10)
+            InlineQueue()
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
+        } else if fullBleed {
+            // L'image est derrière : on laisse juste l'espace pour la voir.
+            Color.clear
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .contentShape(Rectangle())
+                .onTapGesture { if let t = track { editing = EditTarget(id: t.id) } }
+        } else {
+            Spacer(minLength: 24)
+            artwork(track)
+            Spacer(minLength: 24)
+        }
+    }
+
+    /// Titre, barre, lecture, volume et boutons du bas.
+    @ViewBuilder private func controls(_ track: Track?, landscape: Bool) -> some View {
+        if !(showLyrics && controlsHidden) {
+            VStack(spacing: 0) {
+                if !showLyrics && !queueOpen {
+                    header(track)
+                        .padding(.bottom, landscape ? 14 : 22)
+                        .transition(.opacity)
+                }
+                Scrubber()
+                    .padding(.bottom, landscape ? 10 : 18)
+                transport
+                    .padding(.bottom, landscape ? 14 : 26)
+                if !showLyrics {
+                    volume
+                        .padding(.bottom, landscape ? 14 : 26)
+                        .transition(.opacity)
+                }
+                bottomBar
+            }
+            .padding(.top, showLyrics || queueOpen ? 14 : 0)
+            .transition(.move(edge: .bottom).combined(with: .opacity))
         }
     }
 
@@ -132,6 +177,7 @@ struct NowPlayingView: View {
         HStack(spacing: 12) {
             ArtworkView(track: t, animated: false, small: true, cornerRadius: 8)
                 .frame(width: 50, height: 50)
+                .matchedGeometryEffect(id: "artwork", in: artSpace)
                 .shadow(color: .black.opacity(0.35), radius: 8, y: 4)
             header(t)
         }
@@ -146,11 +192,14 @@ struct NowPlayingView: View {
     // MARK: Pochette
 
     private func artwork(_ t: Track?) -> some View {
-        ArtworkView(track: t, cornerRadius: 12)
-            .aspectRatio(1, contentMode: .fit)
-            .id(t?.id)
-            .transition(.asymmetric(insertion: .opacity.combined(with: .scale(scale: 1.04)),
-                                    removal: .opacity.combined(with: .scale(scale: 0.97))))
+        // Changement de morceau : fondu doux avec un léger flou, comme dans Musique.
+        ZStack {
+            ArtworkView(track: t, cornerRadius: 12)
+                .id(t?.id)
+                .transition(.blurReplace)
+        }
+        .aspectRatio(1, contentMode: .fit)
+        .matchedGeometryEffect(id: "artwork", in: artSpace)
             // Comme Musique : la pochette rétrécit en pause et reprend sa taille à la lecture.
             .scaleEffect(player.isPlaying ? 1 : 0.78)
             .shadow(color: .black.opacity(player.isPlaying ? 0.5 : 0.25),
@@ -244,6 +293,9 @@ struct NowPlayingView: View {
                     }
                     Button("Effets : " + player.effect.title, systemImage: "dial.medium") {
                         showEffects = true
+                    }
+                    Button("Remixer ce son", systemImage: "slider.horizontal.3") {
+                        remixTarget = EditTarget(id: t.id)
                     }
                     Divider()
                     Button("Changer la pochette", systemImage: "photo.on.rectangle") {
@@ -356,6 +408,7 @@ struct NowPlayingView: View {
         HStack(alignment: .top, spacing: 0) {
             toggle(symbol: "quote.bubble", on: showLyrics, label: "Paroles") {
                 showLyrics.toggle()
+                if showLyrics { queueOpen = false }
             }
             Spacer()
             VStack(spacing: 4) {
@@ -366,8 +419,9 @@ struct NowPlayingView: View {
             }
             Spacer()
             ZStack(alignment: .topTrailing) {
-                toggle(symbol: "list.bullet", on: false, label: "File d’attente") {
-                    showQueue = true
+                toggle(symbol: "list.bullet", on: queueOpen, label: "File d’attente") {
+                    queueOpen.toggle()
+                    if queueOpen { showLyrics = false }
                 }
                 // Petit badge quand l'aléatoire ou la répétition est activé.
                 if player.shuffle || player.repeatMode != .off {
@@ -386,11 +440,12 @@ struct NowPlayingView: View {
 
     private func toggle(symbol: String, on: Bool, label: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Image(systemName: on ? symbol + ".fill" : symbol)
+            Image(systemName: on && symbol != "list.bullet" ? symbol + ".fill" : symbol)
                 .font(.system(size: 21, weight: .medium))
                 .contentTransition(.symbolEffect(.replace))
                 .foregroundStyle(on ? Color.white : Color.white.opacity(0.55))
                 .frame(width: 46, height: 36)
+                .background(Capsule().fill(.white.opacity(on && symbol == "list.bullet" ? 0.16 : 0)))
                 .animation(.spring(response: 0.35, dampingFraction: 0.7), value: on)
         }
         .buttonStyle(PressStyle(circle: false))
@@ -637,5 +692,96 @@ struct EffectsSheet: View {
         }
         .buttonStyle(PressStyle(circle: false))
         .sensoryFeedback(.selection, trigger: selected)
+    }
+}
+
+
+// MARK: - File d'attente dans le lecteur (comme Musique)
+
+/// Aléatoire, répétition, puis « À suivre » et la suite, directement dans le lecteur.
+struct InlineQueue: View {
+    @Environment(Player.self) private var player
+    @Environment(Library.self) private var library
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                pill("shuffle", on: player.shuffle) { player.setShuffle(!player.shuffle) }
+                pill(player.repeatMode == .one ? "repeat.1" : "repeat", on: player.repeatMode != .off) { player.cycleRepeat() }
+                if !player.upNext.isEmpty {
+                    pill("xmark", on: false) { player.clearUpNext() }
+                }
+            }
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    if !player.upNext.isEmpty {
+                        sectionTitle("À suivre")
+                        ForEach(Array(player.upNext.enumerated()), id: \.offset) { i, id in
+                            if let t = library.track(id) {
+                                row(t) { player.playUpNext(at: i) }
+                            }
+                        }
+                    }
+                    let upcoming = Array(player.upcomingInQueue.prefix(150))
+                    if !upcoming.isEmpty {
+                        sectionTitle(player.shuffle ? "Ensuite · aléatoire" : "Ensuite")
+                        ForEach(upcoming, id: \.self) { qi in
+                            if let t = library.track(player.queue[qi]) {
+                                row(t) { player.jump(toQueueIndex: qi) }
+                            }
+                        }
+                    }
+                    if player.upNext.isEmpty && upcoming.isEmpty {
+                        Text("La file d’attente ne comporte aucune musique.")
+                            .font(.subheadline)
+                            .foregroundStyle(.white.opacity(0.5))
+                            .frame(maxWidth: .infinity)
+                            .padding(.top, 40)
+                    }
+                }
+            }
+            .scrollIndicators(.hidden)
+            .mask(LyricsFade())
+        }
+        .frame(maxHeight: .infinity)
+    }
+
+    private func pill(_ symbol: String, on: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(on ? Color.black : Color.white)
+                .frame(width: 66, height: 34)
+                .background(Capsule().fill(on ? Color.white : Color.white.opacity(0.14)))
+        }
+        .buttonStyle(PressStyle(circle: false))
+        .sensoryFeedback(.selection, trigger: on)
+    }
+
+    private func sectionTitle(_ text: String) -> some View {
+        Text(text)
+            .font(.headline)
+            .padding(.top, 14)
+            .padding(.bottom, 6)
+    }
+
+    private func row(_ t: Track, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                ArtworkView(track: t, animated: false, small: true, cornerRadius: 6)
+                    .frame(width: 44, height: 44)
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 5) {
+                        Text(t.title).font(.body.weight(.medium)).lineLimit(1)
+                        if t.explicit { ExplicitBadge(size: 13) }
+                    }
+                    Text(t.displayArtist).font(.subheadline).foregroundStyle(.white.opacity(0.55)).lineLimit(1)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.vertical, 6)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(PressStyle(circle: false))
     }
 }

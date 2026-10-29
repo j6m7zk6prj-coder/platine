@@ -276,10 +276,12 @@ struct AlbumNodeBuilder {
         face.diffuse.contents = Self.lidFace
         face.blendMode = .alpha
         face.writesToDepthBuffer = false
+        // Bords en plastique transparent un peu rugueux, légèrement laiteux, comme un vrai boîtier.
         let lidEdge = SCNMaterial()
         lidEdge.lightingModel = .physicallyBased
-        lidEdge.diffuse.contents = UIColor(white: 0.93, alpha: 0.6)
-        lidEdge.roughness.contents = 0.18
+        lidEdge.diffuse.contents = UIColor(white: 0.9, alpha: 0.7)
+        lidEdge.roughness.contents = Self.plasticGrain
+        lidEdge.roughness.intensity = 1
         lidEdge.blendMode = .alpha
         lidEdge.writesToDepthBuffer = false
         let inner = Self.glassy(strength: 0.3)
@@ -298,6 +300,19 @@ struct AlbumNodeBuilder {
         glossNode.position.z = Float(D / 2) + 0.0008
         glossNode.renderingOrder = 11
         parts.append(glossNode)
+
+        // Le plastique vit : petites bulles prises dans le cristal, micro-rayures et poussières.
+        let wear = SCNPlane(width: W - 0.01, height: H - 0.01)
+        let wearMat = SCNMaterial()
+        wearMat.lightingModel = .constant
+        wearMat.diffuse.contents = Self.plasticWear
+        wearMat.blendMode = .add
+        wearMat.writesToDepthBuffer = false
+        wear.materials = [wearMat]
+        let wearNode = SCNNode(geometry: wear)
+        wearNode.position.z = Float(D / 2) + 0.0011
+        wearNode.renderingOrder = 12
+        parts.append(wearNode)
 
         // Petits rebords du couvercle, en haut et en bas, qui viennent s'emboîter sur le plateau.
         for y in [-1.0, 1.0] {
@@ -1581,6 +1596,65 @@ struct AlbumNodeBuilder {
     }
 
     /// Plastique transparent : noir en mode « addition », il ne laisse voir que ses reflets.
+    /// Bulles, poussières et fines rayures du plastique d'un boîtier CD (dessiné une seule fois).
+    static let plasticWear: UIImage = {
+        let size = CGSize(width: 1024, height: 900)
+        var rng = SeededRandom(seed: 42)
+        return UIGraphicsImageRenderer(size: size).image { ctx in
+            let c = ctx.cgContext
+            UIColor.black.setFill()
+            c.fill(CGRect(origin: .zero, size: size))
+            // Voile laiteux très léger, plus marqué vers les bords.
+            let colors = [UIColor(white: 1, alpha: 0).cgColor, UIColor(white: 1, alpha: 0.05).cgColor] as CFArray
+            if let g = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors, locations: [0.55, 1]) {
+                c.drawRadialGradient(g, startCenter: CGPoint(x: size.width / 2, y: size.height / 2), startRadius: 0,
+                                     endCenter: CGPoint(x: size.width / 2, y: size.height / 2), endRadius: size.width * 0.72, options: [])
+            }
+            // Bulles : petits cercles avec un reflet.
+            for _ in 0..<70 {
+                let r = CGFloat(rng.next(1.2, 4.5))
+                let p = CGPoint(x: CGFloat(rng.next(0, Double(size.width))), y: CGFloat(rng.next(0, Double(size.height))))
+                c.setStrokeColor(UIColor(white: 1, alpha: CGFloat(rng.next(0.12, 0.3))).cgColor)
+                c.setLineWidth(0.8)
+                c.strokeEllipse(in: CGRect(x: p.x - r, y: p.y - r, width: r * 2, height: r * 2))
+                c.setFillColor(UIColor(white: 1, alpha: 0.35).cgColor)
+                c.fillEllipse(in: CGRect(x: p.x - r * 0.45, y: p.y - r * 0.55, width: r * 0.5, height: r * 0.5))
+            }
+            // Poussières.
+            for _ in 0..<220 {
+                let r = CGFloat(rng.next(0.4, 1.1))
+                c.setFillColor(UIColor(white: 1, alpha: CGFloat(rng.next(0.05, 0.18))).cgColor)
+                c.fillEllipse(in: CGRect(x: CGFloat(rng.next(0, Double(size.width))), y: CGFloat(rng.next(0, Double(size.height))),
+                                         width: r * 2, height: r * 2))
+            }
+            // Micro-rayures fines, presque toutes dans le même sens (comme un boîtier manipulé).
+            for _ in 0..<26 {
+                let x = CGFloat(rng.next(0, Double(size.width))), y = CGFloat(rng.next(0, Double(size.height)))
+                let length = CGFloat(rng.next(20, 140))
+                let angle = CGFloat(rng.next(-0.5, 0.5)) + .pi / 5
+                c.setStrokeColor(UIColor(white: 1, alpha: CGFloat(rng.next(0.04, 0.12))).cgColor)
+                c.setLineWidth(CGFloat(rng.next(0.4, 0.9)))
+                c.move(to: CGPoint(x: x, y: y))
+                c.addLine(to: CGPoint(x: x + cos(angle) * length, y: y + sin(angle) * length))
+                c.strokePath()
+            }
+        }
+    }()
+
+    /// Grain de surface : rend les bords du plastique un peu rugueux sous la lumière.
+    static let plasticGrain: UIImage = {
+        let size = CGSize(width: 128, height: 128)
+        var rng = SeededRandom(seed: 7)
+        return UIGraphicsImageRenderer(size: size).image { ctx in
+            for y in stride(from: 0, to: Int(size.height), by: 2) {
+                for x in stride(from: 0, to: Int(size.width), by: 2) {
+                    UIColor(white: CGFloat(rng.next(0.3, 0.55)), alpha: 1).setFill()
+                    ctx.fill(CGRect(x: x, y: y, width: 2, height: 2))
+                }
+            }
+        }
+    }()
+
     static func glassy(strength: CGFloat) -> SCNMaterial {
         let m = SCNMaterial()
         m.lightingModel = .physicallyBased
@@ -1819,5 +1893,17 @@ extension GamePlatform {
         case .ps4: return UIColor(white: 1, alpha: 0.85)
         case .ps5: return UIColor(white: 0.8, alpha: 1)
         }
+    }
+}
+
+
+/// Petit générateur de hasard reproductible (les textures sont identiques à chaque lancement).
+struct SeededRandom {
+    private var state: UInt64
+    init(seed: UInt64) { state = seed &* 6364136223846793005 &+ 1442695040888963407 }
+    mutating func next(_ low: Double, _ high: Double) -> Double {
+        state = state &* 6364136223846793005 &+ 1442695040888963407
+        let unit = Double(state >> 11) / Double(1 << 53)
+        return low + (high - low) * unit
     }
 }

@@ -41,6 +41,20 @@ enum AccentChoice: String, CaseIterable, Identifiable {
 }
 
 /// Thème de l'app.
+/// Mode clair ou sombre, en plus du thème choisi.
+enum AppearanceMode: String, CaseIterable, Identifiable {
+    case theme, light, dark, auto
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .theme: return "Thème"
+        case .light: return "Clair"
+        case .dark: return "Sombre"
+        case .auto: return "Auto"
+        }
+    }
+}
+
 enum AppTheme: String, CaseIterable, Identifiable {
     case dynamic, black, graphite, midnight, light, white
     var id: String { rawValue }
@@ -113,6 +127,21 @@ final class AppSettings {
     var songSort: SongSort { didSet { UserDefaults.standard.set(songSort.rawValue, forKey: "songSort") } }
     var shelfFormat: AlbumFormat { didSet { UserDefaults.standard.set(shelfFormat.rawValue, forKey: "shelfFormat") } }
     var theme: AppTheme { didSet { UserDefaults.standard.set(theme.rawValue, forKey: "theme") } }
+    var appearance: AppearanceMode { didSet { UserDefaults.standard.set(appearance.rawValue, forKey: "appearance") } }
+    /// Réglage de l'iPhone (clair ou sombre), pour le mode Auto.
+    var systemIsLight = false
+
+    /// Le thème réellement affiché : celui choisi, éclairci ou assombri selon le mode.
+    var activeTheme: AppTheme {
+        let lightVersion: AppTheme = theme.isLight ? theme : .light
+        let darkVersion: AppTheme = theme.isLight ? .dynamic : theme
+        switch appearance {
+        case .theme: return theme
+        case .light: return lightVersion
+        case .dark: return darkVersion
+        case .auto: return systemIsLight ? lightVersion : darkVersion
+        }
+    }
     var lyricsSize: LyricsSize { didSet { UserDefaults.standard.set(lyricsSize.rawValue, forKey: "lyricsSize") } }
     var artworkStyle: ArtworkStyle { didSet { UserDefaults.standard.set(artworkStyle.rawValue, forKey: "artworkStyle") } }
     var backgroundMotion: Bool { didSet { UserDefaults.standard.set(backgroundMotion, forKey: "backgroundMotion") } }
@@ -127,7 +156,7 @@ final class AppSettings {
     var glassIntensity: Double { didSet { UserDefaults.standard.set(glassIntensity, forKey: "glassIntensity") } }
 
     /// Couleur d'accent lisible sur le thème choisi (le blanc devient noir sur un thème clair).
-    var tint: Color { theme.isLight && accent == .white ? .black : accent.color }
+    var tint: Color { activeTheme.isLight && accent == .white ? .black : accent.color }
 
     init() {
         let d = UserDefaults.standard
@@ -143,6 +172,7 @@ final class AppSettings {
         songSort = SongSort(rawValue: d.string(forKey: "songSort") ?? "") ?? .title
         shelfFormat = AlbumFormat(rawValue: d.string(forKey: "shelfFormat") ?? "") ?? .cd
         theme = AppTheme(rawValue: d.string(forKey: "theme") ?? "") ?? .dynamic
+        appearance = AppearanceMode(rawValue: d.string(forKey: "appearance") ?? "") ?? .theme
         lyricsSize = LyricsSize(rawValue: d.string(forKey: "lyricsSize") ?? "") ?? .medium
         artworkStyle = ArtworkStyle(rawValue: d.string(forKey: "artworkStyle") ?? "") ?? .rounded
         backgroundMotion = d.object(forKey: "backgroundMotion") as? Bool ?? true
@@ -162,6 +192,8 @@ final class UIState {
     var showPlayer = false
     var editing: EditTarget?
     var editingInfo: EditTarget?
+    /// Morceau ouvert dans le Studio remix.
+    var remixing: EditTarget?
     var addToPlaylist: AddToPlaylistTarget?
     var importing = false
     var showShelf = false

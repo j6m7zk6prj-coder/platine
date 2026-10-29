@@ -476,6 +476,27 @@ final class Library {
         return false
     }
 
+    /// Ajoute un remix (fichier créé par le Studio) à la bibliothèque, avec la pochette du son d'origine.
+    @discardableResult
+    func addRemix(_ file: URL, from original: Track, title: String) async -> Track? {
+        guard var t = await importOne(file, move: true) else { return nil }
+        t.title = title
+        t.artist = original.artist
+        t.album = "Remixes"
+        t.year = Calendar.current.component(.year, from: Date())
+        t.embeddedArtwork = original.embeddedArtwork
+        t.customArtwork = original.customArtwork
+        t.customKind = original.customKind
+        t.explicit = original.explicit
+        t.lyrics = nil
+        t.games = []
+        tracks.append(t)
+        save()
+        artworkRevision += 1
+        message = "Remix ajouté à ta bibliothèque"
+        return t
+    }
+
     func setLyrics(_ id: UUID, _ text: String?) {
         guard let i = tracks.firstIndex(where: { $0.id == id }) else { return }
         let clean = text?.trimmingCharacters(in: .whitespacesAndNewlines)

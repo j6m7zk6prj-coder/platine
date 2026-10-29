@@ -34,6 +34,10 @@ struct RootView: View {
         .sheet(item: $ui.editing) { target in
             ArtworkEditor(trackID: target.id)
         }
+        .fullScreenCover(item: $ui.remixing) { target in
+            RemixStudioView(trackID: target.id)
+                .environment(\.colorScheme, .dark)
+        }
         .overlay {
             if shelfMounted {
                 ShelfView(visible: ui.showShelf, onClose: { ui.showShelf = false })

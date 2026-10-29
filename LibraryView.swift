@@ -61,6 +61,8 @@ struct LibraryHomeView: View {
                     rowDivider
                     LibraryLink(title: "Albums", icon: "square.stack", count: library.albums.count) { AlbumsView() }
                     rowDivider
+                    LibraryLink(title: "Pochettes", icon: "photo.on.rectangle.angled", count: ArtworkGalleryView.items(library).count) { ArtworkGalleryView() }
+                    rowDivider
                     LibraryLink(title: "Morceaux", icon: "music.note", count: library.tracks.count) { SongsView() }
                     rowDivider
                     LibraryLink(title: "Favoris", icon: "heart", count: library.favorites.count) { SongsView(favoritesOnly: true) }
@@ -262,6 +264,7 @@ struct TrackMenuItems: View {
         }
         Button("Changer la pochette", systemImage: "photo.on.rectangle") { ui.editing = EditTarget(id: track.id) }
         Button("Modifier les infos", systemImage: "pencil") { ui.editingInfo = EditTarget(id: track.id) }
+        Button("Remixer", systemImage: "slider.horizontal.3") { ui.remixing = EditTarget(id: track.id) }
         Divider()
         Button("Retirer de la bibliothèque", systemImage: "trash", role: .destructive) {
             library.remove([track.id])

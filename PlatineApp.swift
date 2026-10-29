@@ -19,12 +19,35 @@ struct PlatineApp: App {
     var body: some Scene {
         WindowGroup {
             RootView()
+                .modifier(SystemAppearanceReader())
                 .environment(library)
                 .environment(player)
                 .environment(settings)
                 .environment(ui)
-                .preferredColorScheme(settings.theme.isLight ? .light : .dark)
+                // Mode Auto : on suit le réglage de l'iPhone ; sinon le thème décide.
+                .preferredColorScheme(settings.appearance == .auto ? nil : (settings.activeTheme.isLight ? .light : .dark))
                 .tint(settings.tint)
         }
+    }
+}
+
+
+/// Lit si l'iPhone est en mode clair ou sombre (pour le mode Auto).
+struct SystemAppearanceReader: ViewModifier {
+    @Environment(AppSettings.self) private var settings
+    @Environment(\.colorScheme) private var scheme
+
+    func body(content: Content) -> some View {
+        content
+            .onAppear { update() }
+            .onChange(of: scheme) { _, _ in update() }
+            .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in update() }
+    }
+
+    private func update() {
+        // En mode Auto, la couleur de l'écran suit l'iPhone : on la lit directement à la source.
+        let style = UIScreen.main.traitCollection.userInterfaceStyle
+        let light = settings.appearance == .auto ? style != .dark : scheme == .light
+        if settings.systemIsLight != light { settings.systemIsLight = light }
     }
 }

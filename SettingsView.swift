@@ -132,7 +132,7 @@ struct SettingsView: View {
             }
 
             Section {
-                LabeledContent("Version", value: "6.5")
+                LabeledContent("Version", value: "7.1")
             } footer: {
                 Text("Platine lit ta propre musique. Seule la recherche de paroles contacte internet (LRCLIB), et uniquement quand tu ouvres des paroles absentes ou lances la recherche.")
             }
@@ -183,6 +183,17 @@ struct AppearanceSettingsView: View {
     var body: some View {
         @Bindable var settings = settings
         Form {
+            Section {
+                Picker("Mode", selection: $settings.appearance) {
+                    ForEach(AppearanceMode.allCases) { Text($0.label).tag($0) }
+                }
+                .pickerStyle(.segmented)
+            } header: {
+                Text("Clair ou sombre")
+            } footer: {
+                Text("« Thème » garde les couleurs du thème choisi. « Clair » et « Sombre » forcent le mode, « Auto » suit le réglage de l’iPhone.")
+            }
+
             Section {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 96), spacing: 12)], spacing: 14) {
                     ForEach(AppTheme.allCases) { theme in
