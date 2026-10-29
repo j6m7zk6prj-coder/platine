@@ -113,6 +113,38 @@ final class Library {
 
     func album(_ id: String) -> AlbumInfo? { albums.first { $0.id == id } }
 
+    // MARK: Albums exposés dans la Collection
+
+    /// Albums que tu as choisi de ne pas exposer dans la Collection.
+    private(set) var hiddenFromCollection: Set<String> =
+        Set(UserDefaults.standard.stringArray(forKey: "hiddenFromCollection") ?? [])
+
+    /// Les albums rangés dans la Collection (ceux que tu as choisis).
+    var exposedAlbums: [AlbumInfo] { albums.filter { !hiddenFromCollection.contains($0.id) } }
+
+    func isExposed(_ albumID: String) -> Bool { !hiddenFromCollection.contains(albumID) }
+
+    func setExposed(_ albumID: String, _ on: Bool) {
+        if on { hiddenFromCollection.remove(albumID) } else { hiddenFromCollection.insert(albumID) }
+        UserDefaults.standard.set(Array(hiddenFromCollection), forKey: "hiddenFromCollection")
+    }
+
+    func setAllExposed(_ on: Bool) {
+        hiddenFromCollection = on ? [] : Set(albums.map(\.id))
+        UserDefaults.standard.set(Array(hiddenFromCollection), forKey: "hiddenFromCollection")
+    }
+
+    /// Albums dont tu as déjà retiré le blister (le film plastique) dans la Collection.
+    private(set) var unwrappedAlbums: Set<String> =
+        Set(UserDefaults.standard.stringArray(forKey: "unwrappedAlbums") ?? [])
+
+    func isSealed(_ albumID: String) -> Bool { !unwrappedAlbums.contains(albumID) }
+
+    func setSealed(_ albumID: String, _ sealed: Bool) {
+        if sealed { unwrappedAlbums.remove(albumID) } else { unwrappedAlbums.insert(albumID) }
+        UserDefaults.standard.set(Array(unwrappedAlbums), forKey: "unwrappedAlbums")
+    }
+
     /// La pochette officielle d'un album, qui ne suit pas la pochette changée d'un seul morceau :
     /// 1. celle choisie pour l'album ; 2. celle appliquée à tous ses morceaux ;
     /// 3. la pochette d'origine (celle du fichier audio) ; 4. sinon celle du premier morceau.

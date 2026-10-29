@@ -57,6 +57,33 @@ final class AlbumNode {
     private(set) var discOut = false
     /// Image déjà retournée et fondue, pour le reflet sur le sol de la Collection.
     var reflection: ReflectionFace?
+    /// Le blister : film plastique d'un CD neuf, retiré la première fois qu'on sort le disque.
+    var wrapNode: SCNNode?
+    /// Appelé quand le blister est retiré (pour s'en souvenir).
+    var onUnwrap: () -> Void = {}
+
+    /// Affiche ou cache le blister, sans animation (mise à jour de l'étagère).
+    func setWrapVisible(_ on: Bool) {
+        guard let wrapNode, wrapNode.action(forKey: "unwrap") == nil else { return }
+        wrapNode.isHidden = !on
+        wrapNode.opacity = 1
+        wrapNode.scale = SCNVector3(1, 1, 1)
+        wrapNode.position = SCNVector3(0, 0, 0)
+    }
+
+    /// Le film se détache : il gonfle un peu, glisse vers le haut et disparaît.
+    private func peelWrap() {
+        guard let wrapNode, !wrapNode.isHidden else { return }
+        onUnwrap()
+        let lift = SCNAction.group([
+            .fadeOut(duration: 0.55),
+            .scale(to: 1.05, duration: 0.55),
+            .moveBy(x: 0.18, y: 0.45, z: 0.25, duration: 0.55),
+            .rotateBy(x: 0, y: 0, z: -0.12, duration: 0.55)
+        ])
+        lift.timingMode = .easeIn
+        wrapNode.runAction(.sequence([lift, .hide()]), forKey: "unwrap")
+    }
 
     var size: SCNVector3 { Physical.size(format) }
     /// Échelle d'affichage (le boîtier de jeu est réduit pour avoir la même présence qu'un CD).
@@ -144,6 +171,7 @@ final class AlbumNode {
     func setDiscOut(_ out: Bool, animated: Bool = true) {
         guard let discPivot, out != discOut else { return }
         discOut = out
+        if out { peelWrap() }
         if let lidPivot {
             // Boîtier de jeu : il s'ouvre à plat comme un livre ; on voit le livret à gauche,
             // le disque dans son plateau à droite. Le tout recule un peu pour tenir à l'écran.
@@ -214,7 +242,13 @@ struct AlbumNodeBuilder {
     func make(_ album: AlbumInfo, format: AlbumFormat, badges: [AlbumBadge], extras: Bool) -> AlbumNode {
         let sig = signature(album, format, badges)
         switch format {
-        case .cd: return makeCD(album, badges: badges, extras: extras, signature: sig)
+        case .cd:
+            let node = makeCD(album, badges: badges, extras: extras, signature: sig)
+            node.wrapNode?.isHidden = !(settings.shrinkWrap && library.isSealed(album.id))
+            let lib = library
+            let id = album.id
+            node.onUnwrap = { lib.setSealed(id, false) }
+            return node
         case .cassette: return makeCassette(album, badges: badges, signature: sig)
         case .game: return makeGameCase(album, badges: badges, extras: extras, signature: sig)
         }
@@ -279,7 +313,8 @@ struct AlbumNodeBuilder {
         // Bords en plastique transparent un peu rugueux, légèrement laiteux, comme un vrai boîtier.
         let lidEdge = SCNMaterial()
         lidEdge.lightingModel = .physicallyBased
-        lidEdge.diffuse.contents = UIColor(white: 0.9, alpha: 0.7)
+        // Le polystyrène des vrais boîtiers est légèrement vert d'eau sur la tranche.
+        lidEdge.diffuse.contents = UIColor(red: 0.8, green: 0.9, blue: 0.88, alpha: 0.62)
         lidEdge.roughness.contents = Self.plasticGrain
         lidEdge.roughness.intensity = 1
         lidEdge.blendMode = .alpha
@@ -333,8 +368,43 @@ struct AlbumNodeBuilder {
             parts.append(k)
         }
 
+        // Blister : le film plastique bien tendu d'un CD neuf, avec ses plis aux coins, ses soudures au dos
+        // et la bande de sécurité sur le dessus. Il ne voile pas la pochette : il n'ajoute que des reflets.
+        let wrap = SCNNode()
+        let film = SCNBox(width: W + 0.005, height: H + 0.005, length: D + 0.006, chamferRadius: 0.0045)
+        film.materials = [Self.shrinkFilm(Self.shrinkFront), Self.shrinkFilm(Self.shrinkSide),
+                          Self.shrinkFilm(Self.shrinkBack), Self.shrinkFilm(Self.shrinkSide),
+                          Self.shrinkFilm(Self.shrinkSide), Self.shrinkFilm(Self.shrinkSide)]
+        let filmNode = SCNNode(geometry: film)
+        filmNode.renderingOrder = 13
+        wrap.addChildNode(filmNode)
+        // Bande de sécurité collée sur le dessus, qui déborde un peu sur la face avant.
+        let strip = SCNPlane(width: 0.46, height: D + 0.004)
+        let stripMat = SCNMaterial()
+        stripMat.lightingModel = .physicallyBased
+        stripMat.diffuse.contents = Self.securityStrip(album.title)
+        stripMat.roughness.contents = 0.35
+        strip.materials = [stripMat]
+        let stripNode = SCNNode(geometry: strip)
+        stripNode.eulerAngles.x = -.pi / 2
+        stripNode.position = SCNVector3(0.05, Float(H / 2 + 0.0032), 0)
+        wrap.addChildNode(stripNode)
+        let lip = SCNPlane(width: 0.46, height: 0.07)
+        let lipMat = SCNMaterial()
+        lipMat.lightingModel = .physicallyBased
+        lipMat.diffuse.contents = Self.securityStrip(album.title)
+        lipMat.diffuse.contentsTransform = SCNMatrix4MakeScale(1, 0.35, 1)
+        lipMat.roughness.contents = 0.35
+        lip.materials = [lipMat]
+        let lipNode = SCNNode(geometry: lip)
+        lipNode.position = SCNVector3(0.05, Float(H / 2 - 0.035), Float(D / 2 + 0.0031))
+        lipNode.renderingOrder = 12
+        wrap.addChildNode(lipNode)
+        parts.append(wrap)
+
         let cdNode = AlbumNode(albumID: album.id, format: .cd, signature: signature, parts: parts,
                                discPivot: extras ? makeDisc(album) : nil, reels: [])
+        cdNode.wrapNode = wrap
         if !extras, let coverImage {
             let key: String = "reflect|" + signature
             if let img = cached(key, { Self.reflectionImage(coverImage, frame: nil, inset: 0) }) {
@@ -1596,6 +1666,134 @@ struct AlbumNodeBuilder {
     }
 
     /// Plastique transparent : noir en mode « addition », il ne laisse voir que ses reflets.
+    // MARK: Blister (film plastique d'un CD neuf)
+
+    /// Film brillant : il n'ajoute que des reflets (le relief des plis vient d'une carte de relief).
+    static func shrinkFilm(_ textures: (haze: UIImage, normal: UIImage)) -> SCNMaterial {
+        let m = SCNMaterial()
+        m.lightingModel = .physicallyBased
+        m.diffuse.contents = textures.haze
+        m.normal.contents = textures.normal
+        m.normal.intensity = 1
+        m.roughness.contents = 0.06
+        m.metalness.contents = 0.0
+        m.clearCoat.contents = 1.0
+        m.clearCoatRoughness.contents = 0.03
+        m.clearCoatNormal.contents = textures.normal
+        m.blendMode = .add
+        m.writesToDepthBuffer = false
+        return m
+    }
+
+    static let shrinkFront = filmTextures(width: 512, height: 450, corners: true, seams: false, seed: 11)
+    static let shrinkBack = filmTextures(width: 512, height: 450, corners: true, seams: true, seed: 23)
+    static let shrinkSide = filmTextures(width: 256, height: 64, corners: false, seams: false, seed: 5)
+
+    /// Fabrique le voile et le relief du film : tendu au centre (légères ondulations), froissé près des bords,
+    /// plis en éventail dans les coins, et soudures au dos.
+    static func filmTextures(width w: Int, height h: Int, corners: Bool, seams: Bool, seed: UInt64) -> (haze: UIImage, normal: UIImage) {
+        var rng = SeededRandom(seed: seed)
+        // Bruit lisse (grille aléatoire interpolée), sur plusieurs échelles.
+        let grid = 33
+        var lattice = [Double](repeating: 0, count: grid * grid)
+        for i in lattice.indices { lattice[i] = rng.next(-1, 1) }
+        func noise(_ x: Double, _ y: Double) -> Double {
+            let fx = (x.truncatingRemainder(dividingBy: Double(grid - 1)) + Double(grid - 1)).truncatingRemainder(dividingBy: Double(grid - 1))
+            let fy = (y.truncatingRemainder(dividingBy: Double(grid - 1)) + Double(grid - 1)).truncatingRemainder(dividingBy: Double(grid - 1))
+            let x0 = Int(fx), y0 = Int(fy)
+            let tx = fx - Double(x0), ty = fy - Double(y0)
+            let sx = tx * tx * (3 - 2 * tx), sy = ty * ty * (3 - 2 * ty)
+            func at(_ a: Int, _ b: Int) -> Double { lattice[(b % grid) * grid + (a % grid)] }
+            let top = at(x0, y0) + (at(x0 + 1, y0) - at(x0, y0)) * sx
+            let bottom = at(x0, y0 + 1) + (at(x0 + 1, y0 + 1) - at(x0, y0 + 1)) * sx
+            return top + (bottom - top) * sy
+        }
+        var height = [Double](repeating: 0, count: w * h)
+        for y in 0..<h {
+            for x in 0..<w {
+                let u = Double(x) / Double(w - 1), v = Double(y) / Double(h - 1)
+                let edge = min(u, 1 - u, v, 1 - v)
+                let nearEdge = exp(-edge / 0.07)
+                var value = 0.18 * noise(u * 3, v * 3)                        // le film n'est jamais parfaitement plat
+                value += nearEdge * (0.55 * noise(u * 14, v * 14) + 0.3 * noise(u * 30, v * 30)) // froissé au bord
+                if corners {
+                    for (cx, cy) in [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (1.0, 1.0)] {
+                        let dx = u - cx, dy = v - cy
+                        let d = (dx * dx + dy * dy).squareRoot()
+                        let fan = exp(-d / 0.09)
+                        value += fan * 0.7 * sin(atan2(dy, dx) * 26 + noise(u * 8, v * 8) * 3)
+                    }
+                }
+                if seams {
+                    // Soudure horizontale au tiers, et pliage en enveloppe vers les coins.
+                    value += 0.9 * exp(-abs(v - 0.34) / 0.006)
+                    value += 0.5 * exp(-abs(abs(u - 0.5) * 2 - v * 0.6 - 0.4) / 0.01) * (v < 0.34 ? 1 : 0)
+                }
+                height[y * w + x] = value
+            }
+        }
+        var normalBytes = [UInt8](repeating: 255, count: w * h * 4)
+        var hazeBytes = [UInt8](repeating: 255, count: w * h * 4)
+        let strength = 2.2
+        for y in 0..<h {
+            for x in 0..<w {
+                let l = height[y * w + max(0, x - 1)], r = height[y * w + min(w - 1, x + 1)]
+                let t = height[max(0, y - 1) * w + x], b = height[min(h - 1, y + 1) * w + x]
+                var nx = (l - r) * strength, ny = (t - b) * strength, nz = 1.0
+                let len = (nx * nx + ny * ny + nz * nz).squareRoot()
+                nx /= len; ny /= len; nz /= len
+                let o = (y * w + x) * 4
+                normalBytes[o] = UInt8((nx * 0.5 + 0.5) * 255)
+                normalBytes[o + 1] = UInt8((ny * 0.5 + 0.5) * 255)
+                normalBytes[o + 2] = UInt8((nz * 0.5 + 0.5) * 255)
+                // Voile laiteux très léger, plus marqué dans les plis (le film y est plus épais).
+                let crease = min(1, abs(l - r) * 3 + abs(t - b) * 3)
+                let haze = UInt8(min(255, 6 + crease * 34))
+                hazeBytes[o] = haze; hazeBytes[o + 1] = haze; hazeBytes[o + 2] = haze
+            }
+        }
+        func image(_ bytes: [UInt8]) -> UIImage {
+            let data = Data(bytes) as CFData
+            guard let provider = CGDataProvider(data: data),
+                  let cg = CGImage(width: w, height: h, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: w * 4,
+                                   space: CGColorSpaceCreateDeviceRGB(),
+                                   bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue),
+                                   provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent) else {
+                return UIImage()
+            }
+            return UIImage(cgImage: cg)
+        }
+        return (image(hazeBytes), image(normalBytes))
+    }
+
+    /// La bande de sécurité blanche collée sur le dessus des CD neufs.
+    static func securityStrip(_ title: String) -> UIImage {
+        let size = CGSize(width: 460, height: 100)
+        return UIGraphicsImageRenderer(size: size).image { ctx in
+            UIColor(white: 0.96, alpha: 1).setFill()
+            ctx.fill(CGRect(origin: .zero, size: size))
+            let attrs: [NSAttributedString.Key: Any] = [
+                .font: UIFont.systemFont(ofSize: 22, weight: .heavy),
+                .foregroundColor: UIColor(white: 0.12, alpha: 1)
+            ]
+            (title.uppercased() as NSString).draw(in: CGRect(x: 14, y: 14, width: 300, height: 30), withAttributes: attrs)
+            let small: [NSAttributedString.Key: Any] = [
+                .font: UIFont.systemFont(ofSize: 13, weight: .semibold),
+                .foregroundColor: UIColor(white: 0.35, alpha: 1)
+            ]
+            ("DISQUE COMPACT · NEUF · PLATINE" as NSString).draw(at: CGPoint(x: 14, y: 52), withAttributes: small)
+            // Petit code-barres.
+            var rng = SeededRandom(seed: UInt64(abs(title.hashValue % 9999)) + 1)
+            var x: CGFloat = 330
+            while x < 446 {
+                let barW = CGFloat(rng.next(1, 4))
+                UIColor(white: 0.1, alpha: 1).setFill()
+                ctx.fill(CGRect(x: x, y: 18, width: barW, height: 62))
+                x += barW + CGFloat(rng.next(1, 4))
+            }
+        }
+    }
+
     /// Bulles, poussières et fines rayures du plastique d'un boîtier CD (dessiné une seule fois).
     static let plasticWear: UIImage = {
         let size = CGSize(width: 1024, height: 900)

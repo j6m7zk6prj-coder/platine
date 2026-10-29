@@ -170,6 +170,15 @@ struct AlbumDetailView: View {
                         Button("Ajouter à une playlist", systemImage: "text.badge.plus") {
                             ui.addToPlaylist = AddToPlaylistTarget(trackIDs: album.tracks.map(\.id))
                         }
+                        if !library.isSealed(album.id) {
+                            Button("Remettre sous blister", systemImage: "shippingbox") {
+                                library.setSealed(album.id, true)
+                            }
+                        }
+                        Button(library.isExposed(album.id) ? "Ranger de la Collection" : "Exposer dans la Collection",
+                               systemImage: library.isExposed(album.id) ? "eye.slash" : "opticaldisc") {
+                            library.setExposed(album.id, !library.isExposed(album.id))
+                        }
                         Button("Changer la pochette de l’album", systemImage: "photo.on.rectangle") {
                             albumCoverEditing = true
                         }

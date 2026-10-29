@@ -21,7 +21,6 @@ struct NowPlayingView: View {
     @State private var showEffects = false
     /// File d'attente affichée dans le lecteur (comme Musique), pas dans une feuille à part.
     @State private var queueOpen = false
-    @State private var remixTarget: EditTarget?
     @Namespace private var artSpace
     @Environment(\.verticalSizeClass) private var verticalSizeClass
 
@@ -86,9 +85,6 @@ struct NowPlayingView: View {
         }
         .sheet(isPresented: $showQueue) {
             QueueView()
-        }
-        .fullScreenCover(item: $remixTarget) { target in
-            RemixStudioView(trackID: target.id)
         }
         .sheet(isPresented: $showEffects) {
             EffectsSheet()
@@ -293,9 +289,6 @@ struct NowPlayingView: View {
                     }
                     Button("Effets : " + player.effect.title, systemImage: "dial.medium") {
                         showEffects = true
-                    }
-                    Button("Remixer ce son", systemImage: "slider.horizontal.3") {
-                        remixTarget = EditTarget(id: t.id)
                     }
                     Divider()
                     Button("Changer la pochette", systemImage: "photo.on.rectangle") {

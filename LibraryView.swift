@@ -9,6 +9,7 @@ struct LibraryHomeView: View {
     @Environment(UIState.self) private var ui
 
     private var currentTrack: Track? { player.currentID.flatMap { library.track($0) } }
+    @State private var choosingExhibit = false
 
     var body: some View {
         Group {
@@ -26,34 +27,17 @@ struct LibraryHomeView: View {
             }
         }
         .background { AmbientBackground(track: currentTrack, dim: 0.55) }
+        .sheet(isPresented: $choosingExhibit) {
+            ExhibitPicker()
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+        }
     }
 
     private var content: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 28) {
-                Button { ui.showShelf = true } label: {
-                    HStack(spacing: 14) {
-                        Image(systemName: "opticaldisc.fill")
-                            .font(.title)
-                            .foregroundStyle(.tint)
-                            .symbolEffect(.pulse, options: .repeating, isActive: player.isPlaying)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Collection").font(.title3.weight(.semibold))
-                            Text("Tes albums en CD, à prendre en main")
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        Image(systemName: "chevron.right")
-                            .font(.footnote.weight(.semibold))
-                            .foregroundStyle(.tertiary)
-                    }
-                    .padding(16)
-                    .contentShape(Rectangle())
-                    .glass(22, interactive: true)
-                }
-                .buttonStyle(PressStyle(circle: false))
-
+                CollectionCard(choosing: $choosingExhibit)
                 VStack(spacing: 0) {
                     LibraryLink(title: "Playlists", icon: "music.note.list", count: library.playlists.count) { PlaylistsView() }
                     rowDivider
@@ -90,6 +74,130 @@ struct LibraryHomeView: View {
 
     private var rowDivider: some View {
         Divider().overlay(Color.primary.opacity(0.08)).padding(.leading, 60)
+    }
+}
+
+/// La Collection en haut de la Bibliothèque : tes CD exposés, empilés, et le choix des albums à exposer.
+struct CollectionCard: View {
+    @Binding var choosing: Bool
+    @Environment(Library.self) private var library
+    @Environment(UIState.self) private var ui
+
+    var body: some View {
+        let shown = library.exposedAlbums
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Collection").font(.title2.bold())
+                    Text("\(shown.count) album\(shown.count > 1 ? "s" : "") exposé\(shown.count > 1 ? "s" : "") sur \(library.albums.count)")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Choisir les albums") { choosing = true }
+                    .font(.subheadline.weight(.semibold))
+            }
+            // Les boîtiers exposés, en pile légèrement décalée (comme sur une étagère).
+            Button { ui.showShelf = true } label: {
+                ZStack(alignment: .leading) {
+                    if shown.isEmpty {
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .strokeBorder(.secondary.opacity(0.5), style: StrokeStyle(lineWidth: 1.5, dash: [6, 5]))
+                            .frame(height: 96)
+                            .overlay(Text("Aucun album exposé").font(.subheadline).foregroundStyle(.secondary))
+                    }
+                    ForEach(Array(shown.prefix(7).enumerated()), id: \.element.id) { i, album in
+                        ArtworkView(track: album.cover, animated: false, small: true, cornerRadius: 3)
+                            .frame(width: 96, height: 96)
+                            .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(.white.opacity(0.35), lineWidth: 1))
+                            .shadow(color: .black.opacity(0.35), radius: 6, x: 3, y: 4)
+                            .rotation3DEffect(.degrees(-18), axis: (x: 0, y: 1, z: 0), perspective: 0.6)
+                            .offset(x: CGFloat(i) * 40)
+                            .zIndex(Double(10 - i))
+                    }
+                    if !shown.isEmpty {
+                        HStack {
+                            Spacer()
+                            Label("Ouvrir", systemImage: "chevron.right")
+                                .labelStyle(.titleAndIcon)
+                                .font(.subheadline.weight(.semibold))
+                                .padding(.horizontal, 14)
+                                .frame(height: 34)
+                                .glassCapsule()
+                        }
+                    }
+                }
+                .frame(height: 100)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(PressStyle(circle: false))
+            .disabled(shown.isEmpty)
+        }
+        .padding(16)
+        .glass(22)
+    }
+}
+
+/// Choisir les albums exposés dans la Collection : touche une pochette pour l'exposer ou la ranger.
+struct ExhibitPicker: View {
+    @Environment(Library.self) private var library
+    @Environment(\.dismiss) private var dismiss
+
+    private let columns = [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)]
+
+    var body: some View {
+        let albums = library.albums
+        let count = library.exposedAlbums.count
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    Text("Touche une pochette pour l’exposer dans la Collection ou la ranger. \(count) sur \(albums.count) exposés.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    HStack(spacing: 10) {
+                        Button("Tout exposer") { library.setAllExposed(true) }
+                            .buttonStyle(.bordered)
+                        Button("Tout ranger") { library.setAllExposed(false) }
+                            .buttonStyle(.bordered)
+                    }
+                    LazyVGrid(columns: columns, spacing: 16) {
+                        ForEach(albums) { album in
+                            let on = library.isExposed(album.id)
+                            Button {
+                                library.setExposed(album.id, !on)
+                            } label: {
+                                VStack(alignment: .leading, spacing: 5) {
+                                    ArtworkView(track: album.cover, animated: false, small: true, cornerRadius: 8)
+                                        .aspectRatio(1, contentMode: .fit)
+                                        .opacity(on ? 1 : 0.35)
+                                        .saturation(on ? 1 : 0)
+                                        .overlay(alignment: .topTrailing) {
+                                            Image(systemName: on ? "checkmark.circle.fill" : "circle")
+                                                .font(.title3)
+                                                .symbolRenderingMode(.palette)
+                                                .foregroundStyle(on ? Color.white : Color.white.opacity(0.8),
+                                                                 on ? Color.accentColor : Color.black.opacity(0.3))
+                                                .padding(6)
+                                        }
+                                    Text(album.title).font(.caption.weight(.semibold)).lineLimit(1)
+                                    Text(album.artist).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                                }
+                            }
+                            .buttonStyle(PressStyle(circle: false))
+                            .sensoryFeedback(.selection, trigger: on)
+                        }
+                    }
+                }
+                .padding(18)
+            }
+            .navigationTitle("Albums exposés")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("OK") { dismiss() }.fontWeight(.semibold)
+                }
+            }
+        }
     }
 }
 
@@ -264,7 +372,6 @@ struct TrackMenuItems: View {
         }
         Button("Changer la pochette", systemImage: "photo.on.rectangle") { ui.editing = EditTarget(id: track.id) }
         Button("Modifier les infos", systemImage: "pencil") { ui.editingInfo = EditTarget(id: track.id) }
-        Button("Remixer", systemImage: "slider.horizontal.3") { ui.remixing = EditTarget(id: track.id) }
         Divider()
         Button("Retirer de la bibliothèque", systemImage: "trash", role: .destructive) {
             library.remove([track.id])

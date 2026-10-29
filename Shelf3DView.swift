@@ -31,19 +31,15 @@ struct ShelfView: View {
 
     var body: some View {
         let _ = library.artworkRevision
-        let albums = section == 1 ? library.gameAlbums : library.albums
+        let albums = section == 1 ? library.gameAlbums : library.exposedAlbums
         let focused = albums.indices.contains(focusedIndex) ? albums[focusedIndex] : albums.first
         // La vue « en main » est déjà prête avec l'album au centre : l'ouverture est instantanée.
         let handAlbum = inspected ?? focused
         let isOpen = inspected != nil && visible
-        let objects = section == 2
         ZStack {
             Color(red: 0.03, green: 0.03, blue: 0.04).ignoresSafeArea()
 
-            if objects {
-                ObjectsRoom(active: visible && objects)
-                    .transition(.opacity)
-            } else if albums.isEmpty {
+            if albums.isEmpty {
                 emptyState
             } else {
                 ShelfSceneView(albums: albums, startIndex: startIndex ?? initialIndex(albums), motion: motion, paused: isOpen || !visible,
@@ -60,7 +56,7 @@ struct ShelfView: View {
             VStack(spacing: 0) {
                 topBar
                 Spacer(minLength: 0)
-                if let focused, !objects { caption(focused) }
+                if let focused { caption(focused) }
             }
             .padding(.bottom, 30)
             .opacity(isOpen ? 0 : 1)
@@ -132,7 +128,7 @@ struct ShelfView: View {
             if shown {
                 motion.start()
                 // On se replace sur l'album en cours d'écoute.
-                let i = initialIndex(library.albums)
+                let i = initialIndex(library.exposedAlbums)
                 if section == 0 && i != focusedIndex {
                     ShelfSceneController.shared?.jump(to: i)
                     focusedIndex = i
@@ -156,8 +152,8 @@ struct ShelfView: View {
             ContentUnavailableView("Aucune bande-son", systemImage: "gamecontroller",
                                    description: Text("Dans « Modifier les infos » d’un morceau, choisis un ou plusieurs jeux (FIFA 17, FC 24…). Leurs bandes-son apparaîtront ici en boîtiers PS5."))
         } else {
-            ContentUnavailableView("Aucun album", systemImage: "opticaldisc",
-                                   description: Text("Importe de la musique pour remplir ta collection."))
+            ContentUnavailableView("Aucun album exposé", systemImage: "opticaldisc",
+                                   description: Text("Dans la Bibliothèque, touche « Choisir les albums » pour ranger des albums dans ta Collection."))
         }
     }
 
@@ -188,9 +184,8 @@ struct ShelfView: View {
             VStack(alignment: .leading, spacing: 10) {
                 Text("Collection").font(.largeTitle.bold())
                 SectionSwitch(section: $section,
-                              albums: library.albums.count,
-                              games: library.gameAlbums.count,
-                              objects: CollectionObject.loadOwned().count)
+                              albums: library.exposedAlbums.count,
+                              games: library.gameAlbums.count)
             }
             Spacer()
             Button { onClose() } label: {
@@ -323,7 +318,7 @@ final class ShelfSceneController: NSObject, UIGestureRecognizerDelegate {
 
     /// Prépare la Collection en arrière-plan, peu après le lancement de l'app.
     static func warmUp(library: Library, settings: AppSettings, start: Int) async {
-        let albums = library.albums
+        let albums = library.exposedAlbums
         guard !albums.isEmpty else { return }
         let builder = AlbumNodeBuilder(library: library, settings: settings)
         let c = obtain(builder: builder, start: start)
@@ -465,6 +460,10 @@ final class ShelfSceneController: NSObject, UIGestureRecognizerDelegate {
         let ids = Set(newAlbums.map(\.id))
         for (id, node) in nodes where !ids.contains(id) {
             node.root.isHidden = true
+        }
+        // Blister : affiché ou retiré selon l'album (sans reconstruire le boîtier).
+        for album in newAlbums {
+            nodes[album.id]?.setWrapVisible(settings.shrinkWrap && library.isSealed(album.id))
         }
         // Un format ou une pochette qui change : le modèle est reconstruit.
         for (i, album) in albums.enumerated() {
@@ -968,7 +967,7 @@ final class InspectorSceneController: NSObject, UIGestureRecognizerDelegate {
         let double = UITapGestureRecognizer(target: self, action: #selector(handleDoubleTap))
         double.numberOfTapsRequired = 2
         let single = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
-        single.require(toFail: double)
+        // Pas d'attente du double toucher : le toucher simple réagit instantanément.
         for g in [pan, pinch, double, single] as [UIGestureRecognizer] {
             g.delegate = self
             g.cancelsTouchesInView = false
@@ -1206,10 +1205,6 @@ struct StickerPicker: View {
     }
 
     private var placerBackground: UIImage? {
-        if let object = CollectionObject(rawValue: album.id.replacingOccurrences(of: "object:", with: "")),
-           album.id.hasPrefix("object:") {
-            return object.backImage
-        }
         if let game = library.gameName(album.id) {
             return library.gameCoverImage(game)
                 ?? AlbumNodeBuilder.generatedGameCover(title: game, season: GameCatalog.season(game),
@@ -1219,10 +1214,6 @@ struct StickerPicker: View {
     }
 
     private var placerAspect: CGFloat {
-        if let object = CollectionObject(rawValue: album.id.replacingOccurrences(of: "object:", with: "")),
-           album.id.hasPrefix("object:") {
-            return object.backAspect
-        }
         guard library.gameName(album.id) != nil else { return 1 }
         return Physical.insert.width / Physical.insert.height
     }
@@ -1331,14 +1322,12 @@ private struct SectionSwitch: View {
     @Binding var section: Int
     let albums: Int
     let games: Int
-    var objects: Int = 0
     @Namespace private var pill
 
     var body: some View {
         HStack(spacing: 2) {
             tab(0, "Albums", "\(albums)", "opticaldisc")
             tab(1, "Jeux", "\(games)", "gamecontroller.fill")
-            tab(2, "Objets", "\(objects)", "iphone.gen1")
         }
         .padding(4)
         .glassCapsule()

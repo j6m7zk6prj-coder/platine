@@ -151,6 +151,8 @@ final class AppSettings {
     var extendedAlbumArtwork: Bool { didSet { UserDefaults.standard.set(extendedAlbumArtwork, forKey: "extendedAlbumArtwork") } }
     /// Liquid Glass activé (sinon surfaces pleines) et sa transparence (0 = sombre, 1 = très transparent).
     /// Afficher le lecteur de Platine sur l'écran verrouillé et dans le Centre de contrôle.
+    /// Les CD neufs gardent leur blister (film plastique) jusqu'à ce qu'on sorte le disque.
+    var shrinkWrap: Bool { didSet { UserDefaults.standard.set(shrinkWrap, forKey: "shrinkWrap") } }
     var lockScreenPlayer: Bool { didSet { UserDefaults.standard.set(lockScreenPlayer, forKey: "lockScreenPlayer") } }
     var liquidGlass: Bool { didSet { UserDefaults.standard.set(liquidGlass, forKey: "liquidGlass") } }
     var glassIntensity: Double { didSet { UserDefaults.standard.set(glassIntensity, forKey: "glassIntensity") } }
@@ -180,6 +182,7 @@ final class AppSettings {
         lockScreenAnimation = d.object(forKey: "lockScreenAnimation") as? Bool ?? true
         extendedAlbumArtwork = d.object(forKey: "extendedAlbumArtwork") as? Bool ?? true
         lockScreenPlayer = d.object(forKey: "lockScreenPlayer") as? Bool ?? true
+        shrinkWrap = d.object(forKey: "shrinkWrap") as? Bool ?? true
         liquidGlass = d.object(forKey: "liquidGlass") as? Bool ?? true
         glassIntensity = d.object(forKey: "glassIntensity") as? Double ?? 0.6
     }
@@ -192,8 +195,6 @@ final class UIState {
     var showPlayer = false
     var editing: EditTarget?
     var editingInfo: EditTarget?
-    /// Morceau ouvert dans le Studio remix.
-    var remixing: EditTarget?
     var addToPlaylist: AddToPlaylistTarget?
     var importing = false
     var showShelf = false

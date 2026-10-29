@@ -132,7 +132,7 @@ struct SettingsView: View {
             }
 
             Section {
-                LabeledContent("Version", value: "7.1")
+                LabeledContent("Version", value: "7.2")
             } footer: {
                 Text("Platine lit ta propre musique. Seule la recherche de paroles contacte internet (LRCLIB), et uniquement quand tu ouvres des paroles absentes ou lances la recherche.")
             }
@@ -284,6 +284,7 @@ struct AppearanceSettingsView: View {
                 .pickerStyle(.segmented)
                 Toggle("Pochettes animées", isOn: $settings.animatedArtwork)
                 Toggle("Pochette étendue dans les albums", isOn: $settings.extendedAlbumArtwork)
+                Toggle("CD neufs sous blister", isOn: $settings.shrinkWrap)
             }
 
             Section {
