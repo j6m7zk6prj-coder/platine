@@ -137,9 +137,7 @@ struct SettingsView: View {
                 Text("Platine lit ta propre musique. Seule la recherche de paroles contacte internet (LRCLIB), et uniquement quand tu ouvres des paroles absentes ou lances la recherche.")
             }
         }
-        .scrollContentBackground(.hidden)
         .navigationTitle("Réglages")
-        .background { AmbientBackground(track: player.currentID.flatMap { library.track($0) }, dim: 0.65) }
         .task(id: library.tracks.count) {
             storage = library.storageBytes()
             lockBytes = LockScreenArtwork.cacheBytes()
@@ -184,29 +182,16 @@ struct AppearanceSettingsView: View {
         @Bindable var settings = settings
         Form {
             Section {
-                Picker("Mode", selection: $settings.appearance) {
-                    ForEach(AppearanceMode.allCases) { Text($0.label).tag($0) }
+                Picker("Apparence", selection: $settings.appearance) {
+                    Text("Auto").tag(AppearanceMode.auto)
+                    Text("Clair").tag(AppearanceMode.light)
+                    Text("Sombre").tag(AppearanceMode.dark)
                 }
                 .pickerStyle(.segmented)
             } header: {
                 Text("Clair ou sombre")
             } footer: {
-                Text("« Thème » garde les couleurs du thème choisi. « Clair » et « Sombre » forcent le mode, « Auto » suit le réglage de l’iPhone.")
-            }
-
-            Section {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 96), spacing: 12)], spacing: 14) {
-                    ForEach(AppTheme.allCases) { theme in
-                        ThemeTile(theme: theme, selected: settings.theme == theme) {
-                            withAnimation(.smooth(duration: 0.35)) { settings.theme = theme }
-                        }
-                    }
-                }
-                .padding(.vertical, 6)
-            } header: {
-                Text("Thème")
-            } footer: {
-                Text(settings.theme.detail + ". L’écran « En lecture » et la Collection restent toujours sombres, comme dans Musique.")
+                Text("« Auto » suit le réglage de l’iPhone. L’écran « En lecture » et la Collection restent sombres, comme dans Musique.")
             }
 
             Section("Couleur d’accent") {
@@ -233,48 +218,9 @@ struct AppearanceSettingsView: View {
                 .padding(.vertical, 4)
             }
 
-            Section("Fond") {
-                Toggle("Couleurs de la pochette en lecture", isOn: $settings.dynamicBackground)
+            Section("En lecture") {
+                Toggle("Couleurs de la pochette", isOn: $settings.dynamicBackground)
                 Toggle("Fond en mouvement", isOn: $settings.backgroundMotion)
-            }
-
-            Section {
-                Toggle("Liquid Glass", isOn: $settings.liquidGlass)
-                if settings.liquidGlass {
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Text("Transparence du verre")
-                            Spacer()
-                            Text("\(Int(settings.glassIntensity * 100)) %")
-                                .monospacedDigit()
-                                .foregroundStyle(.secondary)
-                        }
-                        HStack(spacing: 10) {
-                            Image(systemName: "circle.fill").font(.caption).foregroundStyle(.secondary)
-                            Slider(value: $settings.glassIntensity, in: 0...1)
-                            Image(systemName: "circle.dotted").font(.caption).foregroundStyle(.secondary)
-                        }
-                        // Aperçu en direct.
-                        Text("Aperçu")
-                            .font(.subheadline.weight(.semibold))
-                            .padding(.horizontal, 22)
-                            .padding(.vertical, 10)
-                            .glassCapsule()
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 14)
-                            .background(
-                                LinearGradient(colors: [.pink, .orange, .purple], startPoint: .leading, endPoint: .trailing)
-                                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                            )
-                    }
-                    .padding(.vertical, 4)
-                }
-            } header: {
-                Text("Verre")
-            } footer: {
-                Text(settings.liquidGlass
-                     ? "À gauche, le verre est plus sombre et plus lisible ; à droite, plus transparent."
-                     : "Les boutons et le mini-lecteur utilisent des surfaces pleines, sans effet de verre.")
             }
 
             Section("Pochettes") {
@@ -283,7 +229,6 @@ struct AppearanceSettingsView: View {
                 }
                 .pickerStyle(.segmented)
                 Toggle("Pochettes animées", isOn: $settings.animatedArtwork)
-                Toggle("Pochette étendue dans les albums", isOn: $settings.extendedAlbumArtwork)
                 Toggle("CD neufs sous blister", isOn: $settings.shrinkWrap)
                 Toggle("Étiquettes prix du disquaire", isOn: $settings.priceStickers)
             }

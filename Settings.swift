@@ -24,7 +24,7 @@ enum AccentChoice: String, CaseIterable, Identifiable {
         case .pink: return Color(red: 1.0, green: 0.36, blue: 0.48)
         case .orange: return Color(red: 1.0, green: 0.62, blue: 0.28)
         case .green: return Color(red: 0.36, green: 0.86, blue: 0.52)
-        case .blue: return Color(red: 0.38, green: 0.70, blue: 1.0)
+        case .blue: return .blue
         case .purple: return Color(red: 0.72, green: 0.56, blue: 1.0)
         }
     }
@@ -188,6 +188,12 @@ final class AppSettings {
         liquidGlass = d.object(forKey: "liquidGlass") as? Bool ?? true
         glassIntensity = d.object(forKey: "glassIntensity") as? Double ?? 0.6
         priceStickers = d.object(forKey: "priceStickers") as? Bool ?? true
+        // Passage au style classique : accent bleu et mode clair/sombre de l'iPhone (une seule fois).
+        if !d.bool(forKey: "classicDesignV1") {
+            accent = .blue
+            appearance = .auto
+            d.set(true, forKey: "classicDesignV1")
+        }
     }
 }
 

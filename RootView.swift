@@ -107,8 +107,6 @@ struct MiniPlayerInset: ViewModifier {
     func body(content: Content) -> some View {
         content.safeAreaInset(edge: .bottom) {
             MiniPlayer { ui.showPlayer = true }
-                .padding(.horizontal, 12)
-                .padding(.bottom, 6)
                 .animation(.spring(response: 0.5, dampingFraction: 0.82), value: player.currentID)
         }
     }
@@ -170,9 +168,7 @@ struct PlayerZoomSource: ViewModifier {
 
     func body(content: Content) -> some View {
         if #available(iOS 18.0, *), let namespace {
-            content.matchedTransitionSource(id: "miniPlayer", in: namespace) { source in
-                source.clipShape(RoundedRectangle(cornerRadius: 32, style: .continuous))
-            }
+            content.matchedTransitionSource(id: "miniPlayer", in: namespace)
         } else {
             content
         }

@@ -111,40 +111,62 @@ struct AlbumDetailView: View {
     @ViewBuilder private var content: some View {
         if let album = library.album(currentID) {
             // Comme Musique : seule une pochette animée (vidéo ou GIF) s'étend en haut de la page.
-            let extended = settings.extendedAlbumArtwork && settings.animatedArtwork && library.motion(album.cover) != nil
+            // Style classique (iTunes) : pas de grande pochette étendue.
+            let extended = false
             List {
-                VStack(spacing: 16) {
-                    if extended {
-                        // Espace laissé à la grande pochette, qui est dessinée derrière la liste.
-                        Color.clear
-                            .frame(height: UIScreen.main.bounds.width * 0.6)
-                            .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minY } action: { y in
-                                if headerBase == nil { headerBase = y }
-                                headerY = y
+                // En-tête façon iTunes Store : pochette à gauche, infos à droite.
+                VStack(alignment: .leading, spacing: 16) {
+                    HStack(alignment: .top, spacing: 14) {
+                        ArtworkView(track: album.cover, animated: false, cornerRadius: 3)
+                            .frame(width: 132, height: 132)
+                            .overlay(RoundedRectangle(cornerRadius: 3).strokeBorder(Color(.separator), lineWidth: 0.5))
+                        VStack(alignment: .leading, spacing: 3) {
+                            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                                Text(album.title)
+                                    .font(.title3)
+                                    .lineLimit(3)
+                                if album.tracks.contains(where: { $0.explicit }) { ExplicitBadge(size: 13) }
                             }
-                    } else {
-                        ArtworkView(track: album.cover, animated: false, cornerRadius: 14)
-                            .frame(width: 250, height: 250)
-                            .shadow(color: .black.opacity(0.45), radius: 24, y: 14)
-                    }
-                    VStack(spacing: 4) {
-                        Text(album.title)
-                            .font(extended ? .title.bold() : .title2.bold())
-                            .multilineTextAlignment(.center)
-                            .shadow(color: .black.opacity(extended ? 0.35 : 0), radius: 10, y: 2)
-                        Text(album.artist)
-                            .font(.title3)
-                            .foregroundStyle(.tint)
-                        Text([album.year > 0 ? "\(album.year)" : nil, songCount(album.tracks.count)].compactMap { $0 }.joined(separator: " · "))
+                            if let artist = library.artists.first(where: { $0.name == album.artist }) {
+                                NavigationLink { ArtistDetailView(artistID: artist.id) } label: {
+                                    HStack(spacing: 2) {
+                                        Text(album.artist).lineLimit(1)
+                                        Image(systemName: "chevron.right").font(.caption.weight(.semibold))
+                                    }
+                                    .font(.body)
+                                    .foregroundStyle(.secondary)
+                                }
+                                .buttonStyle(.plain)
+                            } else {
+                                Text(album.artist).foregroundStyle(.secondary)
+                            }
+                            Spacer(minLength: 10)
+                            Group {
+                                Text(songCount(album.tracks.count))
+                                if album.year > 0 { Text("Sortie : \(String(album.year))") }
+                                Text("Durée : \(formatDuration(album.duration))")
+                            }
                             .font(.footnote)
                             .foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 132, alignment: .topLeading)
                     }
                     PlayShuffleButtons(ids: album.tracks.map(\.id))
                 }
-                .frame(maxWidth: .infinity)
                 .padding(.vertical, 8)
                 .listRowBackground(Color.clear)
                 .listRowSeparator(.hidden)
+
+                // Ligne d'en-têtes de colonnes, comme dans l'iTunes Store.
+                HStack(spacing: 12) {
+                    Text("N°").frame(width: 26)
+                    Text("NOM")
+                    Spacer()
+                    Text("DURÉE")
+                }
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+                .listRowBackground(Color.clear)
 
                 TrackRows(tracks: album.tracks, numbered: true, showArtwork: false)
 

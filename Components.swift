@@ -4,77 +4,36 @@ import ImageIO
 import MediaPlayer
 import UIKit
 
-// MARK: - Verre liquide
-// iOS 26 : le vrai Liquid Glass d'Apple. Avant : un verre dépoli avec un liseré lumineux.
+// MARK: - Surfaces
+// Style classique (comme l'iTunes Store et Musique d'avant iOS 26) : surfaces pleines, fin liseré, sans verre.
+// Les noms .glass… sont gardés pour ne pas toucher au reste de l'app.
 
 extension View {
-    func glass(_ radius: CGFloat = 24, interactive: Bool = false) -> some View {
-        modifier(GlassStyle(shape: RoundedRectangle(cornerRadius: radius, style: .continuous), interactive: interactive))
+    func glass(_ radius: CGFloat = 12, interactive: Bool = false) -> some View {
+        modifier(ClassicSurface(shape: RoundedRectangle(cornerRadius: min(radius, 12), style: .continuous)))
     }
 
     func glassCapsule(interactive: Bool = false) -> some View {
-        modifier(GlassStyle(shape: Capsule(), interactive: interactive))
+        modifier(ClassicSurface(shape: Capsule()))
     }
 
     func glassCircle() -> some View {
-        modifier(GlassStyle(shape: Circle(), interactive: true))
+        modifier(ClassicSurface(shape: Circle()))
     }
 
     func frostedGlass<S: InsettableShape>(_ shape: S) -> some View {
-        self
-            .background(.ultraThinMaterial, in: shape)
-            .overlay {
-                shape.strokeBorder(
-                    LinearGradient(colors: [.white.opacity(0.45), .white.opacity(0.05), .white.opacity(0.18)],
-                                   startPoint: .topLeading, endPoint: .bottomTrailing),
-                    lineWidth: 1)
-            }
-            .shadow(color: .black.opacity(0.25), radius: 18, y: 10)
+        modifier(ClassicSurface(shape: shape))
     }
 }
 
-/// Le verre de l'app, réglable dans Réglages → Apparence :
-/// Liquid Glass plus ou moins transparent, ou désactivé (surfaces pleines, plus sobres).
-struct GlassStyle<S: InsettableShape>: ViewModifier {
+/// Surface pleine grise (s'adapte au mode clair / sombre), bordée d'un trait fin comme les cellules iOS.
+struct ClassicSurface<S: InsettableShape>: ViewModifier {
     let shape: S
-    var interactive = false
-    @Environment(AppSettings.self) private var settings: AppSettings?
 
     func body(content: Content) -> some View {
-        let enabled = settings?.liquidGlass ?? true
-        // 0 = verre presque opaque et sombre, 1 = verre très transparent.
-        let intensity = settings?.glassIntensity ?? 0.6
-        if !enabled {
-            content
-                .background(shape.fill(Color(white: 0.13)))
-                .overlay { shape.strokeBorder(.white.opacity(0.1), lineWidth: 0.75) }
-                .shadow(color: .black.opacity(0.25), radius: 12, y: 6)
-        } else {
-            liquid(content, intensity: intensity)
-        }
-    }
-
-    @ViewBuilder private func liquid(_ content: Content, intensity: Double) -> some View {
-        let tint = Color.black.opacity((1 - intensity) * 0.55)
-        #if compiler(>=6.2)
-        if #available(iOS 26.0, *) {
-            let base: Glass = intensity > 0.85 ? .clear : .regular
-            let glass = base.tint(tint)
-            if interactive {
-                content.glassEffect(glass.interactive(), in: shape)
-            } else {
-                content.glassEffect(glass, in: shape)
-            }
-        } else {
-            content
-                .background(shape.fill(tint))
-                .frostedGlass(shape)
-        }
-        #else
         content
-            .background(shape.fill(tint))
-            .frostedGlass(shape)
-        #endif
+            .background(shape.fill(Color(.secondarySystemBackground)))
+            .overlay { shape.strokeBorder(Color(.separator), lineWidth: 0.5) }
     }
 }
 
@@ -303,6 +262,15 @@ struct AmbientBackground: View {
     }
 
     var body: some View {
+        if forceDark {
+            playerBackground
+        } else {
+            // Style classique : fond uni du système (noir en mode sombre, blanc en mode clair).
+            Color(.systemBackground).ignoresSafeArea()
+        }
+    }
+
+    private var playerBackground: some View {
         Group {
             switch theme {
             case .dynamic: dynamicBackground(light: false)

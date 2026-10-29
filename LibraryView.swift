@@ -148,7 +148,7 @@ struct CollectionCard: View {
             .disabled(shown.isEmpty)
         }
         .padding(16)
-        .glass(22)
+        .glass(12)
     }
 }
 
@@ -252,13 +252,13 @@ struct LibraryLink<Destination: View>: View {
                     .font(.system(size: 21, weight: .regular))
                     .foregroundStyle(.tint)
                     .frame(width: 30)
-                Text(title).font(.title3)
+                Text(title).font(.body)
                 Spacer()
                 Image(systemName: "chevron.right")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.tertiary)
             }
-            .padding(.vertical, 13)
+            .padding(.vertical, 11)
             .contentShape(Rectangle())
         }
         .buttonStyle(RowPressStyle())
@@ -282,12 +282,11 @@ struct AlbumCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            ArtworkView(track: album.cover, animated: false, cornerRadius: 10)
+            ArtworkView(track: album.cover, animated: false, cornerRadius: 4)
                 .aspectRatio(1, contentMode: .fit)
-                .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(.primary.opacity(0.08), lineWidth: 0.5))
-                .shadow(color: .black.opacity(0.22), radius: 12, y: 7)
+                .overlay(RoundedRectangle(cornerRadius: 4, style: .continuous).strokeBorder(Color(.separator), lineWidth: 0.5))
                 .padding(.bottom, 2)
-            Text(album.title).font(.subheadline.weight(.medium)).lineLimit(1)
+            Text(album.title).font(.subheadline).lineLimit(1)
             Text(album.artist).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
         }
         .contentShape(Rectangle())
@@ -305,14 +304,16 @@ struct PlayShuffleButtons: View {
             Button { player.play(ids: ids, shuffled: false) } label: {
                 Label("Lire", systemImage: "play.fill")
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 13)
-                    .glass(14, interactive: true)
+                    .padding(.vertical, 10)
+                    .overlay(Capsule().strokeBorder(.tint, lineWidth: 1.2))
+                    .contentShape(Capsule())
             }
             Button { player.play(ids: ids, shuffled: true) } label: {
                 Label("Aléatoire", systemImage: "shuffle")
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 13)
-                    .glass(14, interactive: true)
+                    .padding(.vertical, 10)
+                    .overlay(Capsule().strokeBorder(.tint, lineWidth: 1.2))
+                    .contentShape(Capsule())
             }
         }
         .font(.body.weight(.semibold))
@@ -433,8 +434,8 @@ struct TrackRow: View {
                 .frame(width: 26)
             }
             if showArtwork {
-                ArtworkView(track: track, animated: false, small: true, cornerRadius: 7)
-                    .frame(width: 50, height: 50)
+                ArtworkView(track: track, animated: false, small: true, cornerRadius: 2)
+                    .frame(width: 52, height: 52)
             }
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 5) {
@@ -496,13 +497,14 @@ struct MiniPlayer: View {
     var body: some View {
         if let id = player.currentID, let t = library.track(id) {
             HStack(spacing: 12) {
-                ArtworkView(track: t, animated: false, small: true, cornerRadius: 9)
+                ArtworkView(track: t, animated: false, small: true, cornerRadius: 5)
                     .frame(width: 44, height: 44)
+                    .shadow(color: .black.opacity(0.2), radius: 3, y: 1)
                     .id(t.id)
                     .transition(.opacity)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(t.title).font(.body.weight(.semibold)).lineLimit(1)
-                    Text(t.displayArtist).font(.subheadline).foregroundStyle(.primary.opacity(0.75)).lineLimit(1)
+                    Text(t.title).font(.body).lineLimit(1)
+                    Text(t.displayArtist).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
                 }
                 .id(t.id)
                 .transition(.opacity)
@@ -510,27 +512,31 @@ struct MiniPlayer: View {
 
                 Button { player.togglePlay() } label: {
                     Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                        .font(.system(size: 24))
+                        .font(.system(size: 22))
+                        .foregroundStyle(.tint)
                         .contentTransition(.symbolEffect(.replace))
                         .frame(width: 44, height: 44)
                 }
                 .accessibilityLabel(player.isPlaying ? "Pause" : "Lecture")
                 Button { player.next() } label: {
                     Image(systemName: "forward.fill")
-                        .font(.system(size: 22))
+                        .font(.system(size: 20))
+                        .foregroundStyle(.tint)
                         .frame(width: 48, height: 44)
                 }
                 .accessibilityLabel("Suivant")
             }
             .buttonStyle(PressStyle())
             .foregroundStyle(.primary)
-            .padding(.leading, 10)
-            .padding(.trailing, 12)
-            .padding(.vertical, 9)
-            .contentShape(Capsule())
+            .padding(.leading, 16)
+            .padding(.trailing, 8)
+            .padding(.vertical, 8)
+            .contentShape(Rectangle())
             .onTapGesture(perform: onOpen)
-            // Comme Musique : une pilule en Liquid Glass (verre dépoli sur les iOS plus anciens).
-            .glassCapsule(interactive: true)
+            // Style classique de Musique : une barre pleine largeur posée sur la barre d'onglets.
+            .background(.bar)
+            .overlay(alignment: .top) { Divider() }
+            .overlay(alignment: .bottom) { Divider() }
             .modifier(PlayerZoomSource())
             .contextMenu {
                 Button(player.isPlaying ? "Pause" : "Lecture", systemImage: player.isPlaying ? "pause.fill" : "play.fill") {

@@ -25,7 +25,7 @@ struct PlatineApp: App {
                 .environment(settings)
                 .environment(ui)
                 // Mode Auto : on suit le réglage de l'iPhone ; sinon le thème décide.
-                .preferredColorScheme(settings.appearance == .auto ? nil : (settings.activeTheme.isLight ? .light : .dark))
+                .preferredColorScheme(settings.appearance == .light ? .light : (settings.appearance == .dark ? .dark : nil))
                 .tint(settings.tint)
         }
     }

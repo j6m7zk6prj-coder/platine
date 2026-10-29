@@ -25,6 +25,8 @@ targets:
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
         NSPhotoLibraryAddUsageDescription: "Platine enregistre les pochettes que tu choisis dans tes Photos."
         ITSAppUsesNonExemptEncryption: false
+        # Interface classique (sans Liquid Glass) sur iOS 26 : barres et onglets comme avant
+        UIDesignRequiresCompatibility: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.platine.player
