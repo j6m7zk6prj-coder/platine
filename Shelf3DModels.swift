@@ -824,7 +824,7 @@ struct AlbumNodeBuilder {
     static func discDataSide(matrix: String) -> UIImage {
         let size: CGFloat = 1800
         let R = size / 2
-        let k = size / 1024
+        let px = size / 1024
         let format = UIGraphicsImageRendererFormat()
         format.opaque = false
         format.scale = 1
@@ -865,7 +865,7 @@ struct AlbumNodeBuilder {
             ring(0.135, 0.125, UIColor(white: 1, alpha: 0.35))
 
             // Numéro de série gravé en tout petit dans l'anneau miroir.
-            let font = UIFont.monospacedSystemFont(ofSize: 15 * k, weight: .medium)
+            let font = UIFont.monospacedSystemFont(ofSize: 15 * px, weight: .medium)
             let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: UIColor(white: 0.45, alpha: 0.9)]
             let radius = R * 0.325
             var angle: CGFloat = -.pi / 2
@@ -877,7 +877,7 @@ struct AlbumNodeBuilder {
                 c.saveGState()
                 c.translateBy(x: R, y: R)
                 c.rotate(by: angle + .pi / 2)
-                str.draw(at: CGPoint(x: -w / 2, y: -radius - 8 * k), withAttributes: attrs)
+                str.draw(at: CGPoint(x: -w / 2, y: -radius - 8 * px), withAttributes: attrs)
                 c.restoreGState()
                 angle += step / 2
                 if angle > 1.5 * .pi - 0.05 { break }

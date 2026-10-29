@@ -878,8 +878,8 @@ enum VinylTextures {
                 let maxW = lr * 1.5
                 let k = min(1, maxW / max(b.width, 1))
                 c.saveGState()
-                let px = x ?? (R - b.width * k / 2)
-                c.translateBy(x: px, y: y - b.height * k / 2)
+                let left = x ?? (R - b.width * k / 2)
+                c.translateBy(x: left, y: y - b.height * k / 2)
                 c.scaleBy(x: k, y: k)
                 a.draw(at: .zero)
                 c.restoreGState()
