@@ -3,6 +3,7 @@ import AVKit
 import AVFoundation
 import PhotosUI
 import UniformTypeIdentifiers
+import ImageIO
 
 // MARK: - Clips vidéo et edits (format TikTok)
 
@@ -18,9 +19,11 @@ struct Clip: Identifiable, Codable, Hashable {
     var height: Double = 9
     var addedAt: Date = Date()
     var explicit: Bool = false
+    /// Choix manuel : rangé dans les edits (true) ou dans les clips (false). Vide = selon le format.
+    var forcedVertical: Bool?
 
     /// Plus haute que large : c'est un edit (format TikTok).
-    var isVertical: Bool { height > width * 1.05 }
+    var isVertical: Bool { forcedVertical ?? (height > width * 1.05) }
     var displayArtist: String { artist.isEmpty ? "Artiste inconnu" : artist }
 }
 
@@ -44,6 +47,18 @@ final class ClipStore {
         if let data = try? Data(contentsOf: Self.indexURL),
            let list = try? JSONDecoder().decode([Clip].self, from: data) {
             clips = list.filter { FileManager.default.fileExists(atPath: Self.dir.appendingPathComponent($0.file).path) }
+            // Le format est relu sur la vignette (déjà tournée dans le bon sens) : un edit vertical
+            // mal reconnu par une version précédente retourne dans les edits.
+            var changed = false
+            for i in clips.indices {
+                guard let t = clips[i].thumb, let size = Self.imageSize(Self.dir.appendingPathComponent(t)) else { continue }
+                if abs(clips[i].width - size.width) > 0.5 || abs(clips[i].height - size.height) > 0.5 {
+                    clips[i].width = size.width
+                    clips[i].height = size.height
+                    changed = true
+                }
+            }
+            if changed { save() }
         }
     }
 
@@ -53,6 +68,22 @@ final class ClipStore {
     var edits: [Clip] { clips.filter { $0.isVertical }.sorted { $0.addedAt > $1.addedAt } }
 
     func clip(_ id: UUID) -> Clip? { clips.first { $0.id == id } }
+
+    /// Taille d'une image sans la charger en entier.
+    static func imageSize(_ url: URL) -> CGSize? {
+        guard let src = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let props = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any],
+              let w = props[kCGImagePropertyPixelWidth] as? Double,
+              let h = props[kCGImagePropertyPixelHeight] as? Double, w > 0, h > 0 else { return nil }
+        return CGSize(width: w, height: h)
+    }
+
+    /// Ranger à la main dans les edits ou dans les clips.
+    func setVertical(_ id: UUID, _ vertical: Bool) {
+        guard let i = clips.firstIndex(where: { $0.id == id }) else { return }
+        clips[i].forcedVertical = vertical
+        save()
+    }
     func url(_ c: Clip) -> URL { Self.dir.appendingPathComponent(c.file) }
 
     func thumbnail(_ c: Clip) -> UIImage? {
@@ -91,6 +122,8 @@ final class ClipStore {
         let at = CMTime(seconds: min(1.0, duration / 3), preferredTimescale: 600)
         if let cg = try? await gen.image(at: at).image,
            let data = UIImage(cgImage: cg).jpegData(compressionQuality: 0.82) {
+            // L'image est déjà dans le bon sens : c'est la mesure la plus sûre du format.
+            size = CGSize(width: cg.width, height: cg.height)
             let tn = id.uuidString + "-thumb.jpg"
             if (try? data.write(to: Self.dir.appendingPathComponent(tn), options: .atomic)) != nil { thumbName = tn }
         }
@@ -242,6 +275,12 @@ struct EditsFeedView: View {
     @Environment(Player.self) private var music
     @State private var position: UUID?
     @State private var paused = false
+
+    init(clips: [Clip], startID: UUID) {
+        self.clips = clips
+        self.startID = startID
+        _position = State(initialValue: startID)
+    }
     @State private var editing: Clip?
 
     private var store: ClipStore { .shared }
@@ -457,6 +496,7 @@ struct ClipInfoEditor: View {
     @State private var title = ""
     @State private var artist = ""
     @State private var explicit = false
+    @State private var vertical = false
 
     var body: some View {
         NavigationStack {
@@ -474,8 +514,17 @@ struct ClipInfoEditor: View {
                     TextField("Titre", text: $title)
                     TextField("Artiste", text: $artist)
                     Toggle("Contenu explicite (E)", isOn: $explicit)
+                }
+                Section {
+                    Picker("Ranger dans", selection: $vertical) {
+                        Text("Clips vidéo").tag(false)
+                        Text("Edits").tag(true)
+                    }
+                    .pickerStyle(.segmented)
+                } header: {
+                    Text("Rubrique")
                 } footer: {
-                    Text(clip.isVertical ? "Format vertical : rangé dans les edits." : "Format horizontal : rangé dans les clips vidéo.")
+                    Text("Les edits se regardent en plein écran en faisant défiler vers le haut, comme sur TikTok.")
                 }
             }
             .navigationTitle("Infos du clip")
@@ -485,6 +534,7 @@ struct ClipInfoEditor: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("OK") {
                         ClipStore.shared.update(clip.id, title: title, artist: artist, explicit: explicit)
+                        if vertical != clip.isVertical { ClipStore.shared.setVertical(clip.id, vertical) }
                         dismiss()
                     }
                     .fontWeight(.semibold)
@@ -494,6 +544,7 @@ struct ClipInfoEditor: View {
                 title = clip.title
                 artist = clip.artist
                 explicit = clip.explicit
+                vertical = clip.isVertical
             }
         }
     }
@@ -591,6 +642,10 @@ struct ClipsView: View {
 
     @ViewBuilder private func menu(_ clip: Clip) -> some View {
         Button("Modifier les infos", systemImage: "pencil") { editing = clip }
+        Button(clip.isVertical ? "Ranger dans les clips" : "Ranger dans les edits",
+               systemImage: clip.isVertical ? "rectangle" : "rectangle.portrait") {
+            store.setVertical(clip.id, !clip.isVertical)
+        }
         ShareLink(item: store.url(clip)) { Label("Partager", systemImage: "square.and.arrow.up") }
         Button("Supprimer", systemImage: "trash", role: .destructive) { store.remove(clip.id) }
     }
@@ -616,6 +671,7 @@ struct HomeClipSections: View {
                         ForEach(videos.prefix(15)) { clip in
                             Button { ClipPlayback.play(clip, music: player) } label: { ClipCard(clip: clip) }
                                 .buttonStyle(PressStyle(circle: false))
+                                .contextMenu { moveMenu(clip) }
                         }
                         importCard(width: videos.isEmpty ? 240 : 150, height: 135,
                                    text: videos.isEmpty ? "Importer un clip" : "Importer")
@@ -634,6 +690,7 @@ struct HomeClipSections: View {
                         ForEach(edits.prefix(20)) { clip in
                             Button { feedStart = clip } label: { EditCard(clip: clip) }
                                 .buttonStyle(PressStyle(circle: false))
+                                .contextMenu { moveMenu(clip) }
                         }
                         importCard(width: 120, height: 213, text: edits.isEmpty ? "Importer un edit" : "Importer")
                     }
@@ -647,6 +704,14 @@ struct HomeClipSections: View {
         .fullScreenCover(item: $feedStart) { clip in
             EditsFeedView(clips: edits, startID: clip.id)
         }
+    }
+
+    @ViewBuilder private func moveMenu(_ clip: Clip) -> some View {
+        Button(clip.isVertical ? "Ranger dans les clips" : "Ranger dans les edits",
+               systemImage: clip.isVertical ? "rectangle" : "rectangle.portrait") {
+            store.setVertical(clip.id, !clip.isVertical)
+        }
+        Button("Supprimer", systemImage: "trash", role: .destructive) { store.remove(clip.id) }
     }
 
     private func importCard(width: CGFloat, height: CGFloat, text: String) -> some View {
