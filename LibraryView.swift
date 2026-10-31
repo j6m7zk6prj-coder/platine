@@ -51,6 +51,8 @@ struct LibraryHomeView: View {
                     rowDivider
                     LibraryLink(title: "Pochettes", icon: "photo.on.rectangle.angled") { ArtworkGalleryView() }
                     rowDivider
+                    LibraryLink(title: "Clips vidéo", icon: "film") { ClipsView() }
+                    rowDivider
                 }
 
                 CollectionCard(choosing: $choosingExhibit)

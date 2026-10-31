@@ -40,7 +40,7 @@ struct HomeView: View {
         let top = Array(library.tracks.filter { $0.playCount > 0 }.sorted { $0.playCount > $1.playCount }.prefix(5))
         return ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                Text(Date.now.formatted(.dateTime.weekday(.wide).day().month(.wide)).uppercased())
+                Text(Date.now.formatted(Date.FormatStyle(locale: Locale(identifier: "fr_FR")).weekday(.wide).day().month(.wide)).uppercased())
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 20)
@@ -54,12 +54,17 @@ struct HomeView: View {
                     ClassicSeparator()
                 }
 
-                HomeSection(title: "Tes mix") {
+                HomeSection(title: "Tes mix et playlists", destination: { PlaylistsView() }) {
                     ScrollView(.horizontal) {
                         LazyHStack(alignment: .top, spacing: 14) {
                             ForEach(mixes) { mix in
                                 MixCard(mix: mix)
                             }
+                            // Tes playlists, juste à côté des mix (épinglées en premier).
+                            ForEach(library.sortedPlaylists) { p in
+                                PlaylistCard(playlist: p)
+                            }
+                            NewPlaylistCard()
                         }
                         .scrollTargetLayout()
                         .padding(.horizontal, 20)
@@ -79,6 +84,9 @@ struct HomeView: View {
                         }
                     }
                 }
+
+                // Clips vidéo et edits format TikTok.
+                HomeClipSections()
 
                 if recents.count > 1 {
                     ClassicSeparator()
@@ -405,5 +413,62 @@ private struct MixCard: View {
         }
         .frame(width: 75, height: 75)
         .clipped()
+    }
+}
+
+/// Carte d'une playlist dans la rangée des mix : mosaïque de pochettes, nom et nombre de morceaux.
+private struct PlaylistCard: View {
+    let playlist: Playlist
+
+    var body: some View {
+        NavigationLink { PlaylistDetailView(playlistID: playlist.id) } label: {
+            VStack(alignment: .leading, spacing: 6) {
+                PlaylistMosaic(playlist: playlist, cornerRadius: 3)
+                    .frame(width: 150, height: 150)
+                    .overlay(RoundedRectangle(cornerRadius: 3, style: .continuous).strokeBorder(Color(.separator), lineWidth: 0.5))
+                    .overlay(alignment: .bottomTrailing) {
+                        Image(systemName: playlist.pinned ? "pin.fill" : "music.note.list")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(.white)
+                            .frame(width: 26, height: 26)
+                            .background(Circle().fill(.tint))
+                            .overlay(Circle().strokeBorder(.white.opacity(0.8), lineWidth: 1))
+                            .padding(6)
+                    }
+                Text(playlist.name).font(.subheadline).foregroundStyle(.primary).lineLimit(1)
+                Text("Playlist · " + songCount(playlist.trackIDs.count)).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+            }
+            .frame(width: 150, alignment: .leading)
+        }
+        .buttonStyle(PressStyle(circle: false))
+    }
+}
+
+/// « Nouvelle playlist » au bout de la rangée.
+private struct NewPlaylistCard: View {
+    @Environment(Library.self) private var library
+    @State private var asking = false
+    @State private var name = ""
+
+    var body: some View {
+        Button { asking = true } label: {
+            VStack(alignment: .leading, spacing: 6) {
+                VStack(spacing: 8) {
+                    Image(systemName: "plus").font(.title2.weight(.semibold))
+                    Text("Nouvelle playlist").font(.footnote.weight(.semibold))
+                }
+                .foregroundStyle(.tint)
+                .frame(width: 150, height: 150)
+                .background(RoundedRectangle(cornerRadius: 3, style: .continuous)
+                    .strokeBorder(.tint, style: StrokeStyle(lineWidth: 1.2, dash: [6, 4])))
+                Text(" ").font(.subheadline)
+            }
+        }
+        .buttonStyle(PressStyle(circle: false))
+        .alert("Nouvelle playlist", isPresented: $asking) {
+            TextField("Nom de la playlist", text: $name)
+            Button("Créer") { library.createPlaylist(name: name); name = "" }
+            Button("Annuler", role: .cancel) { name = "" }
+        }
     }
 }
