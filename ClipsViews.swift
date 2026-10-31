@@ -96,7 +96,7 @@ final class ClipStore {
 
     /// Copie la vidéo dans l'app, lit sa taille et sa durée, et prépare une vignette.
     @discardableResult
-    func importVideo(at source: URL, title: String? = nil) async -> UUID? {
+    func importVideo(at source: URL, title: String? = nil, vertical: Bool? = nil) async -> UUID? {
         let ext = source.pathExtension.isEmpty ? "mov" : source.pathExtension.lowercased()
         let id = UUID()
         let name = id.uuidString + "." + ext
@@ -130,33 +130,34 @@ final class ClipStore {
         let fallback = source.deletingPathExtension().lastPathComponent
         let defaultTitle = (fallback.count > 30 || fallback.hasPrefix("IMG_") || fallback.contains("-")) ? "Nouveau clip" : fallback
         let clip = Clip(id: id, title: title ?? defaultTitle, file: name, thumb: thumbName,
-                        duration: duration, width: Double(size.width), height: Double(size.height))
+                        duration: duration, width: Double(size.width), height: Double(size.height),
+                        forcedVertical: vertical)
         clips.append(clip)
         save()
         return id
     }
 
     /// Import depuis l'app Fichiers (plusieurs vidéos à la fois).
-    func importFiles(_ urls: [URL]) async -> UUID? {
+    func importFiles(_ urls: [URL], vertical: Bool? = nil) async -> UUID? {
         importing = true
         defer { importing = false }
         var last: UUID?
         for url in urls {
             let scoped = url.startAccessingSecurityScopedResource()
             defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-            if let id = await importVideo(at: url) { last = id }
+            if let id = await importVideo(at: url, vertical: vertical) { last = id }
         }
         return last
     }
 
     /// Import depuis Photos.
-    func importFromPhotos(_ items: [PhotosPickerItem]) async -> UUID? {
+    func importFromPhotos(_ items: [PhotosPickerItem], vertical: Bool? = nil) async -> UUID? {
         importing = true
         defer { importing = false }
         var last: UUID?
         for item in items {
             guard let movie = try? await item.loadTransferable(type: PickedMovie.self) else { continue }
-            if let id = await importVideo(at: movie.url) { last = id }
+            if let id = await importVideo(at: movie.url, vertical: vertical) { last = id }
             try? FileManager.default.removeItem(at: movie.url)
         }
         return last
@@ -253,6 +254,7 @@ struct EditVideoView: UIViewRepresentable {
 
     func makeUIView(context: Context) -> EditVideoUIView {
         let v = EditVideoUIView()
+        (v.layer as? AVPlayerLayer)?.videoGravity = fill ? .resizeAspectFill : .resizeAspect
         v.load(url)
         v.setPlaying(playing)
         return v
@@ -332,7 +334,10 @@ struct EditsFeedView: View {
     private func page(_ clip: Clip) -> some View {
         let active = clip.id == position
         return ZStack(alignment: .bottomLeading) {
-            EditVideoView(url: store.url(clip), playing: active && !paused)
+            // Comme TikTok : la vidéo garde ses proportions (bandes noires si elle est plus large).
+            EditVideoView(url: store.url(clip), playing: active && !paused, fill: false)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color.black)
                 .contentShape(Rectangle())
                 .onTapGesture { paused.toggle() }
                 .overlay {
@@ -452,8 +457,11 @@ struct EditCard: View {
 
 // MARK: - Boutons d'import
 
-/// « Importer » : depuis Photos ou depuis Fichiers. Après l'import, on peut nommer la vidéo.
+/// « Importer » : depuis Photos ou depuis Fichiers.
+/// Un clip importé ouvre sa fiche (titre, artiste) ; un edit est rangé directement, sans écran en plus.
 struct ClipImportMenu<Content: View>: View {
+    /// true : ranger dans les edits ; false : dans les clips ; vide : selon le format de la vidéo.
+    var asEdit: Bool? = nil
     @ViewBuilder var label: () -> Content
     @State private var photoItems: [PhotosPickerItem] = []
     @State private var showPhotos = false
@@ -474,14 +482,15 @@ struct ClipImportMenu<Content: View>: View {
                       allowsMultipleSelection: true) { result in
             guard case .success(let urls) = result else { return }
             Task {
-                if let id = await store.importFiles(urls), urls.count == 1 { naming = store.clip(id) }
+                if let id = await store.importFiles(urls, vertical: asEdit), urls.count == 1,
+                   let c = store.clip(id), !c.isVertical { naming = c }
             }
         }
         .onChange(of: photoItems) { _, items in
             guard !items.isEmpty else { return }
             Task {
-                let id = await store.importFromPhotos(items)
-                if let id, items.count == 1 { naming = store.clip(id) }
+                let id = await store.importFromPhotos(items, vertical: asEdit)
+                if let id, items.count == 1, let c = store.clip(id), !c.isVertical { naming = c }
                 photoItems = []
             }
         }
@@ -590,7 +599,7 @@ struct ClipsView: View {
                          ? "Importe tes clips depuis Photos ou Fichiers. Les vidéos horizontales arrivent ici."
                          : "Importe tes edits format TikTok. Les vidéos verticales arrivent ici et se regardent en faisant défiler.")
                 } actions: {
-                    ClipImportMenu { Text("Importer") }
+                    ClipImportMenu(asEdit: segment == 1) { Text("Importer") }
                         .buttonStyle(OutlineButtonStyle())
                 }
                 .padding(.top, 40)
@@ -627,7 +636,7 @@ struct ClipsView: View {
         .background { Color(.systemBackground).ignoresSafeArea() }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                ClipImportMenu { Image(systemName: "plus") }
+                ClipImportMenu(asEdit: segment == 1) { Image(systemName: "plus") }
                     .accessibilityLabel("Importer une vidéo")
             }
         }
@@ -674,7 +683,7 @@ struct HomeClipSections: View {
                                 .contextMenu { moveMenu(clip) }
                         }
                         importCard(width: videos.isEmpty ? 240 : 150, height: 135,
-                                   text: videos.isEmpty ? "Importer un clip" : "Importer")
+                                   text: videos.isEmpty ? "Importer un clip" : "Importer", asEdit: false)
                     }
                     .scrollTargetLayout()
                     .padding(.horizontal, 20)
@@ -692,7 +701,7 @@ struct HomeClipSections: View {
                                 .buttonStyle(PressStyle(circle: false))
                                 .contextMenu { moveMenu(clip) }
                         }
-                        importCard(width: 120, height: 213, text: edits.isEmpty ? "Importer un edit" : "Importer")
+                        importCard(width: 120, height: 213, text: edits.isEmpty ? "Importer un edit" : "Importer", asEdit: true)
                     }
                     .scrollTargetLayout()
                     .padding(.horizontal, 20)
@@ -714,8 +723,8 @@ struct HomeClipSections: View {
         Button("Supprimer", systemImage: "trash", role: .destructive) { store.remove(clip.id) }
     }
 
-    private func importCard(width: CGFloat, height: CGFloat, text: String) -> some View {
-        ClipImportMenu {
+    private func importCard(width: CGFloat, height: CGFloat, text: String, asEdit: Bool) -> some View {
+        ClipImportMenu(asEdit: asEdit) {
             VStack(spacing: 8) {
                 Image(systemName: "plus").font(.title2.weight(.semibold))
                 Text(text).font(.footnote.weight(.semibold)).multilineTextAlignment(.center)
