@@ -421,7 +421,7 @@ struct EAN13View: View {
             let font = Font.system(size: textH * 0.95, weight: .medium, design: .monospaced)
             let y = barBottom + textH * 0.55
             func digit(_ d: Int, _ x: CGFloat) {
-                context.draw(Text(String(d)).font(font).foregroundStyle(.black), at: CGPoint(x: x, y: y))
+                context.draw(Text(String(d)).font(font).foregroundColor(.black), at: CGPoint(x: x, y: y))
             }
             digit(code.digits[0], left - 4.5 * unit)
             for i in 1...6 { digit(code.digits[i], left + (3 + 7 * CGFloat(i - 1) + 3.5) * unit) }
