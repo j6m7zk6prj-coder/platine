@@ -1,63 +1,30 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// Structure de l'app : onglets, mini-lecteur, feuilles partagées.
+/// Les onglets, comme Musique sur iOS 16 : Écouter, Bibliothèque, Recherche, avec le mini-lecteur au-dessus.
 struct RootView: View {
     @EnvironmentObject private var library: Library
     @EnvironmentObject private var player: Player
     @EnvironmentObject private var settings: AppSettings
     @EnvironmentObject private var ui: UIState
     @Environment(\.scenePhase) private var phase
-    /// La Collection est chargée (cachée) peu après le lancement, pour s'ouvrir sans attendre.
-    @State private var shelfMounted = false
-    /// Le mini-lecteur s'agrandit en lecteur plein écran (et s'y referme en glissant vers le bas).
-    @Namespace private var playerZoom
 
     var body: some View {
         TabView(selection: $ui.selectedTab) {
-            NavigationStack { HomeView() }
-                .modifier(MiniPlayerInset())
-                .tabItem { Label("Accueil", systemImage: "house.fill") }
+            tab { ListenNowView() }
+                .tabItem { Label("Écouter", systemImage: "play.circle.fill") }
                 .tag(0)
-            NavigationStack { FeedView() }
-                .tabItem { Label("Découvrir", systemImage: "play.rectangle.on.rectangle.fill") }
-                .tag(4)
-            NavigationStack { LibraryHomeView() }
-                .modifier(MiniPlayerInset())
+            tab { LibraryHomeView() }
                 .tabItem { Label("Bibliothèque", systemImage: "square.stack.fill") }
                 .tag(1)
-            NavigationStack { SearchView() }
-                .modifier(MiniPlayerInset())
+            tab { SearchView() }
                 .tabItem { Label("Recherche", systemImage: "magnifyingglass") }
                 .tag(2)
-            NavigationStack { SettingsView() }
-                .tabItem { Label("Réglages", systemImage: "gearshape.fill") }
-                .tag(3)
         }
         .overlay(alignment: .top) { Banner() }
-        .modifier(PlayerPresenter(isPresented: $ui.showPlayer, namespace: playerZoom))
-        .environment(\.playerZoomNamespace, playerZoom)
-        .sheet(item: $ui.editing) { target in
-            ArtworkEditor(trackID: target.id)
-        }
-        .overlay {
-            if shelfMounted {
-                ShelfView(visible: ui.showShelf, onClose: { ui.showShelf = false })
-                    .opacity(ui.showShelf ? 1 : 0)
-                    .allowsHitTesting(ui.showShelf)
-                    .accessibilityHidden(!ui.showShelf)
-                    .animation(.easeInOut(duration: 0.32), value: ui.showShelf)
-            }
-        }
-        .onChangeCompat(of: ui.showShelf) { _, shown in
-            if shown { shelfMounted = true }
-        }
-        .sheet(item: $ui.editingInfo) { target in
-            TrackInfoEditor(trackID: target.id)
-        }
-        .sheet(item: $ui.addToPlaylist) { target in
-            AddToPlaylistSheet(target: target)
-        }
+        .fullScreenCover(isPresented: $ui.showPlayer) { NowPlayingView() }
+        .sheet(item: $ui.editingInfo) { TrackInfoEditor(trackID: $0.id) }
+        .sheet(item: $ui.addToPlaylist) { AddToPlaylistSheet(target: $0) }
         .fileImporter(isPresented: $ui.importing, allowedContentTypes: [.audio, .lrc], allowsMultipleSelection: true) { result in
             if case .success(let urls) = result {
                 Task { await library.importFiles(urls) }
@@ -65,52 +32,64 @@ struct RootView: View {
         }
         .task {
             if settings.autoImport { await library.scanInbox() }
-            // La Collection 3D est préparée en douce : elle s'ouvrira instantanément.
-            try? await Task.sleep(for: .seconds(1.5))
-            let playing = player.currentID.flatMap { library.track($0) }?.albumKey
-            let start = library.albums.firstIndex { $0.id == playing } ?? 0
-            await ShelfSceneController.warmUp(library: library, settings: settings, start: start)
-            shelfMounted = true
-            // Les pochettes animées de l'écran verrouillé sont préparées pendant que l'app est ouverte
-            // (iOS ne permet pas de le faire une fois l'iPhone verrouillé).
-            // Seulement les 4 pochettes animées écoutées le plus récemment, et après un moment :
-            // l'encodage vidéo est lourd, il ne doit jamais ralentir l'app (Mode voyage prépare tout le reste).
-            if settings.lockScreenAnimation {
-                try? await Task.sleep(for: .seconds(20))
-                let recent = library.tracks
-                    .filter { library.motion($0) != nil }
-                    .sorted { ($0.lastPlayed ?? .distantPast) > ($1.lastPlayed ?? .distantPast) }
-                    .prefix(4)
-                for t in recent {
-                    if let m = library.motion(t) {
-                        LockScreenArtwork.shared.warm(source: m.url, kind: m.kind)
-                    }
-                }
-            }
         }
-        .onChangeCompat(of: phase) { _, newPhase in
+        .onChange(of: phase) { newPhase in
             if newPhase == .active, settings.autoImport { Task { await library.scanInbox() } }
         }
-        .onChangeCompat(of: library.artworkRevision) { _, _ in
-            player.updateNowPlaying()
-        }
+        .onChange(of: library.artworkRevision) { _ in player.updateNowPlaying() }
+    }
+
+    /// Chaque onglet a sa navigation, et garde la place du mini-lecteur en bas.
+    private func tab<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        NavigationStack { content() }
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                MiniPlayer { ui.showPlayer = true }
+            }
     }
 }
 
-/// Place le mini-lecteur au-dessus de la barre d'onglets.
-struct MiniPlayerInset: ViewModifier {
-    @EnvironmentObject private var ui: UIState
+/// Le mini-lecteur au-dessus des onglets : pochette, titre, lecture et suivant (« À l'arrêt » sinon).
+struct MiniPlayer: View {
+    var onOpen: () -> Void
+    @EnvironmentObject private var library: Library
     @EnvironmentObject private var player: Player
 
-    func body(content: Content) -> some View {
-        content.safeAreaInset(edge: .bottom) {
-            MiniPlayer { ui.showPlayer = true }
-                .animation(.spring(response: 0.5, dampingFraction: 0.82), value: player.currentID)
+    var body: some View {
+        let t = player.currentID.flatMap { library.track($0) }
+        HStack(spacing: 14) {
+            Artwork(track: t, cornerRadius: 4, pixels: 120)
+                .frame(width: 48, height: 48)
+                .shadow(color: .black.opacity(0.15), radius: 4, y: 2)
+            Text(t?.title ?? "À l’arrêt")
+                .font(.body)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Button { player.togglePlay() } label: {
+                Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
+                    .font(.title2)
+                    .frame(width: 40, height: 44)
+            }
+            .disabled(t == nil)
+            Button { player.next() } label: {
+                Image(systemName: "forward.fill")
+                    .font(.title3)
+                    .frame(width: 40, height: 44)
+            }
+            .disabled(t == nil)
         }
+        .foregroundColor(.primary)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 8)
+        .background(.regularMaterial)
+        .overlay(alignment: .top) { Divider() }
+        .overlay(alignment: .bottom) { Divider() }
+        .contentShape(Rectangle())
+        .onTapGesture { if t != nil { onOpen() } }
+        .accessibilityElement(children: .contain)
     }
 }
 
-/// Bandeau de confirmation en haut de l'écran.
+/// Bandeau de confirmation en haut de l'écran (import, playlist créée…).
 struct Banner: View {
     @EnvironmentObject private var library: Library
 
@@ -123,7 +102,7 @@ struct Banner: View {
                 }
                 .padding(.horizontal, 18)
                 .padding(.vertical, 11)
-                .glassCapsule()
+                .background(.regularMaterial, in: Capsule())
                 .padding(.top, 6)
                 .transition(.move(edge: .top).combined(with: .opacity))
             } else if let message = library.message {
@@ -131,7 +110,7 @@ struct Banner: View {
                     .font(.subheadline.weight(.semibold))
                     .padding(.horizontal, 18)
                     .padding(.vertical, 11)
-                    .glassCapsule()
+                    .background(.regularMaterial, in: Capsule())
                     .padding(.top, 6)
                     .transition(.move(edge: .top).combined(with: .opacity))
                     .task(id: message) {
@@ -143,60 +122,5 @@ struct Banner: View {
         .animation(.spring(response: 0.45, dampingFraction: 0.8), value: library.message)
         .animation(.spring(response: 0.45, dampingFraction: 0.8), value: library.isImporting)
         .allowsHitTesting(false)
-    }
-}
-
-
-// MARK: - Ouverture du lecteur façon Musique
-
-private struct PlayerZoomNamespaceKey: EnvironmentKey {
-    static let defaultValue: Namespace.ID? = nil
-}
-
-extension EnvironmentValues {
-    var playerZoomNamespace: Namespace.ID? {
-        get { self[PlayerZoomNamespaceKey.self] }
-        set { self[PlayerZoomNamespaceKey.self] = newValue }
-    }
-}
-
-/// Le mini-lecteur sert de point de départ : le lecteur en sort en s'agrandissant.
-struct PlayerZoomSource: ViewModifier {
-    @Environment(\.playerZoomNamespace) private var namespace
-
-    func body(content: Content) -> some View {
-        if #available(iOS 18.0, *), let namespace {
-            content.matchedTransitionSource(id: "miniPlayer", in: namespace)
-        } else {
-            content
-        }
-    }
-}
-
-/// iOS 18 et plus : le lecteur sort du mini-lecteur et y rentre quand tu le glisses vers le bas,
-/// en suivant ton doigt (comme Musique). Avant iOS 18 : feuille classique.
-struct PlayerPresenter: ViewModifier {
-    @Binding var isPresented: Bool
-    let namespace: Namespace.ID
-
-    func body(content: Content) -> some View {
-        // Style iOS classique : le lecteur monte comme une carte, l'écran derrière recule un peu.
-        content.sheet(isPresented: $isPresented) {
-            NowPlayingView()
-                .overlay(alignment: .top) { Grabber() }
-                .presentationDragIndicator(.hidden)
-                .presentationBackground(Color(.systemBackground))
-        }
-    }
-}
-
-/// La petite barre en haut du lecteur : on le referme en glissant vers le bas.
-struct Grabber: View {
-    var body: some View {
-        Capsule()
-            .fill(Color(.tertiaryLabel))
-            .frame(width: 38, height: 5)
-            .padding(.top, 8)
-            .allowsHitTesting(false)
     }
 }

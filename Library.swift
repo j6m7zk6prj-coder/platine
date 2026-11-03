@@ -9,7 +9,7 @@ import Combine
 /// Bibliothèque musicale : fichiers copiés dans l'app, métadonnées, pochettes, playlists.
 @MainActor
 final class Library: ObservableObject {
-    @Published private(set) var tracks: [Track] = []
+    @Published private(set) var tracks: [Track] = [] { didSet { dataRevision &+= 1 } }
     @Published private(set) var playlists: [Playlist] = []
     /// Photo choisie pour un artiste : identifiant de l'artiste → nom du fichier image.
     @Published private(set) var artistImages: [String: String] = [:]
@@ -24,7 +24,11 @@ final class Library: ObservableObject {
     /// Tes images pour le dos, la tranche et le disque : « genre|clé » → fichier.
     @Published private(set) var extraImages: [String: String] = [:]
     /// Pochette officielle de chaque album : nom du fichier et type (image, GIF, vidéo).
-    @Published private(set) var albumCovers: [String: AlbumCoverFile] = [:]
+    @Published private(set) var albumCovers: [String: AlbumCoverFile] = [:] { didSet { dataRevision &+= 1 } }
+    /// Change à chaque modification des morceaux : les albums et artistes ne sont recalculés qu'à ce moment-là.
+    private var dataRevision = 0
+    private var albumsCache: (rev: Int, list: [AlbumInfo])?
+    private var artistsCache: (rev: Int, list: [ArtistInfo])?
     /// Ajoute aussi les stickers gagnés automatiquement (or, platine, favori, nouveau).
     @Published var autoStickers: Bool = UserDefaults.standard.bool(forKey: "autoStickers") {
         didSet { UserDefaults.standard.set(autoStickers, forKey: "autoStickers") }
@@ -129,6 +133,13 @@ final class Library: ObservableObject {
     var totalDuration: Double { tracks.reduce(0) { $0 + $1.duration } }
 
     var albums: [AlbumInfo] {
+        if let c = albumsCache, c.rev == dataRevision { return c.list }
+        let list = computeAlbums()
+        albumsCache = (dataRevision, list)
+        return list
+    }
+
+    private func computeAlbums() -> [AlbumInfo] {
         Dictionary(grouping: tracks, by: \.albumKey).map { key, list in
             let sorted = list.sorted {
                 if $0.trackNumber != $1.trackNumber { return ($0.trackNumber == 0 ? Int.max : $0.trackNumber) < ($1.trackNumber == 0 ? Int.max : $1.trackNumber) }
@@ -319,6 +330,13 @@ final class Library: ObservableObject {
     }
 
     var artists: [ArtistInfo] {
+        if let c = artistsCache, c.rev == dataRevision { return c.list }
+        let list = computeArtists()
+        artistsCache = (dataRevision, list)
+        return list
+    }
+
+    private func computeArtists() -> [ArtistInfo] {
         let allAlbums = albums
         return Dictionary(grouping: tracks, by: { $0.displayArtist.lowercased() }).map { key, list in
             ArtistInfo(id: key, name: list[0].displayArtist,

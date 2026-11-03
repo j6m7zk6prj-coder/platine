@@ -188,6 +188,13 @@ final class AppSettings: ObservableObject {
         glassIntensity = d.object(forKey: "glassIntensity") as? Double ?? 0.6
         priceStickers = d.object(forKey: "priceStickers") as? Bool ?? true
         // Passage au style classique : accent bleu et mode clair/sombre de l'iPhone (une seule fois).
+        // Version légère (iPhone 8) : pas de pochette animée sur l'écran verrouillé (trop lourd), clair/sombre de l'iPhone.
+        if !d.bool(forKey: "liteV1") {
+            lockScreenAnimation = false
+            animatedArtwork = false
+            appearance = .auto
+            d.set(true, forKey: "liteV1")
+        }
         if !d.bool(forKey: "classicDesignV1") {
             accent = .blue
             appearance = .auto

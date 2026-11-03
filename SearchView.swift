@@ -1,117 +1,86 @@
 import SwiftUI
 
-/// Recherche dans toute la bibliothèque, paroles comprises.
+// MARK: - Recherche dans ta bibliothèque
+
 struct SearchView: View {
     @EnvironmentObject private var library: Library
     @EnvironmentObject private var player: Player
     @State private var query = ""
-    @State private var scope = 0   // 0 tous, 1 albums, 2 morceaux, 3 artistes, 4 playlists
 
     var body: some View {
+        let q = query.trimmingCharacters(in: .whitespaces)
         List {
-            if !query.isEmpty {
-                // Filtres façon iTunes Store
-                Picker("Filtre", selection: $scope) {
-                    Text("Tous").tag(0)
-                    Text("Albums").tag(1)
-                    Text("Morceaux").tag(2)
-                    Text("Artistes").tag(3)
-                    Text("Playlists").tag(4)
-                }
-                .pickerStyle(.segmented)
-                .listRowBackground(Color.clear)
-                .listRowSeparator(.hidden)
-            }
-            if query.isEmpty {
-                if library.recentlyPlayed.isEmpty {
-                    ContentUnavailableView("Cherche dans ta musique", systemImage: "magnifyingglass",
-                                           description: Text("Titres, artistes, albums, playlists et paroles."))
-                        .listRowBackground(Color.clear)
-                        .listRowSeparator(.hidden)
-                } else {
-                    Section {
-                        TrackRows(tracks: library.recentlyPlayed)
-                    } header: {
-                        sectionTitle("Écoutés récemment")
-                    }
+            if q.isEmpty {
+                Section {
+                    browse("Artistes", "music.mic") { ArtistsView() }
+                    browse("Albums", "square.stack") { AlbumsView() }
+                    browse("Morceaux", "music.note") { SongsView() }
+                    browse("Playlists", "music.note.list") { PlaylistsView() }
+                } header: {
+                    Text("Parcourir").font(.title3.bold()).foregroundColor(.primary).textCase(nil)
                 }
             } else {
-                results
-            }
-        }
-        .plainList()
-        .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "Titres, artistes, albums, paroles")
-        .navigationTitle("Recherche")
-        .background { AmbientBackground(track: player.currentID.flatMap { library.track($0) }, dim: 0.6) }
-        .onChangeCompat(of: query) { _, q in if q.isEmpty { scope = 0 } }
-    }
-
-    @ViewBuilder private var results: some View {
-        let artists = library.artists.filter { $0.name.localizedCaseInsensitiveContains(query) }
-        let albums = library.albums.filter { $0.title.localizedCaseInsensitiveContains(query) || $0.artist.localizedCaseInsensitiveContains(query) }
-        let playlists = library.sortedPlaylists.filter { $0.name.localizedCaseInsensitiveContains(query) }
-        let songs = library.tracks.filter { $0.matches(query) || ($0.lyrics?.localizedCaseInsensitiveContains(query) ?? false) }
-
-        if artists.isEmpty && albums.isEmpty && playlists.isEmpty && songs.isEmpty {
-            ContentUnavailableView("Aucun résultat", systemImage: "magnifyingglass", description: Text("Rien ne correspond à « \(query) »."))
-                .listRowBackground(Color.clear)
-                .listRowSeparator(.hidden)
-        }
-        if !artists.isEmpty && (scope == 0 || scope == 3) {
-            Section {
-                ForEach(artists.prefix(scope == 3 ? 200 : 5)) { artist in
-                    NavigationLink { ArtistDetailView(artistID: artist.id) } label: {
-                        HStack(spacing: 12) {
-                            ArtistAvatar(artist: artist)
-                                .frame(width: 44, height: 44)
-                            Text(artist.name)
-                        }
-                    }
-                    .listRowBackground(Color.clear)
+                let artists = library.artists.filter { $0.name.localizedCaseInsensitiveContains(q) }.prefix(5)
+                let albums = library.albums.filter { $0.title.localizedCaseInsensitiveContains(q) || $0.artist.localizedCaseInsensitiveContains(q) }.prefix(8)
+                let songs = library.tracks.filter { $0.title.localizedCaseInsensitiveContains(q) || $0.artist.localizedCaseInsensitiveContains(q) }.prefix(30)
+                if artists.isEmpty && albums.isEmpty && songs.isEmpty {
+                    Text("Aucun résultat pour « \(q) ».")
+                        .foregroundColor(.secondary)
+                        .listRowSeparator(.hidden)
                 }
-            } header: { sectionTitle("Artistes") }
-        }
-        if !albums.isEmpty && (scope == 0 || scope == 1) {
-            Section {
-                ForEach(albums.prefix(scope == 1 ? 200 : 6)) { album in
-                    NavigationLink { AlbumDetailView(albumID: album.id) } label: {
-                        HStack(spacing: 12) {
-                            ArtworkView(track: album.cover, animated: false, small: true, cornerRadius: 2)
-                                .frame(width: 56, height: 56)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(album.title).lineLimit(1)
-                                Text(album.artist).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                if !artists.isEmpty {
+                    Section("Artistes") {
+                        ForEach(Array(artists)) { a in
+                            NavigationLink { ArtistDetailView(artistID: a.id) } label: {
+                                HStack(spacing: 14) {
+                                    Artwork(track: a.albums.first?.cover ?? a.tracks.first, cornerRadius: 23, pixels: 120)
+                                        .frame(width: 46, height: 46)
+                                    Text(a.name)
+                                }
                             }
                         }
                     }
-                    .listRowBackground(Color.clear)
                 }
-            } header: { sectionTitle("Albums") }
-        }
-        if !playlists.isEmpty && (scope == 0 || scope == 4) {
-            Section {
-                ForEach(playlists) { p in
-                    NavigationLink { PlaylistDetailView(playlistID: p.id) } label: {
-                        HStack(spacing: 12) {
-                            PlaylistMosaic(playlist: p).frame(width: 44, height: 44)
-                            Text(p.name).lineLimit(1)
+                if !albums.isEmpty {
+                    Section("Albums") {
+                        ForEach(Array(albums)) { a in
+                            NavigationLink { AlbumDetailView(albumID: a.id) } label: {
+                                HStack(spacing: 14) {
+                                    Artwork(track: a.cover, cornerRadius: 4, pixels: 120).frame(width: 46, height: 46)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(a.title).lineLimit(1)
+                                        Text("Album · " + a.artist).font(.subheadline).foregroundColor(.secondary).lineLimit(1)
+                                    }
+                                }
+                            }
                         }
                     }
-                    .listRowBackground(Color.clear)
                 }
-            } header: { sectionTitle("Playlists") }
+                if !songs.isEmpty {
+                    Section("Morceaux") {
+                        let ids = songs.map(\.id)
+                        ForEach(Array(songs)) { t in
+                            Button { player.play(ids: ids, startAt: t.id) } label: { TrackRow(track: t) }
+                                .buttonStyle(.plain)
+                                .contextMenu { TrackMenu(track: t) }
+                        }
+                    }
+                }
+            }
         }
-        if !songs.isEmpty && (scope == 0 || scope == 2) {
-            Section {
-                TrackRows(tracks: songs)
-            } header: { sectionTitle("Morceaux") }
-        }
+        .listStyle(.plain)
+        .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "Artistes, morceaux, albums")
+        .autocorrectionDisabled()
+        .navigationTitle("Recherche")
     }
 
-    @ViewBuilder private func sectionTitle(_ text: String) -> some View {
-        // Avec un filtre actif, pas de titre (comme l'iTunes Store) ; sinon un titre sobre.
-        if scope == 0 {
-            Text(text).font(.headline).foregroundStyle(.primary).textCase(nil)
+    private func browse<D: View>(_ title: String, _ icon: String, @ViewBuilder _ destination: @escaping () -> D) -> some View {
+        NavigationLink(destination: LazyView(destination)) {
+            Label {
+                Text(title)
+            } icon: {
+                Image(systemName: icon).foregroundColor(.music)
+            }
         }
     }
 }

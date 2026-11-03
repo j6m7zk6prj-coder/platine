@@ -1,357 +1,113 @@
 import SwiftUI
 
-/// Panneau des paroles de l'écran « En lecture ».
-struct LyricsPane: View {
+// MARK: - Paroles (comme Musique : la ligne chantée en blanc, la liste suit toute seule)
+
+struct LyricsPanel: View {
     let track: Track
-    /// Appelé quand on fait défiler les paroles (pour réafficher les commandes).
-    var onInteract: () -> Void = {}
     @EnvironmentObject private var library: Library
+    @EnvironmentObject private var player: Player
     @EnvironmentObject private var settings: AppSettings
     @State private var lines: [LyricLine]?
+    @State private var active = -1
     @State private var searching = false
     @State private var notFound = false
 
     var body: some View {
         Group {
             if let lines {
-                SyncedLyricsView(lines: lines, onInteract: onInteract)
-            } else if let lyrics = track.lyrics, !lyrics.isEmpty {
-                staticLyrics(lyrics)
+                synced(lines)
+            } else if let raw = track.lyrics, !raw.isEmpty {
+                ScrollView(showsIndicators: false) {
+                    Text(LyricsParser.plainText(raw))
+                        .font(.system(size: settings.lyricsSize.points * 0.8, weight: .bold))
+                        .foregroundColor(.white.opacity(0.9))
+                        .lineSpacing(8)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.vertical, 24)
+                }
+                .mask(fade)
             } else if searching {
-                VStack(spacing: 14) {
-                    ProgressView().controlSize(.large)
-                    Text("Recherche des paroles…")
-                        .font(.headline)
-                        .foregroundStyle(.secondary)
+                VStack(spacing: 12) {
+                    ProgressView().tint(.white)
+                    Text("Recherche des paroles…").foregroundColor(.white.opacity(0.7))
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                emptyState
-            }
-        }
-        .frame(maxHeight: .infinity)
-        .task(id: track.id.uuidString + (track.lyrics ?? "")) {
-            lines = track.lyrics.flatMap { LyricsParser.isSynced($0) ? LyricsParser.parse($0) : nil }
-            if track.lyrics == nil && !notFound { await searchOnline() }
-        }
-        .onChangeCompat(of: track.id) { _, _ in notFound = false }
-    }
-
-    private func staticLyrics(_ text: String) -> some View {
-        ScrollView {
-            Text(text)
-                .font(.system(size: settings.lyricsSize.points - 5, weight: .bold))
-                .foregroundStyle(.primary)
-                .lineSpacing(8)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.vertical, 28)
-                .textSelection(.enabled)
-        }
-        .scrollIndicators(.hidden)
-        .mask(LyricsFade())
-    }
-
-    private var emptyState: some View {
-        ContentUnavailableView {
-            Label("Pas de paroles", systemImage: "quote.bubble")
-        } description: {
-            Text(notFound
-                 ? "Aucune parole trouvée pour ce morceau. Tu peux importer un fichier .lrc ou les coller dans « Modifier les infos »."
-                 : "Ce morceau n’a pas encore de paroles.")
-        } actions: {
-            Button {
-                Task { await searchOnline() }
-            } label: {
-                Label("Chercher les paroles", systemImage: "magnifyingglass")
-                    .fontWeight(.semibold)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 4)
-            }
-            .buttonStyle(OutlineButtonStyle())
-            .buttonBorderShape(.capsule)
-        }
-    }
-
-    private func searchOnline() async {
-        guard !searching else { return }
-        let id = track.id
-        searching = true
-        let found = await LyricsService.search(title: track.title, artist: track.artist, duration: track.duration)
-        searching = false
-        if let found {
-            library.setLyrics(id, found)
-        } else {
-            notFound = true
-        }
-    }
-}
-
-/// Paroles synchronisées façon Musique : la ligne chantée se remplit en continu (à chaque image),
-/// et les lignes montent en vague (celles du dessous suivent avec un léger retard).
-/// La liste n'est recalculée qu'au changement de ligne : seul le balayage de la ligne chantée bouge à 60/120 i/s.
-struct SyncedLyricsView: View {
-    let lines: [LyricLine]
-    var onInteract: () -> Void = {}
-    @EnvironmentObject private var player: Player
-    @EnvironmentObject private var settings: AppSettings
-    @State private var heights: [Int: CGFloat] = [:]
-    @State private var active: Int?
-    /// Décalage quand tu fais défiler toi-même les paroles.
-    @State private var browse: CGFloat = 0
-    @State private var dragging: CGFloat = 0
-    @State private var isDragging = false
-    @State private var browsing = false
-    @State private var browseEnd: Task<Void, Never>?
-
-    private let spacing: CGFloat = 30
-    /// Petit temps d'avance pour que la ligne s'allume au moment où elle est chantée.
-    static let lead = 0.2
-
-    var body: some View {
-        let fontSize = settings.lyricsSize.points
-        let tops = lineTops(estimate: fontSize * 1.3)
-
-        GeometryReader { geo in
-            let anchor = geo.size.height * 0.2
-            let base: CGFloat = anchor - (active.map { tops[$0] } ?? -40)
-            ZStack(alignment: .topLeading) {
-                ForEach(lines) { line in
-                    let distance = active.map { line.id - $0 } ?? (line.id + 1)
-                    let y = base + tops[line.id] + browse + dragging
-                    // Hors de l'écran : rien n'est dessiné (plus fluide).
-                    if y > -400 && y < geo.size.height + 300 {
-                        LyricLineView(line: line,
-                                      distance: distance,
-                                      end: endTime(line),
-                                      browsing: browsing,
-                                      fontSize: fontSize,
-                                      height: heights[line.id] ?? 0)
-                            .frame(width: max(0, geo.size.width - 12), alignment: .leading)
-                            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { h in
-                                if abs((heights[line.id] ?? 0) - h) > 0.5 { heights[line.id] = h }
-                            }
-                            .contentShape(Rectangle())
-                            .onTapGesture {
-                                player.seek(to: line.time)
-                                if !player.isPlaying { player.resume() }
-                                endBrowsing(after: 0)
-                                withAnimation(.spring(response: 0.6, dampingFraction: 0.86)) {
-                                    active = line.id
-                                    browse = 0
-                                }
-                            }
-                            .offset(y: y)
-                            // La vague : chaque ligne part un peu après celle du dessus.
-                            .animation(isDragging ? nil : .spring(response: 0.72, dampingFraction: 0.86).delay(stagger(distance)), value: y)
+                VStack(spacing: 14) {
+                    Text(notFound ? "Aucune parole trouvée pour ce morceau." : "Pas de paroles pour ce morceau.")
+                        .font(.headline)
+                        .foregroundColor(.white.opacity(0.75))
+                        .multilineTextAlignment(.center)
+                    Button { Task { await search() } } label: {
+                        Text("Chercher les paroles")
+                            .font(.subheadline.weight(.semibold))
+                            .padding(.horizontal, 16)
+                            .frame(height: 36)
+                            .background(Capsule().fill(Color.white.opacity(0.2)))
                     }
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
-            .contentShape(Rectangle())
-            .gesture(
-                DragGesture(minimumDistance: 6)
-                    .onChanged { g in
-                        isDragging = true
-                        dragging = g.translation.height
-                        browseEnd?.cancel()
-                        if !browsing { browsing = true }
-                        onInteract()
-                    }
-                    .onEnded { g in
-                        let total = tops.last ?? 0
-                        let landed = browse + g.translation.height + (g.predictedEndTranslation.height - g.translation.height) * 0.6
-                        isDragging = false
-                        dragging = 0
-                        withAnimation(.spring(response: 0.55, dampingFraction: 0.9)) {
-                            browse = min(max(landed, -total), total)
-                        }
-                        endBrowsing(after: 3)
-                    }
-            )
         }
-        .mask(LyricsFade())
-        // Suit la chanson sans redessiner toute la liste : la ligne active n'est mise à jour qu'à son changement.
+        .task(id: track.id.uuidString + "\(track.lyrics?.count ?? 0)") {
+            notFound = false
+            active = -1
+            lines = track.lyrics.flatMap { LyricsParser.isSynced($0) ? LyricsParser.parse($0) : nil }
+            if track.lyrics == nil { await search() }
+        }
+    }
+
+    private func synced(_ lines: [LyricLine]) -> some View {
+        ScrollViewReader { proxy in
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: Device.isSmallScreen ? 18 : 24) {
+                    ForEach(lines) { line in
+                        Text(line.isInterlude ? "•  •  •" : line.text)
+                            .font(.system(size: settings.lyricsSize.points * (Device.isSmallScreen ? 0.8 : 0.9), weight: .bold))
+                            .foregroundColor(.white.opacity(line.id == active ? 1 : 0.32))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .id(line.id)
+                            .contentShape(Rectangle())
+                            .onTapGesture { player.seek(to: line.time) }
+                    }
+                }
+                .padding(.vertical, 120)
+                .animation(.easeOut(duration: 0.3), value: active)
+            }
+            .mask(fade)
+            .onChange(of: active) { a in
+                guard a >= 0 else { return }
+                withAnimation(.easeInOut(duration: 0.5)) { proxy.scrollTo(a, anchor: UnitPoint(x: 0, y: 0.32)) }
+            }
+        }
+        // Suit la chanson cinq fois par seconde : léger pour l'iPhone 8.
         .task(id: lines) {
             while !Task.isCancelled {
-                let now = player.liveTime + Self.lead
-                let a = activeIndex(at: now)
+                let now = player.liveTime + 0.3
+                var a = -1
+                for line in lines where line.time <= now { a = line.id }
                 if a != active { active = a }
-                try? await Task.sleep(for: .milliseconds(40))
+                try? await Task.sleep(nanoseconds: 200_000_000)
             }
         }
     }
 
-    /// Après quelques secondes sans toucher, les paroles reviennent toutes seules sur la ligne chantée.
-    private func endBrowsing(after seconds: Double) {
-        browseEnd?.cancel()
-        browseEnd = Task {
-            try? await Task.sleep(for: .seconds(seconds))
-            guard !Task.isCancelled else { return }
-            withAnimation(.spring(response: 0.75, dampingFraction: 0.88)) {
-                browsing = false
-                browse = 0
-            }
-        }
-    }
-
-    private func lineTops(estimate: CGFloat) -> [CGFloat] {
-        var result: [CGFloat] = []
-        result.reserveCapacity(lines.count)
-        var y: CGFloat = 0
-        for line in lines {
-            result.append(y)
-            let h = heights[line.id] ?? (line.isInterlude ? 0 : estimate)
-            y += h + (h > 0 ? spacing : 0)
-        }
-        return result
-    }
-
-    private func stagger(_ distance: Int) -> Double {
-        distance <= 0 ? 0 : min(Double(distance) * 0.038, 0.28)
-    }
-
-    private func endTime(_ line: LyricLine) -> Double {
-        line.id + 1 < lines.count ? lines[line.id + 1].time : max(player.duration, line.time + 4)
-    }
-
-    private func activeIndex(at time: Double) -> Int? {
-        // Recherche dichotomique : les lignes sont triées par temps.
-        var lo = 0, hi = lines.count - 1, result: Int?
-        while lo <= hi {
-            let mid = (lo + hi) / 2
-            if lines[mid].time <= time { result = lines[mid].id; lo = mid + 1 } else { hi = mid - 1 }
-        }
-        return result
-    }
-}
-
-struct LyricLineView: View {
-    let line: LyricLine
-    /// 0 = ligne chantée, négatif = déjà passée, positif = à venir.
-    let distance: Int
-    /// Début de la ligne suivante.
-    let end: Double
-    let browsing: Bool
-    var fontSize: CGFloat = 31
-    /// Hauteur mesurée de la ligne (pour remplir rangée par rangée).
-    var height: CGFloat = 0
-    @EnvironmentObject private var player: Player
-
-    private var isActive: Bool { distance == 0 }
-    private var showsInterlude: Bool { line.isInterlude && isActive && end - line.time >= 2.5 }
-
-    var body: some View {
-        Group {
-            if line.isInterlude {
-                if showsInterlude {
-                    TimelineView(.animation(paused: !player.isPlaying)) { _ in
-                        let now = player.liveTime + SyncedLyricsView.lead
-                        InterludeDots(progress: min(1, max(0, (now - line.time) / (end - line.time))))
-                    }
-                    .transition(.scale(scale: 0.6, anchor: .leading).combined(with: .opacity))
-                } else {
-                    Color.clear.frame(height: 0)
-                }
-            } else {
-                text
-                    .foregroundStyle(Color.primary.opacity(isActive ? 0.3 : (browsing ? 0.5 : 0.25)))
-                    .overlay(alignment: .topLeading) {
-                        if isActive {
-                            // Le blanc avance sur la ligne au fil du chant, rangée après rangée, à chaque image.
-                            TimelineView(.animation(paused: !player.isPlaying)) { _ in
-                                // Lecture de currentTime : à l'arrêt, un saut dans le morceau met aussi la ligne à jour.
-                                let _ = player.currentTime
-                                text
-                                    .foregroundStyle(.primary)
-                                    .mask(alignment: .topLeading) { SweepMask(progress: fill(at: player.liveTime), rows: rows) }
-                            }
-                                                        .transition(.opacity)
-                        }
-                    }
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .scaleEffect(isActive ? 1 : 0.955, anchor: .leading)
-                    .blur(radius: (isActive || browsing || abs(distance) > 5) ? 0 : min(Double(abs(distance)) * 0.6, 2))
-            }
-        }
-        .animation(.spring(response: 0.6, dampingFraction: 0.84), value: isActive)
-        .animation(.easeInOut(duration: 0.35), value: browsing)
-        .animation(.spring(response: 0.5, dampingFraction: 0.8), value: showsInterlude)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(line.isInterlude ? "Pause instrumentale" : line.text)
-        .accessibilityAddTraits(isActive ? AccessibilityTraits.isSelected : AccessibilityTraits())
-    }
-
-    /// Part de la ligne déjà chantée (0 à 1), avec un départ et une arrivée en douceur.
-    private func fill(at time: Double) -> Double {
-        // Le chant occupe rarement toute la durée jusqu'à la ligne suivante.
-        let length = max(0.6, min(end - line.time, 8) * 0.9)
-        let p = min(1, max(0, (time + SyncedLyricsView.lead - line.time) / length))
-        return p * p * (3 - 2 * p) * 0.25 + p * 0.75
-    }
-
-    private var text: some View {
-        Text(line.text)
-            .font(.system(size: fontSize, weight: .bold))
-            .lineSpacing(4)
-    }
-
-    /// Nombre de rangées de texte (une ligne longue passe sur plusieurs rangées).
-    private var rows: Int {
-        let rowHeight = fontSize * 1.2 + 4
-        return max(1, Int(((height + 4) / rowHeight).rounded()))
-    }
-}
-
-/// Masque qui découvre le texte de gauche à droite, une rangée après l'autre, avec un bord doux.
-struct SweepMask: View {
-    let progress: Double
-    let rows: Int
-
-    var body: some View {
-        VStack(spacing: 0) {
-            ForEach(0..<rows, id: \.self) { r in
-                let local = min(1, max(0, progress * Double(rows) - Double(r)))
-                let soft = 0.07
-                let edge = local * (1 + 2 * soft) - soft
-                LinearGradient(stops: [
-                    .init(color: .black, location: min(1, max(0, edge - soft))),
-                    .init(color: .clear, location: min(1, max(0, edge + soft)))
-                ], startPoint: .leading, endPoint: .trailing)
-            }
-        }
-    }
-}
-
-/// Les trois points qui se remplissent pendant une pause instrumentale.
-struct InterludeDots: View {
-    let progress: Double
-
-    var body: some View {
-        HStack(spacing: 11) {
-            ForEach(0..<3, id: \.self) { i in
-                let fill = min(1, max(0, progress * 3 - Double(i)))
-                Circle()
-                    .fill(Color.primary.opacity(0.22 + 0.78 * fill))
-                    .frame(width: 13, height: 13)
-                    .scaleEffect(0.85 + 0.15 * fill)
-            }
-        }
-        // Léger mouvement de respiration, comme dans Musique.
-        .scaleEffect(1 + 0.05 * sin(progress * .pi * 10), anchor: .leading)
-        .padding(.vertical, 8)
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
-
-/// Fondu en haut et en bas de la zone des paroles.
-struct LyricsFade: View {
-    var body: some View {
+    private var fade: some View {
         LinearGradient(stops: [
             .init(color: .clear, location: 0),
             .init(color: .black, location: 0.08),
             .init(color: .black, location: 0.86),
             .init(color: .clear, location: 1)
         ], startPoint: .top, endPoint: .bottom)
+    }
+
+    private func search() async {
+        guard !searching else { return }
+        let id = track.id
+        searching = true
+        let found = await LyricsService.search(title: track.title, artist: track.artist, duration: track.duration)
+        searching = false
+        if let found { library.setLyrics(id, found) } else { notFound = true }
     }
 }
