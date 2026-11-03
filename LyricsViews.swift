@@ -5,8 +5,8 @@ struct LyricsPane: View {
     let track: Track
     /// Appelé quand on fait défiler les paroles (pour réafficher les commandes).
     var onInteract: () -> Void = {}
-    @Environment(Library.self) private var library
-    @Environment(AppSettings.self) private var settings
+    @EnvironmentObject private var library: Library
+    @EnvironmentObject private var settings: AppSettings
     @State private var lines: [LyricLine]?
     @State private var searching = false
     @State private var notFound = false
@@ -34,7 +34,7 @@ struct LyricsPane: View {
             lines = track.lyrics.flatMap { LyricsParser.isSynced($0) ? LyricsParser.parse($0) : nil }
             if track.lyrics == nil && !notFound { await searchOnline() }
         }
-        .onChange(of: track.id) { _, _ in notFound = false }
+        .onChangeCompat(of: track.id) { _, _ in notFound = false }
     }
 
     private func staticLyrics(_ text: String) -> some View {
@@ -92,8 +92,8 @@ struct LyricsPane: View {
 struct SyncedLyricsView: View {
     let lines: [LyricLine]
     var onInteract: () -> Void = {}
-    @Environment(Player.self) private var player
-    @Environment(AppSettings.self) private var settings
+    @EnvironmentObject private var player: Player
+    @EnvironmentObject private var settings: AppSettings
     @State private var heights: [Int: CGFloat] = [:]
     @State private var active: Int?
     /// Décalage quand tu fais défiler toi-même les paroles.
@@ -235,7 +235,7 @@ struct LyricLineView: View {
     var fontSize: CGFloat = 31
     /// Hauteur mesurée de la ligne (pour remplir rangée par rangée).
     var height: CGFloat = 0
-    @Environment(Player.self) private var player
+    @EnvironmentObject private var player: Player
 
     private var isActive: Bool { distance == 0 }
     private var showsInterlude: Bool { line.isInterlude && isActive && end - line.time >= 2.5 }

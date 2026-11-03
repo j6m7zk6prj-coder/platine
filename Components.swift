@@ -108,7 +108,7 @@ struct ToolbarItemButton: View {
             VStack(spacing: 3) {
                 Image(systemName: symbol)
                     .font(.system(size: 21))
-                    .contentTransition(.symbolEffect(.replace))
+                    
                     .frame(height: 26)
                 Text(title).font(.system(size: 10, weight: .medium)).lineLimit(1).minimumScaleFactor(0.8)
             }
@@ -130,8 +130,8 @@ struct ArtworkView: View {
     var cornerRadius: CGFloat = 12
     /// Fin liseré autour de la pochette (retiré quand elle prend tout l'écran).
     var bordered = true
-    @Environment(Library.self) private var library
-    @Environment(AppSettings.self) private var settings
+    @EnvironmentObject private var library: Library
+    @EnvironmentObject private var settings: AppSettings
 
     var body: some View {
         // Réglage « Pochettes carrées » : coins presque droits.
@@ -319,8 +319,8 @@ struct AmbientBackground: View {
     var dim: Double = 0.3
     /// Écran « En lecture » : reste sombre même avec un thème clair.
     var forceDark = false
-    @Environment(Library.self) private var library
-    @Environment(AppSettings.self) private var settings
+    @EnvironmentObject private var library: Library
+    @EnvironmentObject private var settings: AppSettings
     @State private var drift = false
 
     private var theme: AppTheme {
@@ -400,7 +400,7 @@ struct AmbientBackground: View {
             guard settings.backgroundMotion else { return }
             withAnimation(.easeInOut(duration: 17).repeatForever(autoreverses: true)) { drift = true }
         }
-        .onChange(of: settings.backgroundMotion) { _, on in
+        .onChangeCompat(of: settings.backgroundMotion) { _, on in
             withAnimation(on ? .easeInOut(duration: 17).repeatForever(autoreverses: true) : .easeInOut(duration: 1)) { drift = on }
         }
     }
@@ -409,7 +409,9 @@ struct AmbientBackground: View {
 // MARK: - Barre de progression façon Apple
 
 struct Scrubber: View {
-    @Environment(Player.self) private var player
+    @EnvironmentObject private var player: Player
+    /// Seule la barre suit l'avancée du morceau (dix fois par seconde).
+    @ObservedObject private var clock = PlaybackClock.shared
     @State private var dragValue: Double?
     @State private var grabStart: Double?
 
@@ -453,7 +455,7 @@ struct Scrubber: View {
                 .animation(.spring(response: 0.3, dampingFraction: 0.7), value: active)
             }
             .frame(height: 26)
-            .sensoryFeedback(.selection, trigger: active)
+            .haptic(.selection, trigger: active)
 
             HStack {
                 Text(formatTime(value))

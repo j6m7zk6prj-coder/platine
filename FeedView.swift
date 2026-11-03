@@ -17,13 +17,12 @@ struct FeedItem: Identifiable, Equatable {
 
 /// Lecteur d'extraits, séparé du lecteur principal : ta file d'attente n'est jamais touchée.
 @MainActor
-@Observable
-final class FeedPreview {
+final class FeedPreview: ObservableObject {
     private let player = AVPlayer()
-    private(set) var playing = false
-    @ObservationIgnored private var loopObserver: Any?
-    @ObservationIgnored private var fadeTask: Task<Void, Never>?
-    @ObservationIgnored private var current: UUID?
+    @Published private(set) var playing = false
+    private var loopObserver: Any?
+    private var fadeTask: Task<Void, Never>?
+    private var current: UUID?
     /// Durée d'un extrait avant qu'il reprenne au début.
     static let length = 30.0
 
@@ -81,12 +80,12 @@ final class FeedPreview {
 }
 
 struct FeedView: View {
-    @Environment(Library.self) private var library
-    @Environment(Player.self) private var player
-    @Environment(UIState.self) private var ui
+    @EnvironmentObject private var library: Library
+    @EnvironmentObject private var player: Player
+    @EnvironmentObject private var ui: UIState
     @State private var items: [FeedItem] = []
     @State private var position: UUID?
-    @State private var preview = FeedPreview()
+    @StateObject private var preview = FeedPreview()
     @State private var muted = false
     @State private var lyricsOnly = false
 
@@ -97,22 +96,14 @@ struct FeedView: View {
                 ContentUnavailableView("Rien à découvrir", systemImage: "sparkles",
                                        description: Text("Importe de la musique : ses extraits apparaîtront ici."))
             } else {
-                ScrollView(.vertical) {
-                    LazyVStack(spacing: 0) {
-                        ForEach(items) { item in
-                            if let t = library.track(item.trackID) {
-                                FeedPage(item: item, track: t, active: item.id == position, preview: preview,
-                                         onListen: { listen(item, t) })
-                                    .containerRelativeFrame([.horizontal, .vertical])
-                                    .id(item.id)
-                            }
-                        }
+                VerticalPager(items: items, selection: $position) { item in
+                    if let t = library.track(item.trackID) {
+                        FeedPage(item: item, track: t, active: item.id == position, preview: preview,
+                                 onListen: { listen(item, t) })
+                    } else {
+                        Color.clear
                     }
-                    .scrollTargetLayout()
                 }
-                .scrollTargetBehavior(.paging)
-                .scrollPosition(id: $position)
-                .scrollIndicators(.hidden)
                 .ignoresSafeArea()
             }
 
@@ -145,17 +136,17 @@ struct FeedView: View {
             playCurrent()
         }
         .onDisappear { preview.pause() }
-        .onChange(of: position) { _, _ in
+        .onChangeCompat(of: position) { _, _ in
             playCurrent()
             // Le fil ne finit jamais : de nouveaux extraits arrivent avant la fin.
             if let position, let i = items.firstIndex(where: { $0.id == position }), i >= items.count - 4 {
                 items.append(contentsOf: batch())
             }
         }
-        .onChange(of: player.isPlaying) { _, playing in
+        .onChangeCompat(of: player.isPlaying) { _, playing in
             if playing { preview.pause() }
         }
-        .sensoryFeedback(.selection, trigger: position)
+        .haptic(.selection, trigger: position)
     }
 
     private func rebuild() {
@@ -225,10 +216,10 @@ private struct FeedPage: View {
     let item: FeedItem
     let track: Track
     let active: Bool
-    let preview: FeedPreview
+    @ObservedObject var preview: FeedPreview
     var onListen: () -> Void
-    @Environment(Library.self) private var library
-    @Environment(UIState.self) private var ui
+    @EnvironmentObject private var library: Library
+    @EnvironmentObject private var ui: UIState
     @State private var liked = false
     @State private var burst = 0
 
@@ -245,10 +236,10 @@ private struct FeedPage: View {
                 .ignoresSafeArea()
 
                 VStack(spacing: 0) {
-                    Spacer(minLength: geo.safeAreaInsets.top + 60)
+                    Spacer(minLength: Device.isSmallScreen ? 100 : 130)
                     // La pochette, qui « respire » doucement pendant l'extrait.
                     ArtworkView(track: track, animated: active, cornerRadius: 3)
-                        .frame(width: geo.size.width - 64, height: geo.size.width - 64)
+                        .frame(width: geo.size.width - (Device.isSmallScreen ? 110 : 64), height: geo.size.width - (Device.isSmallScreen ? 110 : 64))
                         .shadow(color: .black.opacity(0.18), radius: 12, y: 6)
                         .scaleEffect(active && preview.playing ? 1 : 0.94)
                         .animation(.spring(response: 0.6, dampingFraction: 0.8), value: active && preview.playing)
@@ -276,7 +267,7 @@ private struct FeedPage: View {
                     Spacer(minLength: 16)
                     info
                         .padding(.horizontal, 20)
-                        .padding(.bottom, geo.safeAreaInsets.bottom + 70)
+                        .padding(.bottom, Device.isSmallScreen ? 130 : 160)
                 }
 
                 // Boutons à droite, comme sur TikTok.
@@ -294,7 +285,7 @@ private struct FeedPage: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .trailing)
                 .padding(.trailing, 14)
-                .padding(.bottom, geo.safeAreaInsets.bottom + 150)
+                .padding(.bottom, Device.isSmallScreen ? 210 : 240)
             }
         }
         .onAppear { liked = track.isFavorite }
@@ -346,12 +337,12 @@ private struct FeedPage: View {
                 Image(systemName: symbol)
                     .font(.system(size: 24))
                     .foregroundStyle(.tint)
-                    .contentTransition(.symbolEffect(.replace))
+                    
                 Text(title).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
             }
         }
         .buttonStyle(PressStyle())
-        .sensoryFeedback(.impact(weight: .light), trigger: liked)
+        .haptic(.impact(weight: .light), trigger: liked)
     }
 }
 
@@ -359,7 +350,7 @@ private struct FeedPage: View {
 private struct FeedLyrics: View {
     let item: FeedItem
     let active: Bool
-    let preview: FeedPreview
+    @ObservedObject var preview: FeedPreview
 
     var body: some View {
         if item.lines.isEmpty {
@@ -400,7 +391,7 @@ private struct HeartBurst: View {
             .scaleEffect(shown ? 1.1 : 0.4)
             .opacity(shown ? 1 : 0)
             .allowsHitTesting(false)
-            .onChange(of: trigger) { _, _ in
+            .onChangeCompat(of: trigger) { _, _ in
                 withAnimation(.spring(response: 0.3, dampingFraction: 0.55)) { shown = true }
                 Task {
                     try? await Task.sleep(for: .milliseconds(650))

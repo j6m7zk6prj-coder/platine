@@ -3,10 +3,10 @@ import UniformTypeIdentifiers
 
 /// Structure de l'app : onglets, mini-lecteur, feuilles partagées.
 struct RootView: View {
-    @Environment(Library.self) private var library
-    @Environment(Player.self) private var player
-    @Environment(AppSettings.self) private var settings
-    @Environment(UIState.self) private var ui
+    @EnvironmentObject private var library: Library
+    @EnvironmentObject private var player: Player
+    @EnvironmentObject private var settings: AppSettings
+    @EnvironmentObject private var ui: UIState
     @Environment(\.scenePhase) private var phase
     /// La Collection est chargée (cachée) peu après le lancement, pour s'ouvrir sans attendre.
     @State private var shelfMounted = false
@@ -14,7 +14,6 @@ struct RootView: View {
     @Namespace private var playerZoom
 
     var body: some View {
-        @Bindable var ui = ui
         TabView(selection: $ui.selectedTab) {
             NavigationStack { HomeView() }
                 .modifier(MiniPlayerInset())
@@ -47,10 +46,10 @@ struct RootView: View {
                     .opacity(ui.showShelf ? 1 : 0)
                     .allowsHitTesting(ui.showShelf)
                     .accessibilityHidden(!ui.showShelf)
-                    .animation(.smooth(duration: 0.32), value: ui.showShelf)
+                    .animation(.easeInOut(duration: 0.32), value: ui.showShelf)
             }
         }
-        .onChange(of: ui.showShelf) { _, shown in
+        .onChangeCompat(of: ui.showShelf) { _, shown in
             if shown { shelfMounted = true }
         }
         .sheet(item: $ui.editingInfo) { target in
@@ -89,10 +88,10 @@ struct RootView: View {
                 }
             }
         }
-        .onChange(of: phase) { _, newPhase in
+        .onChangeCompat(of: phase) { _, newPhase in
             if newPhase == .active, settings.autoImport { Task { await library.scanInbox() } }
         }
-        .onChange(of: library.artworkRevision) { _, _ in
+        .onChangeCompat(of: library.artworkRevision) { _, _ in
             player.updateNowPlaying()
         }
     }
@@ -100,8 +99,8 @@ struct RootView: View {
 
 /// Place le mini-lecteur au-dessus de la barre d'onglets.
 struct MiniPlayerInset: ViewModifier {
-    @Environment(UIState.self) private var ui
-    @Environment(Player.self) private var player
+    @EnvironmentObject private var ui: UIState
+    @EnvironmentObject private var player: Player
 
     func body(content: Content) -> some View {
         content.safeAreaInset(edge: .bottom) {
@@ -113,7 +112,7 @@ struct MiniPlayerInset: ViewModifier {
 
 /// Bandeau de confirmation en haut de l'écran.
 struct Banner: View {
-    @Environment(Library.self) private var library
+    @EnvironmentObject private var library: Library
 
     var body: some View {
         Group {

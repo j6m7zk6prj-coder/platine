@@ -3,10 +3,10 @@ import SwiftUI
 // MARK: - Accueil de la bibliothèque
 
 struct LibraryHomeView: View {
-    @Environment(AppSettings.self) private var settings
-    @Environment(Library.self) private var library
-    @Environment(Player.self) private var player
-    @Environment(UIState.self) private var ui
+    @EnvironmentObject private var settings: AppSettings
+    @EnvironmentObject private var library: Library
+    @EnvironmentObject private var player: Player
+    @EnvironmentObject private var ui: UIState
 
     private var currentTrack: Track? { player.currentID.flatMap { library.track($0) } }
     @State private var choosingExhibit = false
@@ -21,7 +21,7 @@ struct LibraryHomeView: View {
         }
         .navigationTitle("Bibliothèque")
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItem(placement: .navigationBarTrailing) {
                 Button { ui.importing = true } label: { Image(systemName: "plus") }
                     .accessibilityLabel("Importer de la musique")
             }
@@ -96,8 +96,8 @@ struct LibraryHomeView: View {
 /// La Collection en haut de la Bibliothèque : tes CD exposés, empilés, et le choix des albums à exposer.
 struct CollectionCard: View {
     @Binding var choosing: Bool
-    @Environment(Library.self) private var library
-    @Environment(UIState.self) private var ui
+    @EnvironmentObject private var library: Library
+    @EnvironmentObject private var ui: UIState
 
     var body: some View {
         let shown = library.exposedAlbums
@@ -156,7 +156,7 @@ struct CollectionCard: View {
 
 /// Choisir les albums exposés dans la Collection : touche une pochette pour l'exposer ou la ranger.
 struct ExhibitPicker: View {
-    @Environment(Library.self) private var library
+    @EnvironmentObject private var library: Library
     @Environment(\.dismiss) private var dismiss
 
     private let columns = [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)]
@@ -200,7 +200,7 @@ struct ExhibitPicker: View {
                                 }
                             }
                             .buttonStyle(PressStyle(circle: false))
-                            .sensoryFeedback(.selection, trigger: on)
+                            .haptic(.selection, trigger: on)
                         }
                     }
                 }
@@ -218,7 +218,7 @@ struct ExhibitPicker: View {
 }
 
 struct EmptyLibraryView: View {
-    @Environment(UIState.self) private var ui
+    @EnvironmentObject private var ui: UIState
 
     var body: some View {
         ContentUnavailableView {
@@ -299,7 +299,7 @@ struct AlbumCard: View {
 
 struct PlayShuffleButtons: View {
     let ids: [UUID]
-    @Environment(Player.self) private var player
+    @EnvironmentObject private var player: Player
 
     var body: some View {
         HStack(spacing: 12) {
@@ -334,10 +334,10 @@ struct TrackRows: View {
     var showArtwork = true
     var onDelete: ((IndexSet) -> Void)? = nil
     var onMove: ((IndexSet, Int) -> Void)? = nil
-    @Environment(Library.self) private var library
-    @Environment(Player.self) private var player
-    @Environment(AppSettings.self) private var settings
-    @Environment(UIState.self) private var ui
+    @EnvironmentObject private var library: Library
+    @EnvironmentObject private var player: Player
+    @EnvironmentObject private var settings: AppSettings
+    @EnvironmentObject private var ui: UIState
 
     var body: some View {
         ForEach(tracks.indices, id: \.self) { i in
@@ -373,8 +373,8 @@ struct TrackRows: View {
                 } preview: {
                     ArtworkView(track: t, animated: false, cornerRadius: 0)
                         .frame(width: 300, height: 300)
-                        .environment(library)
-                        .environment(settings)
+                        .environmentObject(library)
+                        .environmentObject(settings)
                 }
         }
         .onDelete(perform: onDelete)
@@ -385,24 +385,24 @@ struct TrackRows: View {
 /// Actions communes à un morceau (menu contextuel).
 struct TrackMenuItems: View {
     let track: Track
-    @Environment(Library.self) private var library
-    @Environment(Player.self) private var player
-    @Environment(UIState.self) private var ui
+    @EnvironmentObject private var library: Library
+    @EnvironmentObject private var player: Player
+    @EnvironmentObject private var ui: UIState
 
     var body: some View {
-        Button("Lire ensuite", systemImage: "text.line.first.and.arrowtriangle.forward") { player.playNext([track.id]) }
-        Button("Lire plus tard", systemImage: "text.line.last.and.arrowtriangle.forward") { player.playLater([track.id]) }
-        Button("Ajouter à une playlist", systemImage: "text.badge.plus") {
+        IconButton("Lire ensuite", systemImage: "text.line.first.and.arrowtriangle.forward") { player.playNext([track.id]) }
+        IconButton("Lire plus tard", systemImage: "text.line.last.and.arrowtriangle.forward") { player.playLater([track.id]) }
+        IconButton("Ajouter à une playlist", systemImage: "text.badge.plus") {
             ui.addToPlaylist = AddToPlaylistTarget(trackIDs: [track.id])
         }
-        Button(track.isFavorite ? "Retirer des favoris" : "Ajouter aux favoris",
+        IconButton(track.isFavorite ? "Retirer des favoris" : "Ajouter aux favoris",
                systemImage: track.isFavorite ? "heart.slash" : "heart") {
             library.toggleFavorite(track.id)
         }
-        Button("Changer la pochette", systemImage: "photo.on.rectangle") { ui.editing = EditTarget(id: track.id) }
-        Button("Modifier les infos", systemImage: "pencil") { ui.editingInfo = EditTarget(id: track.id) }
+        IconButton("Changer la pochette", systemImage: "photo.on.rectangle") { ui.editing = EditTarget(id: track.id) }
+        IconButton("Modifier les infos", systemImage: "pencil") { ui.editingInfo = EditTarget(id: track.id) }
         Divider()
-        Button("Retirer de la bibliothèque", systemImage: "trash", role: .destructive) {
+        IconButton("Retirer de la bibliothèque", systemImage: "trash", role: .destructive) {
             library.remove([track.id])
             player.removed([track.id])
             library.message = "« \(track.title) » retiré"
@@ -415,7 +415,7 @@ struct TrackRow: View {
     let isCurrent: Bool
     var number: Int? = nil
     var showArtwork = true
-    @Environment(Player.self) private var player
+    @EnvironmentObject private var player: Player
 
     var body: some View {
         HStack(spacing: 12) {
@@ -425,7 +425,7 @@ struct TrackRow: View {
                         Image(systemName: "waveform")
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(.tint)
-                            .symbolEffect(.variableColor.iterative, isActive: player.isPlaying)
+                            
                     } else {
                         Text("\(number)")
                             .font(.subheadline)
@@ -464,7 +464,7 @@ struct TrackRow: View {
                 Image(systemName: "waveform")
                     .font(.body.weight(.semibold))
                     .foregroundStyle(.tint)
-                    .symbolEffect(.variableColor.iterative, isActive: player.isPlaying)
+                    
                     .transition(.scale.combined(with: .opacity))
             } else {
                 Text(formatTime(track.duration))
@@ -474,7 +474,7 @@ struct TrackRow: View {
             }
         }
         .padding(.vertical, 2)
-        .animation(.smooth, value: isCurrent)
+        .animation(.easeInOut(duration: 0.35), value: isCurrent)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(isCurrent ? AccessibilityTraits([.isSelected, .isButton]) : AccessibilityTraits.isButton)
     }
@@ -491,9 +491,9 @@ extension View {
 
 struct MiniPlayer: View {
     var onOpen: () -> Void
-    @Environment(Player.self) private var player
-    @Environment(Library.self) private var library
-    @Environment(AppSettings.self) private var settings
+    @EnvironmentObject private var player: Player
+    @EnvironmentObject private var library: Library
+    @EnvironmentObject private var settings: AppSettings
     @State private var dragY: CGFloat = 0
 
     var body: some View {
@@ -516,7 +516,7 @@ struct MiniPlayer: View {
                     Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
                         .font(.system(size: 22))
                         .foregroundStyle(.tint)
-                        .contentTransition(.symbolEffect(.replace))
+                        
                         .frame(width: 44, height: 44)
                 }
                 .accessibilityLabel(player.isPlaying ? "Pause" : "Lecture")
@@ -541,10 +541,10 @@ struct MiniPlayer: View {
             .overlay(alignment: .bottom) { Divider() }
             .modifier(PlayerZoomSource())
             .contextMenu {
-                Button(player.isPlaying ? "Pause" : "Lecture", systemImage: player.isPlaying ? "pause.fill" : "play.fill") {
+                IconButton(player.isPlaying ? "Pause" : "Lecture", systemImage: player.isPlaying ? "pause.fill" : "play.fill") {
                     player.togglePlay()
                 }
-                Button("Arrêter la lecture", systemImage: "stop.fill") { player.quit() }
+                IconButton("Arrêter la lecture", systemImage: "stop.fill") { player.quit() }
             }
             // Glisse le mini-lecteur vers le bas pour quitter la lecture.
             .offset(y: max(0, dragY))
@@ -556,16 +556,16 @@ struct MiniPlayer: View {
                     }
                     .onEnded { value in
                         if value.translation.height > 70 || value.predictedEndTranslation.height > 180 {
-                            withAnimation(.smooth(duration: 0.3)) { dragY = 160 }
+                            withAnimation(.easeInOut(duration: 0.3)) { dragY = 160 }
                             player.quit()
                         }
                         withAnimation(.spring(response: 0.4, dampingFraction: 0.8).delay(0.3)) { dragY = 0 }
                     }
             )
-            .sensoryFeedback(trigger: player.currentID == nil) { _, stopped in
+            .haptic(trigger: player.currentID == nil) { _, stopped in
                 stopped && settings.haptics ? .impact(weight: .light) : nil
             }
-            .animation(.smooth(duration: 0.4), value: t.id)
+            .animation(.easeInOut(duration: 0.4), value: t.id)
             .transition(.move(edge: .bottom).combined(with: .opacity))
             .accessibilityAction(named: "Ouvrir le lecteur", onOpen)
             .accessibilityAction(named: "Arrêter la lecture") { player.quit() }

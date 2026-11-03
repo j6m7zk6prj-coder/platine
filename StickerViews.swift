@@ -135,7 +135,7 @@ struct CustomStickerBadge: View {
     let sticker: CustomSticker
     var light: Double = -0.3
     var size: CGFloat = 44
-    @Environment(Library.self) private var library
+    @EnvironmentObject private var library: Library
 
     var body: some View {
         FoilSticker(image: library.customStickerImage(sticker), finish: sticker.finish,
@@ -150,7 +150,7 @@ struct StickerStack: View {
     let album: AlbumInfo
     let badges: [AlbumBadge]
     var scale: CGFloat = 1
-    @Environment(Library.self) private var library
+    @EnvironmentObject private var library: Library
 
     var body: some View {
         VStack(alignment: .trailing, spacing: 6 * scale) {
@@ -262,7 +262,7 @@ struct StickerFinishSheet: View {
                         ForEach(StickerFinish.allCases) { f in
                             let on = f == finish
                             Button {
-                                withAnimation(.smooth(duration: 0.3)) { finish = f }
+                                withAnimation(.easeInOut(duration: 0.3)) { finish = f }
                             } label: {
                                 VStack(spacing: 8) {
                                     FoilSticker(image: shown, finish: f, round: round, size: 46,
@@ -277,7 +277,7 @@ struct StickerFinishSheet: View {
                                     .strokeBorder(on ? AnyShapeStyle(.tint) : AnyShapeStyle(Color(.separator)), lineWidth: on ? 2 : 0.5))
                             }
                             .buttonStyle(PressStyle(circle: false))
-                            .sensoryFeedback(.selection, trigger: on)
+                            .haptic(.selection, trigger: on)
                         }
                     }
                     .padding(.horizontal, 20)
@@ -290,7 +290,7 @@ struct StickerFinishSheet: View {
                             }
                             .pickerStyle(.segmented)
                         }
-                        Toggle("Liseré blanc", isOn: $bordered.animation(.smooth))
+                        Toggle("Liseré blanc", isOn: $bordered.animation(.easeInOut(duration: 0.35)))
                     }
                     .padding(.horizontal, 20)
 
@@ -315,7 +315,7 @@ struct StickerFinishSheet: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Annuler") { dismiss() } }
             }
         }
-        .onChange(of: cutoutMode) { _, mode in
+        .onChangeCompat(of: cutoutMode) { _, mode in
             Task { await applyCutout(mode) }
         }
     }
@@ -345,7 +345,7 @@ struct StickerFinishSheet: View {
         // Ignore un résultat arrivé après un autre choix.
         guard mode == cutoutMode else { return }
         working = false
-        withAnimation(.smooth(duration: 0.35)) {
+        withAnimation(.easeInOut(duration: 0.35)) {
             cutImage = result
             failed = result == nil
         }
@@ -468,6 +468,7 @@ enum StickerCutter {
 
     /// Détourage automatique du sujet (le même que « Détourer le sujet » dans Photos).
     private static func subject(_ cg: CGImage) -> UIImage? {
+        guard #available(iOS 17.0, *) else { return person(cg) }
         let request = VNGenerateForegroundInstanceMaskRequest()
         let handler = VNImageRequestHandler(cgImage: cg, orientation: .up)
         do {
@@ -477,6 +478,30 @@ enum StickerCutter {
                                                         croppedToInstancesExtent: false)
             let ci = CIImage(cvPixelBuffer: buffer)
             guard let out = CIContext().createCGImage(ci, from: ci.extent) else { return nil }
+            return UIImage(cgImage: out)
+        } catch {
+            return nil
+        }
+    }
+
+    /// iOS 16 : détourage des personnes seulement (le détourage de tout sujet arrive avec iOS 17).
+    private static func person(_ cg: CGImage) -> UIImage? {
+        let request = VNGeneratePersonSegmentationRequest()
+        request.qualityLevel = .accurate
+        request.outputPixelFormat = kCVPixelFormatType_OneComponent8
+        let handler = VNImageRequestHandler(cgImage: cg, orientation: .up)
+        do {
+            try handler.perform([request])
+            guard let mask = request.results?.first?.pixelBuffer else { return nil }
+            let source = CIImage(cgImage: cg)
+            var maskImage = CIImage(cvPixelBuffer: mask)
+            maskImage = maskImage.transformed(by: CGAffineTransform(scaleX: source.extent.width / maskImage.extent.width,
+                                                                    y: source.extent.height / maskImage.extent.height))
+            let clear = CIImage(color: .clear).cropped(to: source.extent)
+            guard let blend = CIFilter(name: "CIBlendWithMask", parameters: [
+                kCIInputImageKey: source, kCIInputBackgroundImageKey: clear, kCIInputMaskImageKey: maskImage
+            ])?.outputImage,
+                  let out = CIContext().createCGImage(blend, from: source.extent) else { return nil }
             return UIImage(cgImage: out)
         } catch {
             return nil
@@ -526,7 +551,7 @@ enum StickerCutter {
 struct MyStickersSection: View {
     let album: AlbumInfo
     var light: Double
-    @Environment(Library.self) private var library
+    @EnvironmentObject private var library: Library
     @State private var photoItem: PhotosPickerItem?
     @State private var cropping: CropSource?
     @State private var finishing: CropSource?
@@ -576,7 +601,7 @@ struct MyStickersSection: View {
                     }
                     .buttonStyle(PressStyle(circle: false))
                     .contextMenu {
-                        Button("Supprimer ce sticker", systemImage: "trash", role: .destructive) {
+                        IconButton("Supprimer ce sticker", systemImage: "trash", role: .destructive) {
                             library.deleteCustomSticker(sticker)
                         }
                     }
@@ -586,7 +611,7 @@ struct MyStickersSection: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
-        .onChange(of: photoItem) { _, item in
+        .onChangeCompat(of: photoItem) { _, item in
             guard let item else { return }
             Task {
                 if let data = try? await item.loadTransferable(type: Data.self), let img = UIImage(data: data) {
@@ -628,7 +653,7 @@ struct AnySticker: View {
     var light: Double = -0.3
     /// Coin en bas à droite soulevé, comme un sticker qui se décolle.
     var peeled = false
-    @Environment(Library.self) private var library
+    @EnvironmentObject private var library: Library
 
     var body: some View {
         Group {
@@ -692,7 +717,7 @@ struct PlacedStickers: View {
     let album: AlbumInfo
     let badges: [AlbumBadge]
     let size: CGSize
-    @Environment(Library.self) private var library
+    @EnvironmentObject private var library: Library
 
     var body: some View {
         let keys = library.stickerOrder(for: album, badges: badges)
@@ -718,7 +743,7 @@ struct StickerPlacer: View {
     let background: UIImage?
     /// Largeur ÷ hauteur de la jaquette.
     let aspect: CGFloat
-    @Environment(Library.self) private var library
+    @EnvironmentObject private var library: Library
     @Environment(\.dismiss) private var dismiss
     @State private var placements: [String: StickerPlacement] = [:]
     @State private var dragStart: [String: StickerPlacement] = [:]
@@ -869,22 +894,22 @@ struct StickerPlacer: View {
     }
 
     private func pinch(_ key: String, index: Int) -> some Gesture {
-        MagnifyGesture()
+        MagnificationGesture()
             .onChanged { g in
                 let start = begin(key, index)
                 var p = current(key, index)
-                p.scale = min(3, max(0.4, start.scale * Double(g.magnification)))
+                p.scale = min(3, max(0.4, start.scale * Double(g)))
                 placements[key] = p
             }
             .onEnded { _ in dragStart[key] = nil }
     }
 
     private func twist(_ key: String, index: Int) -> some Gesture {
-        RotateGesture()
+        RotationGesture()
             .onChanged { g in
                 let start = begin(key, index)
                 var p = current(key, index)
-                p.rotation = start.rotation + g.rotation.degrees
+                p.rotation = start.rotation + g.degrees
                 placements[key] = p
             }
             .onEnded { _ in dragStart[key] = nil }
@@ -897,7 +922,7 @@ struct StickerPlacer: View {
 /// Pochette avant et disque : chaque image peut être remplacée par la tienne, recadrée au bon format.
 struct CaseCustomizer: View {
     let album: AlbumInfo
-    @Environment(Library.self) private var library
+    @EnvironmentObject private var library: Library
     @Environment(\.dismiss) private var dismiss
     @State private var target: Slot?
     @State private var photoItem: PhotosPickerItem?
@@ -934,7 +959,7 @@ struct CaseCustomizer: View {
                 }
             }
         }
-        .onChange(of: photoItem) { _, item in
+        .onChangeCompat(of: photoItem) { _, item in
             guard let item else { return }
             Task {
                 if let data = try? await item.loadTransferable(type: Data.self), let img = UIImage(data: data) {

@@ -4,9 +4,9 @@ import SwiftUI
 
 /// La page d'accueil : reprendre l'écoute, tes mix, écoutés récemment, ajouts récents et tes artistes.
 struct HomeView: View {
-    @Environment(Library.self) private var library
-    @Environment(Player.self) private var player
-    @Environment(UIState.self) private var ui
+    @EnvironmentObject private var library: Library
+    @EnvironmentObject private var player: Player
+    @EnvironmentObject private var ui: UIState
 
     private var currentTrack: Track? { player.currentID.flatMap { library.track($0) } }
 
@@ -66,10 +66,9 @@ struct HomeView: View {
                             }
                             NewPlaylistCard()
                         }
-                        .scrollTargetLayout()
+                        
                         .padding(.horizontal, 20)
                     }
-                    .scrollTargetBehavior(.viewAligned)
                     .scrollIndicators(.hidden)
                 }
 
@@ -124,10 +123,9 @@ struct HomeView: View {
                                     .buttonStyle(PressStyle(circle: false))
                                 }
                             }
-                            .scrollTargetLayout()
+                            
                             .padding(.horizontal, 20)
                         }
-                        .scrollTargetBehavior(.viewAligned)
                         .scrollIndicators(.hidden)
                     }
                 }
@@ -154,10 +152,9 @@ struct HomeView: View {
                     .buttonStyle(PressStyle(circle: false))
                 }
             }
-            .scrollTargetLayout()
+            
             .padding(.horizontal, 20)
         }
-        .scrollTargetBehavior(.viewAligned)
         .scrollIndicators(.hidden)
     }
 
@@ -247,7 +244,7 @@ private struct ChartRow: View {
     let track: Track
     let ids: [UUID]
     let last: Bool
-    @Environment(Player.self) private var player
+    @EnvironmentObject private var player: Player
 
     var body: some View {
         let current = player.currentID == track.id
@@ -300,7 +297,7 @@ private struct ChartRow: View {
 private struct HeroAlbumCard: View {
     let album: AlbumInfo
     var label: String
-    @Environment(Player.self) private var player
+    @EnvironmentObject private var player: Player
 
     var body: some View {
         HStack(alignment: .top, spacing: 16) {
@@ -369,7 +366,7 @@ struct HomeMix: Identifiable {
 /// Carte d'un mix : quatre pochettes en mosaïque avec un fin cadre, le titre et le sous-titre dessous.
 private struct MixCard: View {
     let mix: HomeMix
-    @Environment(Player.self) private var player
+    @EnvironmentObject private var player: Player
 
     var body: some View {
         Button { player.play(ids: mix.tracks.map(\.id), shuffled: true) } label: {
@@ -446,7 +443,7 @@ private struct PlaylistCard: View {
 
 /// « Nouvelle playlist » au bout de la rangée.
 private struct NewPlaylistCard: View {
-    @Environment(Library.self) private var library
+    @EnvironmentObject private var library: Library
     @State private var asking = false
     @State private var name = ""
 

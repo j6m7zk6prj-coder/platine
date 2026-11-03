@@ -725,8 +725,8 @@ struct AlbumNodeBuilder {
     func renderTransparent<V: View>(_ view: V, _ size: CGSize) -> UIImage? {
         let content = view
             .frame(width: size.width, height: size.height)
-            .environment(library)
-            .environment(settings)
+            .environmentObject(library)
+            .environmentObject(settings)
             .environment(\.colorScheme, .dark)
         let renderer = ImageRenderer(content: content)
         renderer.scale = 2
@@ -1005,8 +1005,8 @@ struct AlbumNodeBuilder {
     func render<V: View>(_ view: V, _ size: CGSize, scale: CGFloat = 1.6) -> UIImage? {
         let content = view
             .frame(width: size.width, height: size.height)
-            .environment(library)
-            .environment(settings)
+            .environmentObject(library)
+            .environmentObject(settings)
             .environment(\.colorScheme, .dark)
         let renderer = ImageRenderer(content: content)
         renderer.scale = scale
@@ -1312,7 +1312,7 @@ struct AlbumNodeBuilder {
 struct CoverFace: View {
     let album: AlbumInfo
     let badges: [AlbumBadge]
-    @Environment(Library.self) private var library
+    @EnvironmentObject private var library: Library
 
     var body: some View {
         GeometryReader { geo in
@@ -1412,7 +1412,7 @@ extension SCNView {
         backgroundColor = .clear
         isOpaque = false
         antialiasingMode = .multisampling2X
-        preferredFramesPerSecond = 120
+        preferredFramesPerSecond = Device.isLowEnd ? 60 : 120
         rendersContinuously = true
         isPlaying = true
         isJitteringEnabled = false

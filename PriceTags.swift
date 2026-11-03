@@ -183,12 +183,11 @@ enum PriceStickerArt {
 struct PriceSection: View {
     let album: AlbumInfo
     var discs = 1
-    @Environment(Library.self) private var library
-    @Environment(AppSettings.self) private var settings
+    @EnvironmentObject private var library: Library
+    @EnvironmentObject private var settings: AppSettings
     @State private var draft = ""
 
     var body: some View {
-        @Bindable var settings = settings
         Section {
             Toggle("Étiquettes prix", isOn: $settings.priceStickers)
             if settings.priceStickers {

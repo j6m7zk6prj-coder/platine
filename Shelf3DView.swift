@@ -10,9 +10,9 @@ struct ShelfView: View {
     /// La Collection reste chargée en permanence (cachée) : l'afficher est instantané.
     var visible = true
     var onClose: () -> Void = {}
-    @Environment(Library.self) private var library
-    @Environment(Player.self) private var player
-    @Environment(AppSettings.self) private var settings
+    @EnvironmentObject private var library: Library
+    @EnvironmentObject private var player: Player
+    @EnvironmentObject private var settings: AppSettings
     @Environment(\.colorScheme) private var colorScheme
     @State private var motion = MotionTilt()
     @State private var focusedIndex = 0
@@ -26,7 +26,7 @@ struct ShelfView: View {
     @State private var stickerAlbum: AlbumInfo?
 
     /// Ouverture et fermeture : un ressort court, comme les transitions d'iOS.
-    private static let quick = Animation.smooth(duration: 0.38)
+    private static let quick = Animation.easeInOut(duration: 0.38)
 
     var body: some View {
         let _ = library.artworkRevision
@@ -113,8 +113,8 @@ struct ShelfView: View {
                 .presentationDragIndicator(.visible)
         }
         .animation(Self.quick, value: isOpen)
-        .sensoryFeedback(trigger: discOut) { _, _ in settings.haptics ? .impact(weight: .medium) : nil }
-        .sensoryFeedback(trigger: isBack) { _, _ in settings.haptics && isOpen ? .impact(weight: .light) : nil }
+        .haptic(trigger: discOut) { _, _ in settings.haptics ? .impact(weight: .medium) : nil }
+        .haptic(trigger: isBack) { _, _ in settings.haptics && isOpen ? .impact(weight: .light) : nil }
         .onAppear {
             if visible { motion.start() }
             if startIndex == nil {
@@ -123,7 +123,7 @@ struct ShelfView: View {
                 startIndex = i
             }
         }
-        .onChange(of: visible) { _, shown in
+        .onChangeCompat(of: visible) { _, shown in
             if shown {
                 motion.start()
                 // On se replace sur l'album en cours d'écoute.
@@ -217,7 +217,7 @@ struct ShelfView: View {
             // Le titre change en fondu rapide : l'ancien part tout de suite, le nouveau arrive en glissant à peine.
             .id(album.id)
             .transition(.asymmetric(
-                insertion: .opacity.combined(with: .offset(y: 6)).animation(.smooth(duration: 0.28).delay(0.06)),
+                insertion: .opacity.combined(with: .offset(y: 6)).animation(.easeInOut(duration: 0.28).delay(0.06)),
                 removal: .opacity.animation(.easeOut(duration: 0.1))))
             }
             .frame(maxWidth: .infinity)
@@ -233,7 +233,7 @@ struct ShelfView: View {
             .buttonStyle(OutlineButtonStyle())
         }
         .padding(.horizontal, 20)
-        .animation(.smooth(duration: 0.28), value: album.id)
+        .animation(.easeInOut(duration: 0.28), value: album.id)
     }
 }
 
@@ -247,8 +247,8 @@ struct ShelfSceneView: UIViewRepresentable {
     var onFocus: (Int) -> Void
     var onOpen: (Int) -> Void
     var onLongPress: (Int) -> Void = { _ in }
-    @Environment(Library.self) private var library
-    @Environment(AppSettings.self) private var settings
+    @EnvironmentObject private var library: Library
+    @EnvironmentObject private var settings: AppSettings
 
     func makeCoordinator() -> ShelfSceneController {
         ShelfSceneController.obtain(builder: AlbumNodeBuilder(library: library, settings: settings), start: startIndex)
@@ -668,9 +668,9 @@ struct ShelfInspector: View {
     var onStickers: () -> Void
     var onFormat: (AlbumFormat) -> Void
     var onClose: () -> Void
-    @Environment(Player.self) private var player
-    @Environment(Library.self) private var library
-    @Environment(AppSettings.self) private var settings
+    @EnvironmentObject private var player: Player
+    @EnvironmentObject private var library: Library
+    @EnvironmentObject private var settings: AppSettings
     @State private var customizing = false
     @State private var unwrapTick = 0
 
@@ -726,7 +726,7 @@ struct ShelfInspector: View {
                             library.setSealed(album.id, false)
                         }
                     }
-                    .transition(.blurReplace)
+                    .transition(.opacity)
                 } else if format == .cd {
                     inspectorButton(discTitle, symbol: discSymbol) {
                         let out = !discOut
@@ -746,7 +746,7 @@ struct ShelfInspector: View {
             .overlay(alignment: .top) { Divider() }
             .animation(.spring(response: 0.4, dampingFraction: 0.85), value: sealed)
         }
-        .sensoryFeedback(trigger: unwrapTick) { _, _ in settings.haptics ? .impact(flexibility: .soft, intensity: 0.8) : nil }
+        .haptic(trigger: unwrapTick) { _, _ in settings.haptics ? .impact(flexibility: .soft, intensity: 0.8) : nil }
         .sheet(isPresented: $customizing) {
             // Feuille à mi-hauteur : le boîtier reste visible au-dessus et se met à jour en direct.
             CaseCustomizer(album: album)
@@ -780,8 +780,8 @@ struct InspectorSceneView: UIViewRepresentable {
     let flipToken: Int
     let resetToken: Int
     var onBackChange: (Bool) -> Void
-    @Environment(Library.self) private var library
-    @Environment(AppSettings.self) private var settings
+    @EnvironmentObject private var library: Library
+    @EnvironmentObject private var settings: AppSettings
 
     func makeCoordinator() -> InspectorSceneController { InspectorSceneController.obtain() }
 
@@ -917,7 +917,7 @@ final class InspectorSceneController: NSObject, UIGestureRecognizerDelegate {
         view.pointOfView = cameraNode
         view.configureForShelf()
         // Un seul objet à l'écran : on peut lisser les bords davantage.
-        view.antialiasingMode = .multisampling4X
+        view.antialiasingMode = Device.isLowEnd ? .multisampling2X : .multisampling4X
         // En veille au départ : la vue se dessine une fois (shaders prêts) puis attend.
         view.rendersContinuously = false
         view.isPlaying = false
@@ -1155,8 +1155,8 @@ final class InspectorSceneController: NSObject, UIGestureRecognizerDelegate {
 /// Choix des stickers posés sur un album (6 au maximum).
 struct StickerPicker: View {
     let album: AlbumInfo
-    @Environment(Library.self) private var library
-    @Environment(AppSettings.self) private var settings
+    @EnvironmentObject private var library: Library
+    @EnvironmentObject private var settings: AppSettings
     @Environment(\.dismiss) private var dismiss
     @State private var placing = false
 
@@ -1193,7 +1193,7 @@ struct StickerPicker: View {
                                     StickerTile(badge: badge, on: on, light: light)
                                 }
                                 .buttonStyle(PressStyle(circle: false))
-                                .sensoryFeedback(.selection, trigger: on)
+                                .haptic(.selection, trigger: on)
                             }
                         }
                     }
@@ -1394,9 +1394,9 @@ struct CoverCropper: View {
                         }
                         .onEnded { _ in lastOffset = offset }
                         .simultaneously(with:
-                            MagnifyGesture()
+                            MagnificationGesture()
                                 .onChanged { g in
-                                    scale = min(6, max(1, lastScale * g.magnification))
+                                    scale = min(6, max(1, lastScale * g))
                                     offset = clamp(lastOffset, frame: frame, scale: scale)
                                 }
                                 .onEnded { _ in
@@ -1406,7 +1406,7 @@ struct CoverCropper: View {
                         )
                 )
                 .onAppear { lastFrame = frame }
-                .onChange(of: geo.size) { _, newSize in lastFrame = frameSize(in: newSize) }
+                .onChangeCompat(of: geo.size) { _, newSize in lastFrame = frameSize(in: newSize) }
             }
 
             Text("Glisse pour placer l’image · pince pour zoomer")

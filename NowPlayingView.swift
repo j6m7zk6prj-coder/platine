@@ -4,9 +4,9 @@ import MediaPlayer
 
 /// Écran « En lecture » plein écran.
 struct NowPlayingView: View {
-    @Environment(Player.self) private var player
-    @Environment(Library.self) private var library
-    @Environment(AppSettings.self) private var settings
+    @EnvironmentObject private var player: Player
+    @EnvironmentObject private var library: Library
+    @EnvironmentObject private var settings: AppSettings
     @Environment(\.dismiss) private var dismiss
     @State private var editing: EditTarget?
     @State private var editingInfo: EditTarget?
@@ -50,21 +50,21 @@ struct NowPlayingView: View {
                     mainArea(track, fullBleed: fullBleed)
                     controls(track, landscape: false)
                 }
-                .padding(.horizontal, 30)
+                .padding(.horizontal, Device.isSmallScreen ? 24 : 30)
                 .padding(.bottom, 6)
             }
         }
         .foregroundStyle(.primary)
         // Style iOS classique : un fond uni blanc (thème clair) ou noir (thème sombre).
         .background { Color(.systemBackground).ignoresSafeArea() }
-        .animation(.smooth(duration: 0.45), value: player.currentID)
+        .animation(.easeInOut(duration: 0.45), value: player.currentID)
         .animation(.spring(response: 0.5, dampingFraction: 0.86), value: showLyrics)
         .animation(.spring(response: 0.42, dampingFraction: 0.86), value: queueOpen)
         .animation(.spring(response: 0.5, dampingFraction: 0.9), value: controlsHidden)
-        .onChange(of: showLyrics) { _, on in
+        .onChangeCompat(of: showLyrics) { _, on in
             if on { pokeControls() } else { controlsHidden = false; hideTask?.cancel() }
         }
-        .onChange(of: player.isPlaying) { _, _ in pokeControls() }
+        .onChangeCompat(of: player.isPlaying) { _, _ in pokeControls() }
         .sheet(item: $editing) { target in
             ArtworkEditor(trackID: target.id)
         }
@@ -83,7 +83,7 @@ struct NowPlayingView: View {
                 .presentationDragIndicator(.visible)
         }
         .animation(.spring(response: 0.4, dampingFraction: 0.8), value: player.effect)
-        .onChange(of: player.currentID) { _, id in
+        .onChangeCompat(of: player.currentID) { _, id in
             if id == nil { dismiss() }
         }
     }
@@ -115,9 +115,9 @@ struct NowPlayingView: View {
                 .contentShape(Rectangle())
                 .onTapGesture { if let t = track { editing = EditTarget(id: t.id) } }
         } else {
-            Spacer(minLength: 24)
+            Spacer(minLength: Device.isSmallScreen ? 12 : 24)
             artwork(track)
-            Spacer(minLength: 24)
+            Spacer(minLength: Device.isSmallScreen ? 12 : 24)
         }
     }
 
@@ -127,16 +127,16 @@ struct NowPlayingView: View {
             VStack(spacing: 0) {
                 if !showLyrics && !queueOpen {
                     header(track)
-                        .padding(.bottom, landscape ? 14 : 22)
+                        .padding(.bottom, landscape ? 14 : (Device.isSmallScreen ? 12 : 22))
                         .transition(.opacity)
                 }
                 Scrubber()
-                    .padding(.bottom, landscape ? 10 : 18)
+                    .padding(.bottom, landscape ? 10 : (Device.isSmallScreen ? 8 : 18))
                 transport
-                    .padding(.bottom, landscape ? 14 : 26)
+                    .padding(.bottom, landscape ? 14 : (Device.isSmallScreen ? 12 : 26))
                 if !showLyrics {
                     volume
-                        .padding(.bottom, landscape ? 14 : 26)
+                        .padding(.bottom, landscape ? 14 : (Device.isSmallScreen ? 12 : 26))
                         .transition(.opacity)
                 }
                 bottomBar
@@ -180,7 +180,7 @@ struct NowPlayingView: View {
         ZStack {
             ArtworkView(track: t, cornerRadius: 12)
                 .id(t?.id)
-                .transition(.blurReplace)
+                .transition(.opacity)
         }
         .aspectRatio(1, contentMode: .fit)
         .matchedGeometryEffect(id: "artwork", in: artSpace)
@@ -256,32 +256,32 @@ struct NowPlayingView: View {
                     Image(systemName: t.isFavorite ? "star.fill" : "star")
                         .font(.system(size: 19, weight: .semibold))
                         .foregroundStyle(.tint)
-                        .contentTransition(.symbolEffect(.replace))
+                        
                         .frame(width: 40, height: 40)
                 }
                 .buttonStyle(PressStyle(circle: false))
-                .sensoryFeedback(trigger: t.isFavorite) { _, _ in settings.haptics ? .success : nil }
+                .haptic(trigger: t.isFavorite) { _, _ in settings.haptics ? .success : nil }
                 .accessibilityLabel(t.isFavorite ? "Retirer des favoris" : "Ajouter aux favoris")
 
                 Menu {
-                    Button("Ajouter à une playlist", systemImage: "text.badge.plus") {
+                    IconButton("Ajouter à une playlist", systemImage: "text.badge.plus") {
                         addTarget = AddToPlaylistTarget(trackIDs: [t.id])
                     }
                     Divider()
-                    Button(player.shuffle ? "Désactiver l’aléatoire" : "Lecture aléatoire", systemImage: "shuffle") {
+                    IconButton(player.shuffle ? "Désactiver l’aléatoire" : "Lecture aléatoire", systemImage: "shuffle") {
                         player.setShuffle(!player.shuffle)
                     }
-                    Button(repeatLabel, systemImage: player.repeatMode == .one ? "repeat.1" : "repeat") {
+                    IconButton(repeatLabel, systemImage: player.repeatMode == .one ? "repeat.1" : "repeat") {
                         player.cycleRepeat()
                     }
-                    Button("Effets : " + player.effect.title, systemImage: "dial.medium") {
+                    IconButton("Effets : " + player.effect.title, systemImage: "dial.medium") {
                         showEffects = true
                     }
                     Divider()
-                    Button("Changer la pochette", systemImage: "photo.on.rectangle") {
+                    IconButton("Changer la pochette", systemImage: "photo.on.rectangle") {
                         editing = EditTarget(id: t.id)
                     }
-                    Button("Modifier les infos", systemImage: "pencil") {
+                    IconButton("Modifier les infos", systemImage: "pencil") {
                         editingInfo = EditTarget(id: t.id)
                     }
                     Menu {
@@ -303,10 +303,10 @@ struct NowPlayingView: View {
                         Label("Vitesse : " + AppSettings.speedLabel(settings.playbackSpeed), systemImage: "speedometer")
                     }
                     Divider()
-                    Button("Arrêter la lecture", systemImage: "stop.fill") {
+                    IconButton("Arrêter la lecture", systemImage: "stop.fill") {
                         player.quit()
                     }
-                    Button("Retirer de la bibliothèque", systemImage: "trash", role: .destructive) {
+                    IconButton("Retirer de la bibliothèque", systemImage: "trash", role: .destructive) {
                         library.remove([t.id])
                         player.removed([t.id])
                     }
@@ -330,9 +330,9 @@ struct NowPlayingView: View {
                 player.previous()
             } label: {
                 Image(systemName: "backward.fill")
-                    .font(.system(size: 34))
-                    .symbolEffect(.bounce, value: bouncePrev)
-                    .frame(width: 66, height: 66)
+                    .font(.system(size: Device.isSmallScreen ? 30 : 34))
+                    
+                    .frame(width: Device.isSmallScreen ? 58 : 66, height: Device.isSmallScreen ? 58 : 66)
             }
             .accessibilityLabel("Précédent")
 
@@ -342,11 +342,11 @@ struct NowPlayingView: View {
                 player.togglePlay()
             } label: {
                 Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                    .font(.system(size: 50))
-                    .contentTransition(.symbolEffect(.replace))
-                    .frame(width: 86, height: 86)
+                    .font(.system(size: Device.isSmallScreen ? 44 : 50))
+                    
+                    .frame(width: Device.isSmallScreen ? 72 : 86, height: Device.isSmallScreen ? 72 : 86)
             }
-            .sensoryFeedback(trigger: player.isPlaying) { _, _ in settings.haptics ? .impact(weight: .medium) : nil }
+            .haptic(trigger: player.isPlaying) { _, _ in settings.haptics ? .impact(weight: .medium) : nil }
             .accessibilityLabel(player.isPlaying ? "Pause" : "Lecture")
 
             Spacer()
@@ -356,9 +356,9 @@ struct NowPlayingView: View {
                 player.next()
             } label: {
                 Image(systemName: "forward.fill")
-                    .font(.system(size: 34))
-                    .symbolEffect(.bounce, value: bounceNext)
-                    .frame(width: 66, height: 66)
+                    .font(.system(size: Device.isSmallScreen ? 30 : 34))
+                    
+                    .frame(width: Device.isSmallScreen ? 58 : 66, height: Device.isSmallScreen ? 58 : 66)
             }
             .accessibilityLabel("Suivant")
         }
@@ -423,14 +423,14 @@ struct NowPlayingView: View {
         Button(action: action) {
             Image(systemName: on && symbol != "list.bullet" ? symbol + ".fill" : symbol)
                 .font(.system(size: 21, weight: .medium))
-                .contentTransition(.symbolEffect(.replace))
+                
                 // Bleu quand c'est activé, gris sinon (comme les anciens boutons d'iOS).
                 .foregroundStyle(on ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
                 .frame(width: 46, height: 36)
                 .animation(.spring(response: 0.35, dampingFraction: 0.7), value: on)
         }
         .buttonStyle(PressStyle(circle: false))
-        .sensoryFeedback(trigger: on) { _, _ in settings.haptics ? .selection : nil }
+        .haptic(trigger: on) { _, _ in settings.haptics ? .selection : nil }
         .accessibilityLabel(label)
         .accessibilityValue(on ? "Activé" : "Désactivé")
     }
@@ -471,7 +471,7 @@ struct FullBleedArtwork: View {
 /// Elle vit sous le doigt : elle gonfle avec un léger rebond, s'étire comme un élastique
 /// quand on tire au-delà des bords, et revient en souplesse.
 struct VolumeBar: View {
-    @State private var model = VolumeModel()
+    @StateObject private var model = VolumeModel()
     @State private var dragStart: Float?
     /// Étirement élastique au-delà des bords (en points, négatif = côté gauche).
     @State private var stretch: CGFloat = 0
@@ -513,7 +513,7 @@ struct VolumeBar: View {
         }
         .frame(height: 30)
         .animation(.spring(response: 0.42, dampingFraction: 0.62), value: active)
-        .sensoryFeedback(.impact(weight: .light), trigger: model.volume == 0 || model.volume == 1)
+        .haptic(.impact(weight: .light), trigger: model.volume == 0 || model.volume == 1)
         // Le vrai réglage système, caché (il évite aussi la bulle de volume d'iOS).
         .background { HiddenVolumeView(model: model).frame(width: 1, height: 1).opacity(0.01) }
         .accessibilityElement()
@@ -529,11 +529,11 @@ struct VolumeBar: View {
     }
 }
 
-@MainActor @Observable
-final class VolumeModel {
-    var volume: Float = AVAudioSession.sharedInstance().outputVolume
-    @ObservationIgnored weak var slider: UISlider?
-    @ObservationIgnored private var observation: NSKeyValueObservation?
+@MainActor
+final class VolumeModel: ObservableObject {
+    @Published var volume: Float = AVAudioSession.sharedInstance().outputVolume
+    weak var slider: UISlider?
+    private var observation: NSKeyValueObservation?
 
     init() {
         observation = AVAudioSession.sharedInstance().observe(\.outputVolume, options: [.new]) { [weak self] _, change in
@@ -596,8 +596,8 @@ struct OutputName: View {
 
 /// Choix de l'effet : slowed, sped up, réverbe… avec l'intensité de l'écho.
 struct EffectsSheet: View {
-    @Environment(Player.self) private var player
-    @Environment(AppSettings.self) private var settings
+    @EnvironmentObject private var player: Player
+    @EnvironmentObject private var settings: AppSettings
     @Environment(\.dismiss) private var dismiss
 
     private let columns = [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)]
@@ -674,7 +674,7 @@ struct EffectsSheet: View {
                 .strokeBorder(Color(.separator), lineWidth: selected ? 0 : 0.5))
         }
         .buttonStyle(PressStyle(circle: false))
-        .sensoryFeedback(.selection, trigger: selected)
+        .haptic(.selection, trigger: selected)
     }
 }
 
@@ -683,8 +683,8 @@ struct EffectsSheet: View {
 
 /// Aléatoire, répétition, puis « À suivre » et la suite, directement dans le lecteur.
 struct InlineQueue: View {
-    @Environment(Player.self) private var player
-    @Environment(Library.self) private var library
+    @EnvironmentObject private var player: Player
+    @EnvironmentObject private var library: Library
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -739,7 +739,7 @@ struct InlineQueue: View {
                 .overlay(Capsule().strokeBorder(.tint, lineWidth: 1.2))
         }
         .buttonStyle(PressStyle(circle: false))
-        .sensoryFeedback(.selection, trigger: on)
+        .haptic(.selection, trigger: on)
     }
 
     private func sectionTitle(_ text: String) -> some View {

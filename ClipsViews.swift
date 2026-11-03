@@ -29,18 +29,17 @@ struct Clip: Identifiable, Codable, Hashable {
 
 /// Les clips et edits importés. Ils restent dans l'app (rien n'est modifié dans tes Photos).
 @MainActor
-@Observable
-final class ClipStore {
+final class ClipStore: ObservableObject {
     static let shared = ClipStore()
 
-    private(set) var clips: [Clip] = []
-    var importing = false
+    @Published private(set) var clips: [Clip] = []
+    @Published var importing = false
 
     static let dir = Library.base.appendingPathComponent("Clips", isDirectory: true)
     static let indexURL = Library.base.appendingPathComponent("clips.json")
     static let videoExtensions: Set<String> = ["mp4", "mov", "m4v", "3gp", "avi", "mkv"]
 
-    @ObservationIgnored private let thumbs = NSCache<NSString, UIImage>()
+    private let thumbs = NSCache<NSString, UIImage>()
 
     init() {
         try? FileManager.default.createDirectory(at: Self.dir, withIntermediateDirectories: true)
@@ -274,7 +273,7 @@ struct EditsFeedView: View {
     let clips: [Clip]
     let startID: UUID
     @Environment(\.dismiss) private var dismiss
-    @Environment(Player.self) private var music
+    @EnvironmentObject private var music: Player
     @State private var position: UUID?
     @State private var paused = false
 
@@ -285,24 +284,14 @@ struct EditsFeedView: View {
     }
     @State private var editing: Clip?
 
-    private var store: ClipStore { .shared }
+    @ObservedObject private var store = ClipStore.shared
 
     var body: some View {
         ZStack(alignment: .top) {
             Color.black.ignoresSafeArea()
-            ScrollView(.vertical) {
-                LazyVStack(spacing: 0) {
-                    ForEach(clips) { clip in
-                        page(clip)
-                            .containerRelativeFrame([.horizontal, .vertical])
-                            .id(clip.id)
-                    }
-                }
-                .scrollTargetLayout()
+            VerticalPager(items: clips, selection: $position) { clip in
+                page(clip)
             }
-            .scrollTargetBehavior(.paging)
-            .scrollPosition(id: $position)
-            .scrollIndicators(.hidden)
             .ignoresSafeArea()
 
             HStack {
@@ -326,8 +315,8 @@ struct EditsFeedView: View {
             if position == nil { position = startID }
             if music.isPlaying { music.pause() }
         }
-        .onChange(of: position) { _, _ in paused = false }
-        .sensoryFeedback(.selection, trigger: position)
+        .onChangeCompat(of: position) { _, _ in paused = false }
+        .haptic(.selection, trigger: position)
         .sheet(item: $editing) { ClipInfoEditor(clip: $0) }
     }
 
@@ -468,12 +457,12 @@ struct ClipImportMenu<Content: View>: View {
     @State private var showFiles = false
     @State private var naming: Clip?
 
-    private var store: ClipStore { .shared }
+    @ObservedObject private var store = ClipStore.shared
 
     var body: some View {
         Menu {
-            Button("Depuis Photos", systemImage: "photo.on.rectangle") { showPhotos = true }
-            Button("Depuis Fichiers", systemImage: "folder") { showFiles = true }
+            IconButton("Depuis Photos", systemImage: "photo.on.rectangle") { showPhotos = true }
+            IconButton("Depuis Fichiers", systemImage: "folder") { showFiles = true }
         } label: {
             label()
         }
@@ -486,7 +475,7 @@ struct ClipImportMenu<Content: View>: View {
                    let c = store.clip(id), !c.isVertical { naming = c }
             }
         }
-        .onChange(of: photoItems) { _, items in
+        .onChangeCompat(of: photoItems) { _, items in
             guard !items.isEmpty else { return }
             Task {
                 let id = await store.importFromPhotos(items, vertical: asEdit)
@@ -564,13 +553,13 @@ struct ClipInfoEditor: View {
 /// Tous les clips et edits, avec un choix en segments comme dans l'iTunes Store.
 struct ClipsView: View {
     var startOnEdits = false
-    @Environment(Player.self) private var player
+    @EnvironmentObject private var player: Player
     @State private var segment = 0
     @State private var feedStart: Clip?
     @State private var editing: Clip?
     @State private var started = false
 
-    private var store: ClipStore { .shared }
+    @ObservedObject private var store = ClipStore.shared
 
     var body: some View {
         let list = segment == 0 ? store.videos : store.edits
@@ -635,7 +624,7 @@ struct ClipsView: View {
         .navigationTitle("Clips vidéo")
         .background { Color(.systemBackground).ignoresSafeArea() }
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItem(placement: .navigationBarTrailing) {
                 ClipImportMenu(asEdit: segment == 1) { Image(systemName: "plus") }
                     .accessibilityLabel("Importer une vidéo")
             }
@@ -650,13 +639,13 @@ struct ClipsView: View {
     }
 
     @ViewBuilder private func menu(_ clip: Clip) -> some View {
-        Button("Modifier les infos", systemImage: "pencil") { editing = clip }
-        Button(clip.isVertical ? "Ranger dans les clips" : "Ranger dans les edits",
+        IconButton("Modifier les infos", systemImage: "pencil") { editing = clip }
+        IconButton(clip.isVertical ? "Ranger dans les clips" : "Ranger dans les edits",
                systemImage: clip.isVertical ? "rectangle" : "rectangle.portrait") {
             store.setVertical(clip.id, !clip.isVertical)
         }
         ShareLink(item: store.url(clip)) { Label("Partager", systemImage: "square.and.arrow.up") }
-        Button("Supprimer", systemImage: "trash", role: .destructive) { store.remove(clip.id) }
+        IconButton("Supprimer", systemImage: "trash", role: .destructive) { store.remove(clip.id) }
     }
 }
 
@@ -664,10 +653,10 @@ struct ClipsView: View {
 
 /// « Clips vidéo » et « Edits » sur l'Accueil, comme dans l'iTunes Store.
 struct HomeClipSections: View {
-    @Environment(Player.self) private var player
+    @EnvironmentObject private var player: Player
     @State private var feedStart: Clip?
 
-    private var store: ClipStore { .shared }
+    @ObservedObject private var store = ClipStore.shared
 
     var body: some View {
         let videos = store.videos
@@ -685,10 +674,9 @@ struct HomeClipSections: View {
                         importCard(width: videos.isEmpty ? 240 : 150, height: 135,
                                    text: videos.isEmpty ? "Importer un clip" : "Importer", asEdit: false)
                     }
-                    .scrollTargetLayout()
+                    
                     .padding(.horizontal, 20)
                 }
-                .scrollTargetBehavior(.viewAligned)
                 .scrollIndicators(.hidden)
             }
 
@@ -703,10 +691,9 @@ struct HomeClipSections: View {
                         }
                         importCard(width: 120, height: 213, text: edits.isEmpty ? "Importer un edit" : "Importer", asEdit: true)
                     }
-                    .scrollTargetLayout()
+                    
                     .padding(.horizontal, 20)
                 }
-                .scrollTargetBehavior(.viewAligned)
                 .scrollIndicators(.hidden)
             }
         }
@@ -716,11 +703,11 @@ struct HomeClipSections: View {
     }
 
     @ViewBuilder private func moveMenu(_ clip: Clip) -> some View {
-        Button(clip.isVertical ? "Ranger dans les clips" : "Ranger dans les edits",
+        IconButton(clip.isVertical ? "Ranger dans les clips" : "Ranger dans les edits",
                systemImage: clip.isVertical ? "rectangle" : "rectangle.portrait") {
             store.setVertical(clip.id, !clip.isVertical)
         }
-        Button("Supprimer", systemImage: "trash", role: .destructive) { store.remove(clip.id) }
+        IconButton("Supprimer", systemImage: "trash", role: .destructive) { store.remove(clip.id) }
     }
 
     private func importCard(width: CGFloat, height: CGFloat, text: String, asEdit: Bool) -> some View {

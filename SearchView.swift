@@ -2,8 +2,8 @@ import SwiftUI
 
 /// Recherche dans toute la bibliothèque, paroles comprises.
 struct SearchView: View {
-    @Environment(Library.self) private var library
-    @Environment(Player.self) private var player
+    @EnvironmentObject private var library: Library
+    @EnvironmentObject private var player: Player
     @State private var query = ""
     @State private var scope = 0   // 0 tous, 1 albums, 2 morceaux, 3 artistes, 4 playlists
 
@@ -43,7 +43,7 @@ struct SearchView: View {
         .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "Titres, artistes, albums, paroles")
         .navigationTitle("Recherche")
         .background { AmbientBackground(track: player.currentID.flatMap { library.track($0) }, dim: 0.6) }
-        .onChange(of: query) { _, q in if q.isEmpty { scope = 0 } }
+        .onChangeCompat(of: query) { _, q in if q.isEmpty { scope = 0 } }
     }
 
     @ViewBuilder private var results: some View {
@@ -53,7 +53,7 @@ struct SearchView: View {
         let songs = library.tracks.filter { $0.matches(query) || ($0.lyrics?.localizedCaseInsensitiveContains(query) ?? false) }
 
         if artists.isEmpty && albums.isEmpty && playlists.isEmpty && songs.isEmpty {
-            ContentUnavailableView.search(text: query)
+            ContentUnavailableView("Aucun résultat", systemImage: "magnifyingglass", description: Text("Rien ne correspond à « \(query) »."))
                 .listRowBackground(Color.clear)
                 .listRowSeparator(.hidden)
         }

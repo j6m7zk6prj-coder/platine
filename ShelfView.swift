@@ -3,12 +3,11 @@ import CoreMotion
 
 // MARK: - Inclinaison de l'iPhone (reflets et holographique qui bougent avec le téléphone)
 
-@Observable
 final class MotionTilt {
     var x: Double = 0
     var y: Double = 0
-    @ObservationIgnored private let manager = CMMotionManager()
-    @ObservationIgnored private var base: CMAttitude?
+    private let manager = CMMotionManager()
+    private var base: CMAttitude?
 
     func start() {
         guard manager.isDeviceMotionAvailable, !manager.isDeviceMotionActive else { return }
@@ -217,7 +216,7 @@ struct CaseHinge: View {
 struct CDBackInsert: View {
     let album: AlbumInfo
     var lightX: Double
-    @Environment(Library.self) private var library
+    @EnvironmentObject private var library: Library
 
     /// L'année de sortie ; à défaut, l'année où l'album est entré dans la bibliothèque.
     private var year: Int {
@@ -750,7 +749,7 @@ struct FormatSwitch: View {
         .padding(4)
         .glassCapsule()
         .animation(.spring(response: 0.4, dampingFraction: 0.8), value: format)
-        .sensoryFeedback(.selection, trigger: format)
+        .haptic(.selection, trigger: format)
     }
 }
 

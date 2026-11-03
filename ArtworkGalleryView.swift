@@ -110,7 +110,7 @@ private struct GalleryImage: View {
 /// Toutes les pochettes, images et animations : touche-en une pour la voir en grand,
 /// puis fais défiler les autres d'un glissement de doigt.
 struct ArtworkGalleryView: View {
-    @Environment(Library.self) private var library
+    @EnvironmentObject private var library: Library
     @State private var filter = 0
     @State private var all: [GalleryItem] = []
     @State private var opened: GalleryOpen?
@@ -260,8 +260,8 @@ struct ArtworkPager: View {
         .animation(.easeOut(duration: 0.2), value: chromeHidden)
         .statusBarHidden(chromeHidden)
         .onAppear { if current.isEmpty, items.indices.contains(start) { current = items[start].id } }
-        .onChange(of: current) { _, _ in zoomed = false }
-        .sensoryFeedback(.selection, trigger: current)
+        .onChangeCompat(of: current) { _, _ in zoomed = false }
+        .haptic(.selection, trigger: current)
     }
 
     private func chrome(_ item: GalleryItem) -> some View {
@@ -305,7 +305,7 @@ struct ArtworkPager: View {
                     LazyHStack(spacing: 4) {
                         ForEach(items) { it in
                             Button {
-                                withAnimation(.smooth(duration: 0.3)) { current = it.id }
+                                withAnimation(.easeInOut(duration: 0.3)) { current = it.id }
                             } label: {
                                 GalleryImage(item: it, maxPixel: 120)
                                     .frame(width: it.id == current ? 46 : 34, height: 46)
@@ -319,11 +319,11 @@ struct ArtworkPager: View {
                         }
                     }
                     .padding(.horizontal, UIScreen.main.bounds.width / 2 - 23)
-                    .animation(.smooth(duration: 0.25), value: current)
+                    .animation(.easeInOut(duration: 0.25), value: current)
                 }
                 .frame(height: 50)
                 .onAppear { proxy.scrollTo(current, anchor: .center) }
-                .onChange(of: current) { _, id in withAnimation(.smooth(duration: 0.3)) { proxy.scrollTo(id, anchor: .center) } }
+                .onChangeCompat(of: current) { _, id in withAnimation(.easeInOut(duration: 0.3)) { proxy.scrollTo(id, anchor: .center) } }
             }
             .padding(.bottom, 14)
         }
@@ -360,9 +360,9 @@ private struct ArtworkPage: View {
                 }
                 .onTapGesture { onTap() }
                 .gesture(
-                    MagnifyGesture()
+                    MagnificationGesture()
                         .onChanged { g in
-                            scale = min(5, max(1, baseScale * g.magnification))
+                            scale = min(5, max(1, baseScale * g))
                             zoomed = scale > 1.01
                         }
                         .onEnded { _ in
@@ -387,7 +387,7 @@ private struct ArtworkPage: View {
                 aspect = size.width / size.height
             }
         }
-        .onChange(of: active) { _, on in if !on { reset() } }
+        .onChangeCompat(of: active) { _, on in if !on { reset() } }
     }
 
     @ViewBuilder private var media: some View {

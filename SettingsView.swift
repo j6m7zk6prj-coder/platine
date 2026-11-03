@@ -2,16 +2,15 @@ import SwiftUI
 
 /// Réglages : lecture, apparence, bibliothèque, stockage.
 struct SettingsView: View {
-    @Environment(AppSettings.self) private var settings
-    @Environment(Library.self) private var library
-    @Environment(Player.self) private var player
-    @Environment(UIState.self) private var ui
+    @EnvironmentObject private var settings: AppSettings
+    @EnvironmentObject private var library: Library
+    @EnvironmentObject private var player: Player
+    @EnvironmentObject private var ui: UIState
     @State private var confirmDelete = false
     @State private var storage: Int64 = 0
     @State private var lockBytes: Int64 = 0
 
     var body: some View {
-        @Bindable var settings = settings
         Form {
             Section {
                 NavigationLink {
@@ -132,7 +131,7 @@ struct SettingsView: View {
             }
 
             Section {
-                LabeledContent("Version", value: "10.3 Classique")
+                LabeledContent("Version", value: "10.3 iOS 16")
             } footer: {
                 Text("Platine lit ta propre musique. Seule la recherche de paroles contacte internet (LRCLIB), et uniquement quand tu ouvres des paroles absentes ou lances la recherche.")
             }
@@ -164,9 +163,9 @@ struct SettingsView: View {
 
 /// Thème, couleur d'accent, pochettes, paroles et Collection.
 struct AppearanceSettingsView: View {
-    @Environment(AppSettings.self) private var settings
-    @Environment(Library.self) private var library
-    @Environment(Player.self) private var player
+    @EnvironmentObject private var settings: AppSettings
+    @EnvironmentObject private var library: Library
+    @EnvironmentObject private var player: Player
 
     private var lockFooter: String {
         if !settings.lockScreenPlayer {
@@ -179,7 +178,6 @@ struct AppearanceSettingsView: View {
     }
 
     var body: some View {
-        @Bindable var settings = settings
         Form {
             Section {
                 Picker("Apparence", selection: $settings.appearance) {
@@ -236,10 +234,10 @@ struct AppearanceSettingsView: View {
 
             Section {
                 Toggle("Lecteur sur l’écran verrouillé", isOn: $settings.lockScreenPlayer)
-                    .onChange(of: settings.lockScreenPlayer) { _, _ in player.applyLockScreenPlayer() }
+                    .onChangeCompat(of: settings.lockScreenPlayer) { _, _ in player.applyLockScreenPlayer() }
                 Toggle("Pochette animée sur l’écran verrouillé", isOn: $settings.lockScreenAnimation)
                     .disabled(!settings.lockScreenPlayer)
-                    .onChange(of: settings.lockScreenAnimation) { _, _ in player.updateNowPlaying() }
+                    .onChangeCompat(of: settings.lockScreenAnimation) { _, _ in player.updateNowPlaying() }
             } header: {
                 Text("Écran verrouillé")
             } footer: {
@@ -259,7 +257,7 @@ struct AppearanceSettingsView: View {
                     .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color(.systemBackground)))
                     .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Color(.separator), lineWidth: 0.5))
                     .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 12, trailing: 16))
-                    .animation(.smooth(duration: 0.25), value: settings.lyricsSize)
+                    .animation(.easeInOut(duration: 0.25), value: settings.lyricsSize)
             } header: {
                 Text("Paroles")
             }
