@@ -1,5 +1,3 @@
-# Compile Platine sur un Mac de GitHub et produit Platine.ipa (non signé).
-# Sideloadly le signe ensuite avec ton identifiant Apple au moment de l'installer.
 name: Construire Platine
 
 on:
@@ -17,11 +15,35 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Choisir la version d’Xcode la plus récente
+      - name: Ranger les fichiers
+        run: |
+          mkdir -p Platine/Assets.xcassets/AppIcon.appiconset
+          for f in *.swift; do [ -e "$f" ] && mv "$f" Platine/; done
+          rm -f Contents.json "Contents (1).json"
+          echo '{ "info" : { "author" : "xcode", "version" : 1 } }' > Platine/Assets.xcassets/Contents.json
+          icon_set () {
+            mkdir -p "Platine/Assets.xcassets/$2.appiconset" "Platine/Assets.xcassets/Preview-$3.imageset"
+            cp "$1" "Platine/Assets.xcassets/$2.appiconset/icon.png"
+            cp "$1" "Platine/Assets.xcassets/Preview-$3.imageset/icon.png"
+            echo '{ "images" : [ { "filename" : "icon.png", "idiom" : "universal", "platform" : "ios", "size" : "1024x1024" } ], "info" : { "author" : "xcode", "version" : 1 } }' > "Platine/Assets.xcassets/$2.appiconset/Contents.json"
+            echo '{ "images" : [ { "filename" : "icon.png", "idiom" : "universal" } ], "info" : { "author" : "xcode", "version" : 1 } }' > "Platine/Assets.xcassets/Preview-$3.imageset/Contents.json"
+          }
+          if [ -f icon.png ]; then icon_set icon.png AppIcon Platine; fi
+          ALT=""
+          for f in icon-*.png; do
+            [ -e "$f" ] || continue
+            n="${f#icon-}"; n="${n%.png}"; n="$(echo "$n" | tr -cd 'A-Za-z0-9_-')"
+            [ -n "$n" ] || continue
+            icon_set "$f" "AppIcon-$n" "$n"
+            ALT="$ALT AppIcon-$n"
+          done
+          echo "ALT_ICONS=${ALT# }" >> "$GITHUB_ENV"
+          find Platine -type f | sort
+
+      - name: Choisir Xcode
         run: |
           XC=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | grep -vi beta | sort -V | tail -1)
           if [ -z "$XC" ]; then XC=$(ls -d /Applications/Xcode_*.app | grep -vi beta | sort -V | tail -1); fi
-          echo "Xcode utilisé : $XC"
           sudo xcode-select -s "$XC"
           xcodebuild -version
 
@@ -34,17 +56,21 @@ jobs:
       - name: Compiler
         run: |
           set -o pipefail
-          xcodebuild \
-            -project Platine.xcodeproj \
-            -target Platine \
-            -configuration Release \
-            -sdk iphoneos \
-            SYMROOT="$PWD/build" \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
-            build | tee build.log | grep -E "error:|warning: .*deprecated|BUILD (SUCCEEDED|FAILED)" || true
-          test -d build/Release-iphoneos/Platine.app
+          xcodebuild -project Platine.xcodeproj -target Platine -configuration Release -sdk iphoneos \
+            SYMROOT="$PWD/build" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES="$ALT_ICONS" \
+            ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS=YES \
+            build > build.log 2>&1 || true
+          if grep -q "BUILD SUCCEEDED" build.log && test -f build/Release-iphoneos/Platine.app/Platine; then
+            echo "BUILD SUCCEEDED"
+          else
+            echo "===== ERREURS ====="
+            # Toutes les erreurs, même celles écrites autrement (« error : », « fatal error », éditeur de liens…)
+            grep -n -i -E "error|undefined symbol|ld: " build.log | grep -v -i "warning" | head -40 || true
+            echo "===== FIN DU JOURNAL ====="
+            tail -40 build.log
+            exit 1
+          fi
 
       - name: Emballer le .ipa
         run: |
@@ -52,16 +78,13 @@ jobs:
           cp -R build/Release-iphoneos/Platine.app Payload/
           zip -qry Platine.ipa Payload
 
-      - name: Publier le .ipa
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: Platine-ipa
           path: Platine.ipa
-          retention-days: 30
 
-      - name: Journal de compilation (en cas d’erreur)
+      - uses: actions/upload-artifact@v4
         if: failure()
-        uses: actions/upload-artifact@v4
         with:
           name: journal-compilation
           path: build.log

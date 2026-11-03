@@ -270,7 +270,12 @@ struct PlaylistArtwork: View {
 /// Titre de section avec « Tout afficher » à droite, comme dans Musique.
 struct SectionHeader<Destination: View>: View {
     let title: String
-    var destination: (() -> Destination)?
+    let destination: (() -> Destination)?
+
+    init(title: String, destination: (() -> Destination)?) {
+        self.title = title
+        self.destination = destination
+    }
 
     var body: some View {
         HStack(alignment: .firstTextBaseline) {
