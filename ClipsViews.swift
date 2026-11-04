@@ -665,6 +665,8 @@ struct ClipsView: View {
 
 /// « Clips vidéo » et « Edits » sur l'Accueil, comme dans l'iTunes Store.
 struct HomeClipSections: View {
+    var showClips = true
+    var showEdits = true
     @Environment(Player.self) private var player
     @State private var feedStart: Clip?
 
@@ -674,6 +676,7 @@ struct HomeClipSections: View {
         let videos = store.videos
         let edits = store.edits
         VStack(alignment: .leading, spacing: 34) {
+            if showClips {
             HomeSection(title: "Clips vidéo", destination: { ClipsView() }) {
                 ScrollView(.horizontal) {
                     LazyHStack(alignment: .top, spacing: 14) {
@@ -692,6 +695,9 @@ struct HomeClipSections: View {
                 .scrollIndicators(.hidden)
             }
 
+            }
+
+            if showEdits {
             HomeSection(title: "Edits", destination: { ClipsView(startOnEdits: true) }) {
                 ScrollView(.horizontal) {
                     LazyHStack(alignment: .top, spacing: 12) {
@@ -707,6 +713,7 @@ struct HomeClipSections: View {
                 }
                 .scrollTargetBehavior(.viewAligned)
                 .scrollIndicators(.hidden)
+            }
             }
         }
         .fullScreenCover(item: $feedStart) { clip in

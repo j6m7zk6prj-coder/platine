@@ -8,6 +8,9 @@ struct HomeView: View {
     @Environment(Player.self) private var player
     @Environment(UIState.self) private var ui
     @State private var showSettings = false
+    @State private var showGallery = false
+    @State private var showOrganizer = false
+    private var layout: HomeLayout { .shared }
 
     private var currentTrack: Track? { player.currentID.flatMap { library.track($0) } }
 
@@ -33,6 +36,14 @@ struct HomeView: View {
         }
         .navigationTitle("Accueil")
         .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button {
+                    withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) { layout.editing.toggle() }
+                } label: {
+                    Text(layout.editing ? "OK" : "Modifier").fontWeight(layout.editing ? .bold : .regular)
+                }
+                .disabled(library.tracks.isEmpty)
+            }
             // Comme Musique : le profil en haut à droite ouvre les réglages.
             ToolbarItem(placement: .topBarTrailing) {
                 Button { showSettings = true } label: {
@@ -57,8 +68,7 @@ struct HomeView: View {
     }
 
     private var content: some View {
-        let recents = recentAlbums
-        let resume = recents.first ?? library.recentlyAdded.first
+        let items = layout.items
         return ScrollView {
             VStack(alignment: .leading, spacing: 34) {
                 Text(Date.now.formatted(Date.FormatStyle(locale: Locale(identifier: "fr_FR")).weekday(.wide).day().month(.wide)).capitalized)
@@ -67,78 +77,171 @@ struct HomeView: View {
                     .padding(.horizontal, 20)
                     .padding(.top, -18)
 
-                if let resume {
-                    HomeSection(title: recents.isEmpty ? "À découvrir" : "Reprendre l’écoute") {
-                        HeroAlbumCard(album: resume)
-                            .padding(.horizontal, 20)
+                if layout.editing {
+                    // Comme l'écran d'accueil : ajouter, tout ranger, terminer.
+                    HStack(spacing: 10) {
+                        Button { showGallery = true } label: {
+                            Label("Ajouter", systemImage: "plus").font(.subheadline.weight(.semibold))
+                        }
+                        .buttonStyle(OutlineButtonStyle(compact: true))
+                        Button { showOrganizer = true } label: {
+                            Label("Ranger", systemImage: "list.bullet").font(.subheadline.weight(.semibold))
+                        }
+                        .buttonStyle(OutlineButtonStyle(compact: true))
+                        Spacer()
+                        Button { withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) { layout.editing = false } } label: {
+                            Text("OK").font(.subheadline.weight(.bold))
+                        }
+                        .buttonStyle(FilledButtonStyle())
+                    }
+                    .padding(.horizontal, 20)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                }
+
+                ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                    // Hors modification, une rubrique sans rien à montrer ne prend pas de place.
+                    if layout.editing || hasContent(item) {
+                        EditableSection(item: item, isFirst: index == 0, isLast: index == items.count - 1) {
+                            section(item)
+                        }
+                        .transition(.scale(scale: 0.9).combined(with: .opacity))
                     }
                 }
 
-                HomeSection(title: "Tes mix et playlists", destination: { PlaylistsView() }) {
-                    ScrollView(.horizontal) {
-                        LazyHStack(alignment: .top, spacing: 14) {
-                            ForEach(mixes) { mix in
-                                MixCard(mix: mix)
-                            }
-                            // Tes playlists, juste à côté des mix (épinglées en premier).
-                            ForEach(library.sortedPlaylists) { p in
-                                PlaylistCard(playlist: p)
-                            }
-                            NewPlaylistCard()
-                        }
-                        .scrollTargetLayout()
+                if items.isEmpty {
+                    Text("Ton Accueil est vide. Touche « Modifier l’Accueil » pour y ajouter des rubriques.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
                         .padding(.horizontal, 20)
-                    }
-                    .scrollTargetBehavior(.viewAligned)
-                    .scrollIndicators(.hidden)
                 }
 
-                // Clips vidéo et edits format TikTok.
-                HomeClipSections()
-
-                if recents.count > 1 {
-                    HomeSection(title: "Écoutés récemment") {
-                        albumShelf(Array(recents.dropFirst()))
+                if !layout.editing {
+                    Button {
+                        withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) { layout.editing = true }
+                    } label: {
+                        Label("Modifier l’Accueil", systemImage: "square.grid.2x2")
                     }
-                }
-
-                if !library.recentlyAdded.isEmpty {
-                    HomeSection(title: "Ajouts récents", destination: { AlbumsView() }) {
-                        albumShelf(library.recentlyAdded)
-                    }
-                }
-
-                let artists = topArtists
-                if !artists.isEmpty {
-                    HomeSection(title: "Tes artistes", destination: { ArtistsView() }) {
-                        ScrollView(.horizontal) {
-                            LazyHStack(alignment: .top, spacing: 18) {
-                                ForEach(artists.prefix(15)) { artist in
-                                    NavigationLink { ArtistDetailView(artistID: artist.id) } label: {
-                                        VStack(spacing: 8) {
-                                            ArtistAvatar(artist: artist)
-                                                .frame(width: 112, height: 112)
-                                                .shadow(color: .black.opacity(0.25), radius: 10, y: 6)
-                                            Text(artist.name)
-                                                .font(.subheadline.weight(.medium))
-                                                .lineLimit(1)
-                                                .frame(width: 112)
-                                        }
-                                    }
-                                    .buttonStyle(PressStyle(circle: false))
-                                }
-                            }
-                            .scrollTargetLayout()
-                            .padding(.horizontal, 20)
-                        }
-                        .scrollTargetBehavior(.viewAligned)
-                        .scrollIndicators(.hidden)
-                    }
+                    .buttonStyle(OutlineButtonStyle(compact: true))
+                    .frame(maxWidth: .infinity)
                 }
             }
             .padding(.top, 8)
             .padding(.bottom, 30)
+            .animation(.spring(response: 0.4, dampingFraction: 0.85), value: items)
         }
+        .scrollIndicators(.hidden)
+        .sheet(isPresented: $showGallery) { HomeGallery() }
+        .sheet(isPresented: $showOrganizer) { HomeOrganizer() }
+    }
+
+    /// Une rubrique de l'Accueil.
+    @ViewBuilder private func section(_ item: HomeItem) -> some View {
+        switch item.kind {
+        case .resume:
+            let recents = recentAlbums
+            if let resume = recents.first ?? library.recentlyAdded.first {
+                HomeSection(title: recents.isEmpty ? "À découvrir" : "Reprendre l’écoute") {
+                    HeroAlbumCard(album: resume).padding(.horizontal, 20)
+                }
+            } else { placeholder(item) }
+        case .mixes:
+            HomeSection(title: "Tes mix") {
+                shelf {
+                    ForEach(mixes) { MixCard(mix: $0) }
+                }
+            }
+        case .playlists:
+            HomeSection(title: "Tes playlists", destination: { PlaylistsView() }) {
+                shelf {
+                    ForEach(library.sortedPlaylists) { PlaylistCard(playlist: $0) }
+                    NewPlaylistCard()
+                }
+            }
+        case .clips:
+            HomeClipSections(showEdits: false)
+        case .edits:
+            HomeClipSections(showClips: false)
+        case .recent:
+            let recents = recentAlbums
+            if recents.count > 1 {
+                HomeSection(title: "Écoutés récemment") { albumShelf(Array(recents.dropFirst())) }
+            } else { placeholder(item) }
+        case .added:
+            if !library.recentlyAdded.isEmpty {
+                HomeSection(title: "Ajouts récents", destination: { AlbumsView() }) { albumShelf(library.recentlyAdded) }
+            } else { placeholder(item) }
+        case .artists:
+            let artists = layout.orderedArtists(library.artists)
+            if !artists.isEmpty {
+                HomeSection(title: "Tes artistes", destination: { ArtistsView() }) {
+                    shelf {
+                        ForEach(artists.prefix(20)) { artist in
+                            NavigationLink { ArtistDetailView(artistID: artist.id) } label: {
+                                VStack(spacing: 8) {
+                                    ArtistAvatar(artist: artist)
+                                        .frame(width: 112, height: 112)
+                                        .shadow(color: .black.opacity(0.25), radius: 10, y: 6)
+                                    Text(artist.name)
+                                        .font(.subheadline.weight(.medium))
+                                        .lineLimit(1)
+                                        .frame(width: 112)
+                                }
+                            }
+                            .buttonStyle(PressStyle(circle: false))
+                        }
+                    }
+                }
+            } else { placeholder(item) }
+        case .artist:
+            if let ref = item.ref, let a = library.artist(ref) { PinnedArtistSection(artist: a) } else { placeholder(item) }
+        case .playlist:
+            if let ref = item.ref, let id = UUID(uuidString: ref), let p = library.playlist(id) {
+                PinnedPlaylistSection(playlist: p)
+            } else { placeholder(item) }
+        case .album:
+            if let ref = item.ref, let a = library.album(ref) {
+                HomeSection(title: a.title, destination: { AlbumDetailView(albumID: a.id) }) {
+                    HeroAlbumCard(album: a).padding(.horizontal, 20)
+                }
+            } else { placeholder(item) }
+        }
+    }
+
+    private func hasContent(_ item: HomeItem) -> Bool {
+        switch item.kind {
+        case .resume: return !recentAlbums.isEmpty || !library.recentlyAdded.isEmpty
+        case .mixes, .playlists, .clips, .edits: return true
+        case .recent: return recentAlbums.count > 1
+        case .added: return !library.recentlyAdded.isEmpty
+        case .artists: return !library.artists.isEmpty
+        case .artist: return item.ref.flatMap { library.artist($0) } != nil
+        case .playlist: return item.ref.flatMap { UUID(uuidString: $0) }.flatMap { library.playlist($0) } != nil
+        case .album: return item.ref.flatMap { library.album($0) } != nil
+        }
+    }
+
+    /// Rubrique vide : visible seulement quand on modifie l'Accueil (pour pouvoir la ranger ou la retirer).
+    @ViewBuilder private func placeholder(_ item: HomeItem) -> some View {
+        if layout.editing {
+            HStack(spacing: 10) {
+                Image(systemName: item.symbol)
+                Text(item.title + " — rien à montrer pour l’instant")
+            }
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 18)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func shelf<C: View>(@ViewBuilder _ content: () -> C) -> some View {
+        ScrollView(.horizontal) {
+            LazyHStack(alignment: .top, spacing: 14) { content() }
+                .scrollTargetLayout()
+                .padding(.horizontal, 20)
+        }
+        .scrollTargetBehavior(.viewAligned)
         .scrollIndicators(.hidden)
     }
 
@@ -410,6 +513,120 @@ private struct NewPlaylistCard: View {
             TextField("Nom de la playlist", text: $name)
             Button("Créer") { library.createPlaylist(name: name); name = "" }
             Button("Annuler", role: .cancel) { name = "" }
+        }
+    }
+}
+
+/// Un artiste épinglé : sa photo en grand, Lecture / Aléatoire, puis ses albums.
+private struct PinnedArtistSection: View {
+    let artist: ArtistInfo
+    @Environment(Player.self) private var player
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            NavigationLink { ArtistDetailView(artistID: artist.id) } label: {
+                HStack(spacing: 16) {
+                    ArtistAvatar(artist: artist)
+                        .frame(width: 92, height: 92)
+                        .shadow(color: .black.opacity(0.3), radius: 12, y: 6)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("ARTISTE").font(.caption2.weight(.bold)).tracking(0.8).foregroundStyle(.secondary)
+                        Text(artist.name).font(.title2.bold()).lineLimit(2).foregroundStyle(.primary)
+                        Text("\(artist.albums.count) album\(artist.albums.count > 1 ? "s" : "") · \(songCount(artist.tracks.count))")
+                            .font(.subheadline).foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 0)
+                }
+            }
+            .buttonStyle(PressStyle(circle: false))
+            .padding(.horizontal, 20)
+
+            HStack(spacing: 10) {
+                Button { player.play(ids: artist.tracks.map(\.id), shuffled: false) } label: {
+                    Label("Lire", systemImage: "play.fill").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(OutlineButtonStyle())
+                Button { player.play(ids: artist.tracks.map(\.id), shuffled: true) } label: {
+                    Label("Aléatoire", systemImage: "shuffle").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(OutlineButtonStyle())
+            }
+            .padding(.horizontal, 20)
+
+            if !artist.albums.isEmpty {
+                ScrollView(.horizontal) {
+                    LazyHStack(alignment: .top, spacing: 14) {
+                        ForEach(artist.albums) { album in
+                            NavigationLink { AlbumDetailView(albumID: album.id) } label: {
+                                AlbumCard(album: album).frame(width: 140)
+                            }
+                            .buttonStyle(PressStyle(circle: false))
+                        }
+                    }
+                    .padding(.horizontal, 20)
+                }
+                .scrollIndicators(.hidden)
+            }
+        }
+    }
+}
+
+/// Une playlist épinglée : sa mosaïque, Lecture / Aléatoire et ses premiers titres.
+private struct PinnedPlaylistSection: View {
+    let playlist: Playlist
+    @Environment(Library.self) private var library
+    @Environment(Player.self) private var player
+
+    var body: some View {
+        let tracks = library.tracks(playlist.trackIDs)
+        VStack(alignment: .leading, spacing: 14) {
+            NavigationLink { PlaylistDetailView(playlistID: playlist.id) } label: {
+                HStack(spacing: 16) {
+                    PlaylistMosaic(playlist: playlist, cornerRadius: 16)
+                        .frame(width: 100, height: 100)
+                        .shadow(color: .black.opacity(0.3), radius: 12, y: 6)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("PLAYLIST").font(.caption2.weight(.bold)).tracking(0.8).foregroundStyle(.secondary)
+                        Text(playlist.name).font(.title2.bold()).lineLimit(2).foregroundStyle(.primary)
+                        Text(songCount(tracks.count)).font(.subheadline).foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 0)
+                }
+            }
+            .buttonStyle(PressStyle(circle: false))
+            .padding(.horizontal, 20)
+
+            HStack(spacing: 10) {
+                Button { player.play(ids: tracks.map(\.id), shuffled: false) } label: {
+                    Label("Lire", systemImage: "play.fill").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(OutlineButtonStyle())
+                Button { player.play(ids: tracks.map(\.id), shuffled: true) } label: {
+                    Label("Aléatoire", systemImage: "shuffle").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(OutlineButtonStyle())
+            }
+            .disabled(tracks.isEmpty)
+            .padding(.horizontal, 20)
+
+            VStack(spacing: 0) {
+                ForEach(tracks.prefix(4)) { t in
+                    Button { player.play(ids: tracks.map(\.id), startAt: t.id) } label: {
+                        HStack(spacing: 12) {
+                            ArtworkView(track: t, animated: false, small: true, cornerRadius: 7).frame(width: 46, height: 46)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(t.title).font(.body.weight(.medium)).lineLimit(1).foregroundStyle(.primary)
+                                Text(t.displayArtist).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                            }
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.vertical, 6)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(PressStyle(circle: false))
+                }
+            }
+            .padding(.horizontal, 20)
         }
     }
 }

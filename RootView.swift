@@ -141,15 +141,31 @@ struct AccessoryPlayer: View {
     var onOpen: () -> Void
     @Environment(Player.self) private var player
     @Environment(Library.self) private var library
+    @Environment(AppSettings.self) private var settings
     @Environment(\.tabViewBottomAccessoryPlacement) private var placement
+    @State private var dragY: CGFloat = 0
 
     var body: some View {
         let t = player.currentID.flatMap { library.track($0) }
         let inline = placement == .inline
         HStack(spacing: 10) {
-            ArtworkView(track: t, animated: false, small: true, cornerRadius: inline ? 6 : 8)
-                .frame(width: inline ? 28 : 34, height: inline ? 28 : 34)
-                .id(t?.id)
+            Group {
+                if let t {
+                    ArtworkView(track: t, animated: false, small: true, cornerRadius: inline ? 6 : 8, bordered: false)
+                } else {
+                    // Rien en lecture : la note grise de Musique, bien centrée.
+                    RoundedRectangle(cornerRadius: inline ? 6 : 8, style: .continuous)
+                        .fill(Color.white.opacity(0.12))
+                        .overlay(
+                            Image(systemName: "music.note")
+                                .font(.system(size: inline ? 12 : 15, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                        )
+                }
+            }
+            .frame(width: inline ? 28 : 34, height: inline ? 28 : 34)
+            .clipShape(RoundedRectangle(cornerRadius: inline ? 6 : 8, style: .continuous))
+            .id(t?.id)
             VStack(alignment: .leading, spacing: 0) {
                 Text(t?.title ?? "À l’arrêt").font(.subheadline.weight(.semibold)).lineLimit(1)
                 if !inline, let t {
@@ -180,6 +196,25 @@ struct AccessoryPlayer: View {
         .contentShape(Rectangle())
         .onTapGesture { if t != nil { onOpen() } }
         .modifier(PlayerZoomSource())
+        // Glisse la pilule vers le bas : la lecture s'arrête (comme le mini-lecteur d'avant).
+        .offset(y: dragY)
+        .opacity(1 - Double(min(dragY, 60)) / 90)
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 10)
+                .onChanged { g in
+                    guard t != nil, g.translation.height > 0, abs(g.translation.height) > abs(g.translation.width) else { return }
+                    dragY = min(g.translation.height * 0.6, 40)
+                }
+                .onEnded { g in
+                    if t != nil, g.translation.height > 35 || g.predictedEndTranslation.height > 120 {
+                        player.quit()
+                    }
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { dragY = 0 }
+                }
+        )
+        .sensoryFeedback(trigger: player.currentID == nil) { _, stopped in
+            stopped && settings.haptics ? .impact(weight: .medium) : nil
+        }
         .animation(.smooth(duration: 0.3), value: t?.id)
     }
 }
