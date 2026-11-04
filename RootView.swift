@@ -296,7 +296,7 @@ struct PlayerZoomSource: ViewModifier {
     func body(content: Content) -> some View {
         if #available(iOS 18.0, *), let namespace {
             content.matchedTransitionSource(id: id, in: namespace) { source in
-                source.clipShape(Capsule())
+                source.clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
             }
         } else {
             content
