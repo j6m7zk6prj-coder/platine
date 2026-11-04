@@ -1,83 +1,374 @@
 import SwiftUI
 
-// MARK: - Réglages (ouverts depuis l'icône de profil d'« Écouter »)
-
+/// Réglages : lecture, apparence, bibliothèque, stockage.
 struct SettingsView: View {
-    @EnvironmentObject private var settings: AppSettings
-    @EnvironmentObject private var library: Library
-    @EnvironmentObject private var player: Player
-    @EnvironmentObject private var ui: UIState
-    @Environment(\.dismiss) private var dismiss
-    @State private var confirmErase = false
+    @Environment(AppSettings.self) private var settings
+    @Environment(Library.self) private var library
+    @Environment(Player.self) private var player
+    @Environment(UIState.self) private var ui
+    @State private var confirmDelete = false
+    @State private var storage: Int64 = 0
+    @State private var lockBytes: Int64 = 0
 
     var body: some View {
-        NavigationStack {
-            Form {
-                Section("Apparence") {
-                    Picker("Mode", selection: $settings.appearance) {
-                        Text("Comme l’iPhone").tag(AppearanceMode.auto)
-                        Text("Clair").tag(AppearanceMode.light)
-                        Text("Sombre").tag(AppearanceMode.dark)
+        @Bindable var settings = settings
+        Form {
+            Section {
+                NavigationLink {
+                    TravelModeView()
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: "airplane")
+                            .font(.body.weight(.semibold))
+                            .foregroundStyle(.white)
+                            .frame(width: 30, height: 30)
+                            .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(.orange))
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("Mode voyage").font(.body.weight(.semibold))
+                            Text("Écouter sans connexion").font(.caption).foregroundStyle(.secondary)
+                        }
                     }
-                }
-
-                Section("Lecture") {
-                    Toggle("Fondu entre les morceaux", isOn: $settings.fadeTransitions)
-                    if settings.fadeTransitions {
-                        Stepper("Durée du fondu : \(Int(settings.fadeDuration)) s", value: $settings.fadeDuration, in: 1...12, step: 1)
-                    }
-                    Toggle("Pause si les écouteurs sont retirés", isOn: $settings.pauseOnDisconnect)
-                    Toggle("Lecteur sur l’écran verrouillé", isOn: $settings.lockScreenPlayer)
-                        .onChange(of: settings.lockScreenPlayer) { _ in player.applyLockScreenPlayer() }
-                    Toggle("Retours haptiques", isOn: $settings.haptics)
-                }
-
-                Section("Paroles") {
-                    Picker("Taille du texte", selection: $settings.lyricsSize) {
-                        Text("Petite").tag(LyricsSize.small)
-                        Text("Moyenne").tag(LyricsSize.medium)
-                        Text("Grande").tag(LyricsSize.large)
-                    }
-                }
-
-                Section {
-                    Button("Importer de la musique") {
-                        dismiss()
-                        ui.importing = true
-                    }
-                    Toggle("Importer depuis le dossier Platine", isOn: $settings.autoImport)
-                } header: {
-                    Text("Bibliothèque")
-                } footer: {
-                    Text("Dépose des fichiers dans « Sur mon iPhone › Platine » (app Fichiers) ou depuis iTunes sur ton ordinateur : ils sont ajoutés à l’ouverture de l’app.")
-                }
-
-                Section("Infos") {
-                    LabeledContent("Morceaux", value: "\(library.tracks.count)")
-                    LabeledContent("Espace utilisé", value: ByteCountFormatter.string(fromByteCount: library.storageBytes(), countStyle: .file))
-                    LabeledContent("Version", value: "Lite 1.0 (iOS 16)")
-                }
-
-                Section {
-                    Button("Supprimer toute la musique", role: .destructive) { confirmErase = true }
                 }
             }
-            .navigationTitle("Réglages")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("OK") { dismiss() }.fontWeight(.semibold)
+
+            Section {
+                Toggle("Fondu entre les morceaux", isOn: $settings.fadeTransitions)
+                if settings.fadeTransitions {
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text("Durée du fondu")
+                            Spacer()
+                            Text("\(Int(settings.fadeDuration)) s").monospacedDigit().foregroundStyle(.secondary)
+                        }
+                        Slider(value: $settings.fadeDuration, in: 1...12, step: 1)
+                    }
                 }
+                Picker("Vitesse de lecture", selection: Binding(get: { settings.playbackSpeed }, set: { player.setSpeed($0) })) {
+                    ForEach(AppSettings.speeds, id: \.self) { Text(AppSettings.speedLabel($0)).tag($0) }
+                }
+                Toggle("Pause si les écouteurs sont retirés", isOn: $settings.pauseOnDisconnect)
+            } header: {
+                Text("Lecture")
+            } footer: {
+                Text("Le fondu baisse le son à la fin d’un morceau et le remonte au début du suivant.")
             }
-            .confirmationDialog("Supprimer toute la musique ?", isPresented: $confirmErase, titleVisibility: .visible) {
-                Button("Tout supprimer", role: .destructive) {
-                    player.stopAll()
-                    library.removeAll()
+
+            Section {
+                if player.sleepActive {
+                    TimelineView(.periodic(from: .now, by: 1)) { context in
+                        LabeledContent("État", value: sleepStatus(at: context.date))
+                    }
+                    Button("Désactiver la minuterie", role: .destructive) { player.setSleepTimer(minutes: nil) }
+                } else {
+                    Menu {
+                        ForEach([15, 30, 45, 60, 90], id: \.self) { m in
+                            Button("\(m) minutes") { player.setSleepTimer(minutes: m) }
+                        }
+                        Button("À la fin du morceau") { player.setSleepAtTrackEnd() }
+                    } label: {
+                        Label("Lancer la minuterie", systemImage: "moon.zzz")
+                    }
                 }
-                Button("Annuler", role: .cancel) {}
-            } message: {
-                Text("Les fichiers audio, les pochettes et les playlists de Platine seront effacés de l’iPhone.")
+            } header: {
+                Text("Minuterie de sommeil")
+            } footer: {
+                Text("La musique s’arrête doucement à la fin du temps choisi.")
+            }
+
+            Section("Apparence") {
+                NavigationLink {
+                    AppearanceSettingsView()
+                } label: {
+                    HStack {
+                        Label("Thème et affichage", systemImage: "paintpalette")
+                        Spacer()
+                        Text(settings.theme.label).foregroundStyle(.secondary)
+                    }
+                }
+                NavigationLink {
+                    AppIconPicker()
+                } label: {
+                    HStack {
+                        Label("Icône de l’app", systemImage: "app.badge")
+                        Spacer()
+                        Text(AppIconChoice.all.first { $0.iconName == UIApplication.shared.alternateIconName }?.title ?? "Platine")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Toggle("Retours haptiques", isOn: $settings.haptics)
+            }
+
+            Section {
+                Picker("Trier les morceaux par", selection: $settings.songSort) {
+                    ForEach(SongSort.allCases) { Text($0.label).tag($0) }
+                }
+                Toggle("Importer depuis le dossier Platine", isOn: $settings.autoImport)
+                Button {
+                    ui.importing = true
+                } label: {
+                    Label("Importer de la musique", systemImage: "plus.circle")
+                }
+            } header: {
+                Text("Bibliothèque")
+            } footer: {
+                Text("Les fichiers déposés dans le dossier Platine (app Fichiers, ou iTunes sur PC) sont ajoutés à chaque ouverture.")
+            }
+
+            Section("Stockage") {
+                LabeledContent("Morceaux", value: "\(library.tracks.count)")
+                LabeledContent("Playlists", value: "\(library.playlists.count)")
+                LabeledContent("Durée totale", value: formatDuration(library.totalDuration))
+                LabeledContent("Espace utilisé", value: ByteCountFormatter.string(fromByteCount: storage, countStyle: .file))
+                LabeledContent("Clips de l’écran verrouillé", value: ByteCountFormatter.string(fromByteCount: lockBytes, countStyle: .file))
+                if lockBytes > 0 {
+                    Button("Vider les clips (refaits au besoin)") {
+                        LockScreenArtwork.shared.clear()
+                        lockBytes = 0
+                        player.updateNowPlaying()
+                    }
+                }
+                Button("Supprimer toute la bibliothèque", role: .destructive) { confirmDelete = true }
+                    .disabled(library.tracks.isEmpty && library.playlists.isEmpty)
+            }
+
+            Section {
+                LabeledContent("Version", value: "11.0")
+            } footer: {
+                Text("Platine lit ta propre musique. Seule la recherche de paroles contacte internet (LRCLIB), et uniquement quand tu ouvres des paroles absentes ou lances la recherche.")
             }
         }
+        .scrollContentBackground(.hidden)
+        .navigationTitle("Réglages")
+        .background { AmbientBackground(track: player.currentID.flatMap { library.track($0) }, dim: 0.65) }
+        .task(id: library.tracks.count) {
+            storage = library.storageBytes()
+            lockBytes = LockScreenArtwork.cacheBytes()
+        }
+        .confirmationDialog("Supprimer toute la bibliothèque ?", isPresented: $confirmDelete, titleVisibility: .visible) {
+            Button("Tout supprimer", role: .destructive) {
+                player.stopAll()
+                library.removeAll()
+            }
+        } message: {
+            Text("Tes morceaux, pochettes et playlists seront effacés de Platine. Les fichiers d’origine ne sont pas touchés.")
+        }
+    }
+
+    private func sleepStatus(at date: Date) -> String {
+        if player.sleepAtTrackEnd { return "Arrêt à la fin du morceau" }
+        guard let end = player.sleepEndDate else { return "Désactivée" }
+        return "Arrêt dans " + formatTime(max(0, end.timeIntervalSince(date)))
+    }
+}
+
+
+// MARK: - Apparence
+
+/// Thème, couleur d'accent, pochettes, paroles et Collection.
+struct AppearanceSettingsView: View {
+    @Environment(AppSettings.self) private var settings
+    @Environment(Library.self) private var library
+    @Environment(Player.self) private var player
+
+    private var lockFooter: String {
+        if !settings.lockScreenPlayer {
+            return "Lecteur caché : rien ne s’affiche sur l’écran verrouillé ni dans le Centre de contrôle. Les boutons des AirPods et du casque ne pilotent plus Platine, et la musique peut se mélanger au son des autres apps."
+        }
+        if #available(iOS 26.0, *) {
+            return "Les pochettes vidéo ou GIF s’animent en plein écran quand l’iPhone est verrouillé. La première fois, Platine prépare le clip en quelques secondes, app ouverte. iOS montre l’image fixe à la place en mode Économie d’énergie, avec « Réduire les animations », ou si « Lecture auto des aperçus vidéo » est désactivé (Réglages › Accessibilité)."
+        }
+        return "Nécessite iOS 26 ou plus récent."
+    }
+
+    var body: some View {
+        @Bindable var settings = settings
+        Form {
+            Section {
+                Picker("Mode", selection: $settings.appearance) {
+                    ForEach(AppearanceMode.allCases) { Text($0.label).tag($0) }
+                }
+                .pickerStyle(.segmented)
+            } header: {
+                Text("Clair ou sombre")
+            } footer: {
+                Text("« Thème » garde les couleurs du thème choisi. « Clair » et « Sombre » forcent le mode, « Auto » suit le réglage de l’iPhone.")
+            }
+
+            Section {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 96), spacing: 12)], spacing: 14) {
+                    ForEach(AppTheme.allCases) { theme in
+                        ThemeTile(theme: theme, selected: settings.theme == theme) {
+                            withAnimation(.smooth(duration: 0.35)) { settings.theme = theme }
+                        }
+                    }
+                }
+                .padding(.vertical, 6)
+            } header: {
+                Text("Thème")
+            } footer: {
+                Text(settings.theme.detail + ". L’écran « En lecture » et la Collection restent toujours sombres, comme dans Musique.")
+            }
+
+            Section("Couleur d’accent") {
+                HStack(spacing: 12) {
+                    ForEach(AccentChoice.allCases) { choice in
+                        Button { settings.accent = choice } label: {
+                            Circle()
+                                .fill(choice.color)
+                                .frame(width: 34, height: 34)
+                                .overlay {
+                                    if settings.accent == choice {
+                                        Image(systemName: "checkmark")
+                                            .font(.footnote.weight(.bold))
+                                            .foregroundStyle(choice == .white ? Color.black : Color.white)
+                                    }
+                                }
+                                .overlay { Circle().strokeBorder(.primary.opacity(0.2), lineWidth: 1) }
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(choice.label)
+                        .accessibilityAddTraits(settings.accent == choice ? AccessibilityTraits.isSelected : AccessibilityTraits())
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+
+            Section("Fond") {
+                Toggle("Couleurs de la pochette en lecture", isOn: $settings.dynamicBackground)
+                Toggle("Fond en mouvement", isOn: $settings.backgroundMotion)
+            }
+
+            Section {
+                Toggle("Liquid Glass", isOn: $settings.liquidGlass)
+                if settings.liquidGlass {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Text("Transparence du verre")
+                            Spacer()
+                            Text("\(Int(settings.glassIntensity * 100)) %")
+                                .monospacedDigit()
+                                .foregroundStyle(.secondary)
+                        }
+                        HStack(spacing: 10) {
+                            Image(systemName: "circle.fill").font(.caption).foregroundStyle(.secondary)
+                            Slider(value: $settings.glassIntensity, in: 0...1)
+                            Image(systemName: "circle.dotted").font(.caption).foregroundStyle(.secondary)
+                        }
+                        // Aperçu en direct.
+                        Text("Aperçu")
+                            .font(.subheadline.weight(.semibold))
+                            .padding(.horizontal, 22)
+                            .padding(.vertical, 10)
+                            .glassCapsule()
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 14)
+                            .background(
+                                LinearGradient(colors: [.pink, .orange, .purple], startPoint: .leading, endPoint: .trailing)
+                                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                            )
+                    }
+                    .padding(.vertical, 4)
+                }
+            } header: {
+                Text("Verre")
+            } footer: {
+                Text(settings.liquidGlass
+                     ? "À gauche, le verre est plus sombre et plus lisible ; à droite, plus transparent."
+                     : "Les boutons et le mini-lecteur utilisent des surfaces pleines, sans effet de verre.")
+            }
+
+            Section("Pochettes") {
+                Picker("Forme", selection: $settings.artworkStyle) {
+                    ForEach(ArtworkStyle.allCases) { Text($0.label).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                Toggle("Pochettes animées", isOn: $settings.animatedArtwork)
+                Toggle("Pochette étendue dans les albums", isOn: $settings.extendedAlbumArtwork)
+                Toggle("CD neufs sous blister", isOn: $settings.shrinkWrap)
+                Toggle("Étiquettes prix du disquaire", isOn: $settings.priceStickers)
+            }
+
+
+            Section {
+                Toggle("Lecteur sur l’écran verrouillé", isOn: $settings.lockScreenPlayer)
+                    .onChange(of: settings.lockScreenPlayer) { _, _ in player.applyLockScreenPlayer() }
+                Toggle("Pochette animée sur l’écran verrouillé", isOn: $settings.lockScreenAnimation)
+                    .disabled(!settings.lockScreenPlayer)
+                    .onChange(of: settings.lockScreenAnimation) { _, _ in player.updateNowPlaying() }
+            } header: {
+                Text("Écran verrouillé")
+            } footer: {
+                Text(lockFooter)
+            }
+
+            Section {
+                Picker("Taille", selection: $settings.lyricsSize) {
+                    ForEach(LyricsSize.allCases) { Text($0.label).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                Text("Les paroles brillent doucement")
+                    .font(.system(size: settings.lyricsSize.points * 0.8, weight: .bold))
+                    .foregroundStyle(.white)
+                    .shadow(color: .white.opacity(0.55), radius: 2.5)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(14)
+                    .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color(white: 0.1)))
+                    .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 12, trailing: 16))
+                    .animation(.smooth(duration: 0.25), value: settings.lyricsSize)
+            } header: {
+                Text("Paroles")
+            }
+
+            Section {
+                Toggle("Stickers automatiques", isOn: Binding(get: { library.autoStickers },
+                                                              set: { library.autoStickers = $0 }))
+            } header: {
+                Text("Collection")
+            } footer: {
+                Text("Ajoute tout seul les stickers Or, Platine, Favori et Nouveau. Pour choisir tes propres stickers holographiques, appuie longtemps sur un album dans la Collection.")
+            }
+
+            Section("Bibliothèque") {
+                Toggle("Afficher « Ajoutés récemment »", isOn: $settings.showRecent)
+            }
+        }
+        .navigationTitle("Apparence")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+private struct ThemeTile: View {
+    let theme: AppTheme
+    let selected: Bool
+    var action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 8) {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(LinearGradient(colors: theme.swatch, startPoint: .topLeading, endPoint: .bottomTrailing))
+                    .frame(height: 64)
+                    .overlay(alignment: .bottomLeading) {
+                        // Mini aperçu : deux lignes de texte dans la couleur du thème.
+                        VStack(alignment: .leading, spacing: 4) {
+                            Capsule().frame(width: 38, height: 6)
+                            Capsule().frame(width: 24, height: 6).opacity(0.5)
+                        }
+                        .foregroundStyle(theme.isLight ? Color.black.opacity(0.75) : Color.white.opacity(0.85))
+                        .padding(10)
+                    }
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .strokeBorder(selected ? AnyShapeStyle(.tint) : AnyShapeStyle(.primary.opacity(0.15)),
+                                          lineWidth: selected ? 2.5 : 1)
+                    }
+                Text(theme.label)
+                    .font(.footnote.weight(selected ? .semibold : .regular))
+                    .foregroundStyle(selected ? AnyShapeStyle(.tint) : AnyShapeStyle(.primary))
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Thème " + theme.label)
+        .accessibilityAddTraits(selected ? AccessibilityTraits.isSelected : AccessibilityTraits())
     }
 }

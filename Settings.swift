@@ -1,5 +1,5 @@
 import SwiftUI
-import Combine
+import Observation
 
 enum SongSort: String, CaseIterable, Identifiable {
     case title, artist, album, recent, mostPlayed
@@ -24,7 +24,7 @@ enum AccentChoice: String, CaseIterable, Identifiable {
         case .pink: return Color(red: 1.0, green: 0.36, blue: 0.48)
         case .orange: return Color(red: 1.0, green: 0.62, blue: 0.28)
         case .green: return Color(red: 0.36, green: 0.86, blue: 0.52)
-        case .blue: return .blue
+        case .blue: return Color(red: 0.38, green: 0.70, blue: 1.0)
         case .purple: return Color(red: 0.72, green: 0.56, blue: 1.0)
         }
     }
@@ -107,28 +107,29 @@ enum ArtworkStyle: String, CaseIterable, Identifiable {
 
 /// Réglages de l'app, enregistrés sur l'iPhone.
 @MainActor
-final class AppSettings: ObservableObject {
+@Observable
+final class AppSettings {
     static let speeds: [Double] = [0.5, 0.75, 1, 1.25, 1.5, 2]
 
     static func speedLabel(_ s: Double) -> String {
         s == 1 ? "Normale" : String(format: "%g×", s)
     }
 
-    @Published var fadeTransitions: Bool { didSet { UserDefaults.standard.set(fadeTransitions, forKey: "fadeTransitions") } }
-    @Published var fadeDuration: Double { didSet { UserDefaults.standard.set(fadeDuration, forKey: "fadeDuration") } }
-    @Published var playbackSpeed: Double { didSet { UserDefaults.standard.set(playbackSpeed, forKey: "playbackSpeed") } }
-    @Published var pauseOnDisconnect: Bool { didSet { UserDefaults.standard.set(pauseOnDisconnect, forKey: "pauseOnDisconnect") } }
-    @Published var animatedArtwork: Bool { didSet { UserDefaults.standard.set(animatedArtwork, forKey: "animatedArtwork") } }
-    @Published var dynamicBackground: Bool { didSet { UserDefaults.standard.set(dynamicBackground, forKey: "dynamicBackground") } }
-    @Published var haptics: Bool { didSet { UserDefaults.standard.set(haptics, forKey: "haptics") } }
-    @Published var autoImport: Bool { didSet { UserDefaults.standard.set(autoImport, forKey: "autoImport") } }
-    @Published var accent: AccentChoice { didSet { UserDefaults.standard.set(accent.rawValue, forKey: "accent") } }
-    @Published var songSort: SongSort { didSet { UserDefaults.standard.set(songSort.rawValue, forKey: "songSort") } }
-    @Published var shelfFormat: AlbumFormat { didSet { UserDefaults.standard.set(shelfFormat.rawValue, forKey: "shelfFormat") } }
-    @Published var theme: AppTheme { didSet { UserDefaults.standard.set(theme.rawValue, forKey: "theme") } }
-    @Published var appearance: AppearanceMode { didSet { UserDefaults.standard.set(appearance.rawValue, forKey: "appearance") } }
+    var fadeTransitions: Bool { didSet { UserDefaults.standard.set(fadeTransitions, forKey: "fadeTransitions") } }
+    var fadeDuration: Double { didSet { UserDefaults.standard.set(fadeDuration, forKey: "fadeDuration") } }
+    var playbackSpeed: Double { didSet { UserDefaults.standard.set(playbackSpeed, forKey: "playbackSpeed") } }
+    var pauseOnDisconnect: Bool { didSet { UserDefaults.standard.set(pauseOnDisconnect, forKey: "pauseOnDisconnect") } }
+    var animatedArtwork: Bool { didSet { UserDefaults.standard.set(animatedArtwork, forKey: "animatedArtwork") } }
+    var dynamicBackground: Bool { didSet { UserDefaults.standard.set(dynamicBackground, forKey: "dynamicBackground") } }
+    var haptics: Bool { didSet { UserDefaults.standard.set(haptics, forKey: "haptics") } }
+    var autoImport: Bool { didSet { UserDefaults.standard.set(autoImport, forKey: "autoImport") } }
+    var accent: AccentChoice { didSet { UserDefaults.standard.set(accent.rawValue, forKey: "accent") } }
+    var songSort: SongSort { didSet { UserDefaults.standard.set(songSort.rawValue, forKey: "songSort") } }
+    var shelfFormat: AlbumFormat { didSet { UserDefaults.standard.set(shelfFormat.rawValue, forKey: "shelfFormat") } }
+    var theme: AppTheme { didSet { UserDefaults.standard.set(theme.rawValue, forKey: "theme") } }
+    var appearance: AppearanceMode { didSet { UserDefaults.standard.set(appearance.rawValue, forKey: "appearance") } }
     /// Réglage de l'iPhone (clair ou sombre), pour le mode Auto.
-    @Published var systemIsLight = false
+    var systemIsLight = false
 
     /// Le thème réellement affiché : celui choisi, éclairci ou assombri selon le mode.
     var activeTheme: AppTheme {
@@ -141,22 +142,22 @@ final class AppSettings: ObservableObject {
         case .auto: return systemIsLight ? lightVersion : darkVersion
         }
     }
-    @Published var lyricsSize: LyricsSize { didSet { UserDefaults.standard.set(lyricsSize.rawValue, forKey: "lyricsSize") } }
-    @Published var artworkStyle: ArtworkStyle { didSet { UserDefaults.standard.set(artworkStyle.rawValue, forKey: "artworkStyle") } }
-    @Published var backgroundMotion: Bool { didSet { UserDefaults.standard.set(backgroundMotion, forKey: "backgroundMotion") } }
-    @Published var showRecent: Bool { didSet { UserDefaults.standard.set(showRecent, forKey: "showRecent") } }
-    @Published var lockScreenAnimation: Bool { didSet { UserDefaults.standard.set(lockScreenAnimation, forKey: "lockScreenAnimation") } }
+    var lyricsSize: LyricsSize { didSet { UserDefaults.standard.set(lyricsSize.rawValue, forKey: "lyricsSize") } }
+    var artworkStyle: ArtworkStyle { didSet { UserDefaults.standard.set(artworkStyle.rawValue, forKey: "artworkStyle") } }
+    var backgroundMotion: Bool { didSet { UserDefaults.standard.set(backgroundMotion, forKey: "backgroundMotion") } }
+    var showRecent: Bool { didSet { UserDefaults.standard.set(showRecent, forKey: "showRecent") } }
+    var lockScreenAnimation: Bool { didSet { UserDefaults.standard.set(lockScreenAnimation, forKey: "lockScreenAnimation") } }
     /// Page d'un album : la pochette (animée) prend toute la largeur en haut et se fond dans le fond.
-    @Published var extendedAlbumArtwork: Bool { didSet { UserDefaults.standard.set(extendedAlbumArtwork, forKey: "extendedAlbumArtwork") } }
+    var extendedAlbumArtwork: Bool { didSet { UserDefaults.standard.set(extendedAlbumArtwork, forKey: "extendedAlbumArtwork") } }
     /// Liquid Glass activé (sinon surfaces pleines) et sa transparence (0 = sombre, 1 = très transparent).
     /// Afficher le lecteur de Platine sur l'écran verrouillé et dans le Centre de contrôle.
     /// Les CD neufs gardent leur blister (film plastique) jusqu'à ce qu'on appuie sur « Déballer ».
-    @Published var shrinkWrap: Bool { didSet { UserDefaults.standard.set(shrinkWrap, forKey: "shrinkWrap") } }
-    @Published var lockScreenPlayer: Bool { didSet { UserDefaults.standard.set(lockScreenPlayer, forKey: "lockScreenPlayer") } }
-    @Published var liquidGlass: Bool { didSet { UserDefaults.standard.set(liquidGlass, forKey: "liquidGlass") } }
-    @Published var glassIntensity: Double { didSet { UserDefaults.standard.set(glassIntensity, forKey: "glassIntensity") } }
+    var shrinkWrap: Bool { didSet { UserDefaults.standard.set(shrinkWrap, forKey: "shrinkWrap") } }
+    var lockScreenPlayer: Bool { didSet { UserDefaults.standard.set(lockScreenPlayer, forKey: "lockScreenPlayer") } }
+    var liquidGlass: Bool { didSet { UserDefaults.standard.set(liquidGlass, forKey: "liquidGlass") } }
+    var glassIntensity: Double { didSet { UserDefaults.standard.set(glassIntensity, forKey: "glassIntensity") } }
     /// Étiquettes prix de disquaire sur les CD.
-    @Published var priceStickers: Bool { didSet { UserDefaults.standard.set(priceStickers, forKey: "priceStickers") } }
+    var priceStickers: Bool { didSet { UserDefaults.standard.set(priceStickers, forKey: "priceStickers") } }
 
     /// Couleur d'accent lisible sur le thème choisi (le blanc devient noir sur un thème clair).
     var tint: Color { activeTheme.isLight && accent == .white ? .black : accent.color }
@@ -187,30 +188,18 @@ final class AppSettings: ObservableObject {
         liquidGlass = d.object(forKey: "liquidGlass") as? Bool ?? true
         glassIntensity = d.object(forKey: "glassIntensity") as? Double ?? 0.6
         priceStickers = d.object(forKey: "priceStickers") as? Bool ?? true
-        // Passage au style classique : accent bleu et mode clair/sombre de l'iPhone (une seule fois).
-        // Version légère (iPhone 8) : pas de pochette animée sur l'écran verrouillé (trop lourd), clair/sombre de l'iPhone.
-        if !d.bool(forKey: "liteV1") {
-            lockScreenAnimation = false
-            animatedArtwork = false
-            appearance = .auto
-            d.set(true, forKey: "liteV1")
-        }
-        if !d.bool(forKey: "classicDesignV1") {
-            accent = .blue
-            appearance = .auto
-            d.set(true, forKey: "classicDesignV1")
-        }
     }
 }
 
 /// État de l'interface partagé entre les écrans.
 @MainActor
-final class UIState: ObservableObject {
-    @Published var showPlayer = false
-    @Published var editing: EditTarget?
-    @Published var editingInfo: EditTarget?
-    @Published var addToPlaylist: AddToPlaylistTarget?
-    @Published var importing = false
-    @Published var showShelf = false
-    @Published var selectedTab = 0
+@Observable
+final class UIState {
+    var showPlayer = false
+    var editing: EditTarget?
+    var editingInfo: EditTarget?
+    var addToPlaylist: AddToPlaylistTarget?
+    var importing = false
+    var showShelf = false
+    var selectedTab = 0
 }

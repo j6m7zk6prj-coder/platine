@@ -1,11 +1,10 @@
 import SwiftUI
 import UniformTypeIdentifiers
-import PhotosUI
 
 /// Modifier le titre, l'artiste, l'album, le numéro, l'année et les paroles d'un morceau.
 struct TrackInfoEditor: View {
     let trackID: UUID
-    @EnvironmentObject private var library: Library
+    @Environment(Library.self) private var library
     @Environment(\.dismiss) private var dismiss
     @State private var title = ""
     @State private var artist = ""
@@ -17,7 +16,6 @@ struct TrackInfoEditor: View {
     @State private var loaded = false
     @State private var searching = false
     @State private var showLRCImporter = false
-    @State private var coverItem: PhotosPickerItem?
 
     var body: some View {
         NavigationStack {
@@ -26,14 +24,11 @@ struct TrackInfoEditor: View {
                     Section {
                         HStack {
                             Spacer()
-                            Artwork(track: t, cornerRadius: 8, pixels: 300)
+                            ArtworkView(track: t, cornerRadius: 12)
                                 .frame(width: 120, height: 120)
                             Spacer()
                         }
                         .listRowBackground(Color.clear)
-                        PhotosPicker(selection: $coverItem, matching: .images) {
-                            Label("Changer la pochette de l’album", systemImage: "photo")
-                        }
                     }
                 }
                 Section("Morceau") {
@@ -117,16 +112,6 @@ struct TrackInfoEditor: View {
                     lyrics = text
                 }
             }
-            .onChange(of: coverItem) { item in
-                guard let item, let t = library.track(trackID) else { return }
-                Task {
-                    if let data = try? await item.loadTransferable(type: Data.self), let img = UIImage(data: data) {
-                        library.setAlbumCover(t.albumKey, image: img)
-                        ArtworkLoader.cache.removeAllObjects()
-                    }
-                    coverItem = nil
-                }
-            }
             .onAppear {
                 guard !loaded, let t = library.track(trackID) else { return }
                 loaded = true
@@ -152,5 +137,27 @@ struct TrackInfoEditor: View {
         } else {
             library.message = "Aucune parole trouvée"
         }
+    }
+}
+
+/// Photo ronde d'un artiste : celle que tu as choisie, sinon la pochette d'un de ses morceaux.
+struct ArtistAvatar: View {
+    let artist: ArtistInfo
+    @Environment(Library.self) private var library
+
+    var body: some View {
+        Color.clear
+            .overlay {
+                if let img = library.artistImage(artist.id) {
+                    Image(uiImage: img)
+                        .resizable()
+                        .scaledToFill()
+                } else {
+                    ArtworkView(track: artist.tracks.first, animated: false, cornerRadius: 0)
+                }
+            }
+            .clipShape(Circle())
+            .overlay { Circle().strokeBorder(.white.opacity(0.1), lineWidth: 0.5) }
+            .accessibilityHidden(true)
     }
 }

@@ -1,46 +1,35 @@
 import AVFoundation
 import MediaPlayer
-import Combine
+import Observation
 import SwiftUI
 import UIKit
 
 /// Lecteur audio : file d'attente, fondus, vitesse, minuterie, écran verrouillé, AirPods.
-/// L'avancée du morceau, à part du lecteur (sur iOS 16, tout changement du lecteur redessine tous les écrans).
 @MainActor
-final class PlaybackClock: ObservableObject {
-    static let shared = PlaybackClock()
-    @Published var time: Double = 0
-}
-
-@MainActor
-final class Player: ObservableObject {
+@Observable
+final class Player {
     enum RepeatMode: Int { case off, all, one }
 
     /// Ordre de lecture actuel (mélangé si l'aléatoire est actif).
-    @Published private(set) var queue: [UUID] = []
-    @Published private(set) var index: Int = 0
+    private(set) var queue: [UUID] = []
+    private(set) var index: Int = 0
     /// Morceaux ajoutés avec « Lire ensuite » / « Lire plus tard ».
-    @Published private(set) var upNext: [UUID] = []
-    @Published private(set) var currentID: UUID?
+    private(set) var upNext: [UUID] = []
+    private(set) var currentID: UUID?
     /// Intention de lecture (change tout de suite, même pendant un fondu).
-    @Published private(set) var isPlaying = false
-    /// Position de lecture : gardée à part (dans `PlaybackClock`) pour que seule la barre de lecture
-    /// se redessine dix fois par seconde, et pas tous les écrans.
-    var currentTime: Double {
-        get { PlaybackClock.shared.time }
-        set { PlaybackClock.shared.time = newValue }
-    }
-    @Published private(set) var duration: Double = 0
-    @Published var isScrubbing = false
-    @Published private(set) var shuffle: Bool = UserDefaults.standard.bool(forKey: "shuffle")
-    @Published var repeatMode: RepeatMode = RepeatMode(rawValue: UserDefaults.standard.integer(forKey: "repeat")) ?? .off {
+    private(set) var isPlaying = false
+    var currentTime: Double = 0
+    private(set) var duration: Double = 0
+    var isScrubbing = false
+    private(set) var shuffle: Bool = UserDefaults.standard.bool(forKey: "shuffle")
+    var repeatMode: RepeatMode = RepeatMode(rawValue: UserDefaults.standard.integer(forKey: "repeat")) ?? .off {
         didSet { UserDefaults.standard.set(repeatMode.rawValue, forKey: "repeat") }
     }
     /// Effet d'écoute (slowed, sped up, réverbe…). Le fichier n'est jamais modifié.
-    @Published private(set) var effect: SoundEffect = SoundEffect(rawValue: UserDefaults.standard.string(forKey: "soundEffect") ?? "") ?? .original
+    private(set) var effect: SoundEffect = SoundEffect(rawValue: UserDefaults.standard.string(forKey: "soundEffect") ?? "") ?? .original
     /// Intensité de la réverbe de l'effet (0,5 = réglage d'origine).
-    @Published private(set) var effectIntensity: Double = UserDefaults.standard.object(forKey: "effectIntensity") as? Double ?? 0.5
-    private var rateTask: Task<Void, Never>?
+    private(set) var effectIntensity: Double = UserDefaults.standard.object(forKey: "effectIntensity") as? Double ?? 0.5
+    @ObservationIgnored private var rateTask: Task<Void, Never>?
 
     /// Position exacte, lue à l'instant même (pour les animations image par image, comme les paroles).
     var liveTime: Double {
@@ -87,8 +76,8 @@ final class Player: ObservableObject {
             }
         }
     }
-    @Published private(set) var sleepEndDate: Date?
-    @Published private(set) var sleepAtTrackEnd = false
+    private(set) var sleepEndDate: Date?
+    private(set) var sleepAtTrackEnd = false
 
     var sleepActive: Bool { sleepEndDate != nil || sleepAtTrackEnd }
 
@@ -99,14 +88,14 @@ final class Player: ObservableObject {
 
     private let library: Library
     private let settings: AppSettings
-    private let player = AVPlayer()
-    private var originalQueue: [UUID] = []
-    private var timeObserver: Any?
-    private var observers: [NSObjectProtocol] = []
-    private var fadeTask: Task<Void, Never>?
-    private var sleepTask: Task<Void, Never>?
-    private var manualFade = false
-    private var resumeAfterInterruption = false
+    @ObservationIgnored private let player = AVPlayer()
+    @ObservationIgnored private var originalQueue: [UUID] = []
+    @ObservationIgnored private var timeObserver: Any?
+    @ObservationIgnored private var observers: [NSObjectProtocol] = []
+    @ObservationIgnored private var fadeTask: Task<Void, Never>?
+    @ObservationIgnored private var sleepTask: Task<Void, Never>?
+    @ObservationIgnored private var manualFade = false
+    @ObservationIgnored private var resumeAfterInterruption = false
 
     init(library: Library, settings: AppSettings) {
         self.library = library

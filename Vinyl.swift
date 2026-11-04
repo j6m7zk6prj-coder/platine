@@ -1,1 +1,1 @@
-// Retiré de Platine Lite (version iPhone 8 / iOS 16) : ce fichier reste vide exprès.
+// Les vinyles ont été retirés. Ce fichier est volontairement vide.

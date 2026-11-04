@@ -2,30 +2,52 @@ import SwiftUI
 
 @main
 struct PlatineApp: App {
-    @StateObject private var settings: AppSettings
-    @StateObject private var library: Library
-    @StateObject private var player: Player
-    @StateObject private var ui: UIState
+    @State private var settings: AppSettings
+    @State private var library: Library
+    @State private var player: Player
+    @State private var ui: UIState
 
     init() {
         let s = AppSettings()
         let lib = Library()
-        _settings = StateObject(wrappedValue: s)
-        _library = StateObject(wrappedValue: lib)
-        _player = StateObject(wrappedValue: Player(library: lib, settings: s))
-        _ui = StateObject(wrappedValue: UIState())
+        _settings = State(initialValue: s)
+        _library = State(initialValue: lib)
+        _player = State(initialValue: Player(library: lib, settings: s))
+        _ui = State(initialValue: UIState())
     }
 
     var body: some Scene {
         WindowGroup {
             RootView()
-                .environmentObject(library)
-                .environmentObject(player)
-                .environmentObject(settings)
-                .environmentObject(ui)
-                // Clair, sombre, ou comme l'iPhone.
-                .preferredColorScheme(settings.appearance == .light ? .light : (settings.appearance == .dark ? .dark : nil))
-                .tint(.music)
+                .modifier(SystemAppearanceReader())
+                .environment(library)
+                .environment(player)
+                .environment(settings)
+                .environment(ui)
+                // Mode Auto : on suit le réglage de l'iPhone ; sinon le thème décide.
+                .preferredColorScheme(settings.appearance == .auto ? nil : (settings.activeTheme.isLight ? .light : .dark))
+                .tint(settings.tint)
         }
+    }
+}
+
+
+/// Lit si l'iPhone est en mode clair ou sombre (pour le mode Auto).
+struct SystemAppearanceReader: ViewModifier {
+    @Environment(AppSettings.self) private var settings
+    @Environment(\.colorScheme) private var scheme
+
+    func body(content: Content) -> some View {
+        content
+            .onAppear { update() }
+            .onChange(of: scheme) { _, _ in update() }
+            .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in update() }
+    }
+
+    private func update() {
+        // En mode Auto, la couleur de l'écran suit l'iPhone : on la lit directement à la source.
+        let style = UIScreen.main.traitCollection.userInterfaceStyle
+        let light = settings.appearance == .auto ? style != .dark : scheme == .light
+        if settings.systemIsLight != light { settings.systemIsLight = light }
     }
 }

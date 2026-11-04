@@ -4,43 +4,40 @@ import ImageIO
 import CoreImage
 import UIKit
 import SwiftUI
-import Combine
+import Observation
 
 /// Bibliothèque musicale : fichiers copiés dans l'app, métadonnées, pochettes, playlists.
 @MainActor
-final class Library: ObservableObject {
-    @Published private(set) var tracks: [Track] = [] { didSet { dataRevision &+= 1 } }
-    @Published private(set) var playlists: [Playlist] = []
+@Observable
+final class Library {
+    private(set) var tracks: [Track] = []
+    private(set) var playlists: [Playlist] = []
     /// Photo choisie pour un artiste : identifiant de l'artiste → nom du fichier image.
-    @Published private(set) var artistImages: [String: String] = [:]
+    private(set) var artistImages: [String: String] = [:]
     /// Format choisi pour chaque album dans la Collection : identifiant de l'album → « cd » ou « cassette ».
-    @Published private(set) var albumFormats: [String: String] = [:]
+    private(set) var albumFormats: [String: String] = [:]
     /// Stickers holographiques posés sur chaque album : identifiant de l'album → stickers.
-    @Published private(set) var albumStickers: [String: [String]] = [:]
+    private(set) var albumStickers: [String: [String]] = [:]
     /// Stickers faits à partir de tes images.
-    @Published private(set) var customStickers: [CustomSticker] = []
+    private(set) var customStickers: [CustomSticker] = []
     /// Où chaque sticker est collé : album → sticker → position.
-    @Published private(set) var stickerPlacements: [String: [String: StickerPlacement]] = [:]
+    private(set) var stickerPlacements: [String: [String: StickerPlacement]] = [:]
     /// Tes images pour le dos, la tranche et le disque : « genre|clé » → fichier.
-    @Published private(set) var extraImages: [String: String] = [:]
+    private(set) var extraImages: [String: String] = [:]
     /// Pochette officielle de chaque album : nom du fichier et type (image, GIF, vidéo).
-    @Published private(set) var albumCovers: [String: AlbumCoverFile] = [:] { didSet { dataRevision &+= 1 } }
-    /// Change à chaque modification des morceaux : les albums et artistes ne sont recalculés qu'à ce moment-là.
-    private var dataRevision = 0
-    private var albumsCache: (rev: Int, list: [AlbumInfo])?
-    private var artistsCache: (rev: Int, list: [ArtistInfo])?
+    private(set) var albumCovers: [String: AlbumCoverFile] = [:]
     /// Ajoute aussi les stickers gagnés automatiquement (or, platine, favori, nouveau).
-    @Published var autoStickers: Bool = UserDefaults.standard.bool(forKey: "autoStickers") {
+    var autoStickers: Bool = UserDefaults.standard.bool(forKey: "autoStickers") {
         didSet { UserDefaults.standard.set(autoStickers, forKey: "autoStickers") }
     }
-    @Published var isImporting = false
-    @Published var message: String?
+    var isImporting = false
+    var message: String?
     /// Change à chaque modification de pochette (sert à rafraîchir l'écran verrouillé).
-    @Published private(set) var artworkRevision = 0
+    private(set) var artworkRevision = 0
 
-    private var positions: [UUID: Int] = [:]
-    private let images = NSCache<NSString, UIImage>()
-    private var palettes: [String: [Color]] = [:]
+    @ObservationIgnored private var positions: [UUID: Int] = [:]
+    @ObservationIgnored private let images = NSCache<NSString, UIImage>()
+    @ObservationIgnored private var palettes: [String: [Color]] = [:]
 
     // Stockage interne, invisible dans l'app Fichiers.
     static let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -133,13 +130,6 @@ final class Library: ObservableObject {
     var totalDuration: Double { tracks.reduce(0) { $0 + $1.duration } }
 
     var albums: [AlbumInfo] {
-        if let c = albumsCache, c.rev == dataRevision { return c.list }
-        let list = computeAlbums()
-        albumsCache = (dataRevision, list)
-        return list
-    }
-
-    private func computeAlbums() -> [AlbumInfo] {
         Dictionary(grouping: tracks, by: \.albumKey).map { key, list in
             let sorted = list.sorted {
                 if $0.trackNumber != $1.trackNumber { return ($0.trackNumber == 0 ? Int.max : $0.trackNumber) < ($1.trackNumber == 0 ? Int.max : $1.trackNumber) }
@@ -157,7 +147,7 @@ final class Library: ObservableObject {
     // MARK: Albums exposés dans la Collection
 
     /// Albums que tu as choisi de ne pas exposer dans la Collection.
-    @Published private(set) var hiddenFromCollection: Set<String> =
+    private(set) var hiddenFromCollection: Set<String> =
         Set(UserDefaults.standard.stringArray(forKey: "hiddenFromCollection") ?? [])
 
     /// Les albums rangés dans la Collection (ceux que tu as choisis).
@@ -184,7 +174,7 @@ final class Library: ObservableObject {
     }
 
     /// Prix que tu as choisis (sinon un prix de disquaire est proposé).
-    @Published private(set) var customPrices: [String: Double] =
+    private(set) var customPrices: [String: Double] =
         (UserDefaults.standard.dictionary(forKey: "customPrices") as? [String: Double]) ?? [:]
 
     func setPrice(_ price: Double?, for albumID: String) {
@@ -194,7 +184,7 @@ final class Library: ObservableObject {
     }
 
     /// Albums dont tu as déjà retiré le blister (le film plastique) dans la Collection.
-    @Published private(set) var unwrappedAlbums: Set<String> =
+    private(set) var unwrappedAlbums: Set<String> =
         Set(UserDefaults.standard.stringArray(forKey: "unwrappedAlbums") ?? [])
 
     func isSealed(_ albumID: String) -> Bool { !unwrappedAlbums.contains(albumID) }
@@ -330,13 +320,6 @@ final class Library: ObservableObject {
     }
 
     var artists: [ArtistInfo] {
-        if let c = artistsCache, c.rev == dataRevision { return c.list }
-        let list = computeArtists()
-        artistsCache = (dataRevision, list)
-        return list
-    }
-
-    private func computeArtists() -> [ArtistInfo] {
         let allAlbums = albums
         return Dictionary(grouping: tracks, by: { $0.displayArtist.lowercased() }).map { key, list in
             ArtistInfo(id: key, name: list[0].displayArtist,

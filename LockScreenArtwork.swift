@@ -65,7 +65,7 @@ final class LockScreenArtwork {
     /// Clips qui n'ont pas pu être préparés, avec l'heure de l'échec (on réessaie plus tard).
     private var failed: [String: Date] = [:]
 
-    static let folder: URL = {
+    nonisolated static let folder: URL = {
         let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("LockArtwork", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -97,7 +97,10 @@ final class LockScreenArtwork {
             }
             let clip = Self.folder.appendingPathComponent(id + ".mp4")
             if FileManager.default.fileExists(atPath: clip.path) {
-                let art = Self.makeArtwork(id: id, preview: preview, clip: clip)
+                // L'aperçu doit avoir exactement la forme du clip (3:4 ou carré), sinon iOS l'ignore
+                // et n'affiche pas du tout la pochette animée : on prend la première image du clip.
+                let still = Self.previewImage(id: id, clip: clip, fallback: preview, size: shape.size)
+                let art = Self.makeArtwork(id: id, preview: still, clip: clip)
                 artworks[id] = art
                 result[key] = art
             } else {
@@ -165,6 +168,7 @@ final class LockScreenArtwork {
                 }
                 try? FileManager.default.removeItem(at: job.clip)
                 try FileManager.default.moveItem(at: temp, to: job.clip)
+                await Self.savePreview(of: job.clip, id: job.id, size: size)
                 ok = true
             } catch {
                 try? FileManager.default.removeItem(at: temp)
@@ -190,6 +194,36 @@ final class LockScreenArtwork {
                                    videoAssetFileURLRequestHandler: { _, completion in completion(clip) })
     }
     #endif
+
+    // MARK: Aperçu (image fixe montrée pendant le chargement, en mode économie d'énergie…)
+
+    nonisolated private static func previewURL(_ id: String) -> URL {
+        folder.appendingPathComponent(id + ".jpg")
+    }
+
+    /// Première image du clip, enregistrée à côté de lui (même forme, même cadrage).
+    nonisolated private static func savePreview(of clip: URL, id: String, size: CGSize) async {
+        let gen = AVAssetImageGenerator(asset: AVURLAsset(url: clip))
+        gen.appliesPreferredTrackTransform = true
+        gen.maximumSize = size
+        guard let cg = try? await gen.image(at: CMTime(seconds: 0.1, preferredTimescale: 600)).image,
+              let data = UIImage(cgImage: cg).jpegData(compressionQuality: 0.85) else { return }
+        try? data.write(to: previewURL(id), options: .atomic)
+    }
+
+    /// L'aperçu du clip ; à défaut, la pochette fixe recadrée exactement à la forme du clip.
+    nonisolated private static func previewImage(id: String, clip: URL, fallback: UIImage?, size: CGSize) -> UIImage? {
+        if let img = UIImage(contentsOfFile: previewURL(id).path) { return img }
+        guard let fallback else { return nil }
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        return UIGraphicsImageRenderer(size: size, format: format).image { _ in
+            let s = fallback.size
+            let scale = max(size.width / max(s.width, 1), size.height / max(s.height, 1))
+            let w = s.width * scale, h = s.height * scale
+            fallback.draw(in: CGRect(x: (size.width - w) / 2, y: (size.height - h) / 2, width: w, height: h))
+        }
+    }
 
     // MARK: Vidéo → clip recadré, sans le son
 

@@ -1,75 +1,84 @@
 import SwiftUI
 
-// MARK: - File d'attente dans le lecteur (« Suivant », comme Musique)
-
-struct QueuePanel: View {
-    @EnvironmentObject private var library: Library
-    @EnvironmentObject private var player: Player
+/// File d'attente : le morceau en cours, « À suivre » et la suite.
+struct QueueView: View {
+    @Environment(Player.self) private var player
+    @Environment(Library.self) private var library
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("Suivant").font(.headline)
-                Spacer()
-                pill("shuffle", on: player.shuffle) { player.setShuffle(!player.shuffle) }
-                pill(player.repeatMode == .one ? "repeat.1" : "repeat", on: player.repeatMode != .off) { player.cycleRepeat() }
-            }
-            ScrollView(showsIndicators: false) {
-                LazyVStack(alignment: .leading, spacing: 0) {
-                    if !player.upNext.isEmpty {
-                        HStack {
-                            Text("À suivre").font(.subheadline.weight(.semibold)).foregroundColor(.white.opacity(0.6))
-                            Spacer()
+        NavigationStack {
+            List {
+                if let id = player.currentID, let t = library.track(id) {
+                    Section {
+                        TrackRow(track: t, isCurrent: true)
+                            .listRowBackground(Color.white.opacity(0.08))
+                    } header: {
+                        header("En lecture")
+                    }
+                }
+
+                Section {
+                    if player.upNext.isEmpty {
+                        Text("Utilise « Lire ensuite » sur un morceau pour l’ajouter ici.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .listRowBackground(Color.clear)
+                    }
+                    ForEach(Array(player.upNext.enumerated()), id: \.offset) { i, id in
+                        if let t = library.track(id) {
+                            TrackRow(track: t, isCurrent: false)
+                                .contentShape(Rectangle())
+                                .onTapGesture { player.playUpNext(at: i) }
+                                .listRowBackground(Color.clear)
+                        }
+                    }
+                    .onDelete { player.removeUpNext(at: $0) }
+                    .onMove { player.moveUpNext(from: $0, to: $1) }
+                } header: {
+                    HStack {
+                        header("À suivre")
+                        Spacer()
+                        if !player.upNext.isEmpty {
                             Button("Effacer") { player.clearUpNext() }
                                 .font(.subheadline.weight(.semibold))
-                        }
-                        .padding(.vertical, 6)
-                        ForEach(Array(player.upNext.enumerated()), id: \.offset) { i, id in
-                            if let t = library.track(id) { row(t) { player.playUpNext(at: i) } }
+                                .textCase(nil)
                         }
                     }
-                    let upcoming = Array(player.upcomingInQueue.prefix(100))
-                    ForEach(upcoming, id: \.self) { qi in
-                        if player.queue.indices.contains(qi), let t = library.track(player.queue[qi]) {
-                            row(t) { player.jump(toQueueIndex: qi) }
+                }
+
+                if !player.upcomingInQueue.isEmpty {
+                    Section {
+                        ForEach(player.upcomingInQueue.prefix(200), id: \.self) { qi in
+                            if let t = library.track(player.queue[qi]) {
+                                TrackRow(track: t, isCurrent: false)
+                                    .contentShape(Rectangle())
+                                    .onTapGesture { player.jump(toQueueIndex: qi) }
+                                    .listRowBackground(Color.clear)
+                            }
                         }
-                    }
-                    if player.upNext.isEmpty && upcoming.isEmpty {
-                        Text("Aucun morceau à suivre.")
-                            .font(.subheadline)
-                            .foregroundColor(.white.opacity(0.55))
-                            .frame(maxWidth: .infinity)
-                            .padding(.top, 30)
+                    } header: {
+                        header(player.shuffle ? "Ensuite (aléatoire)" : "Ensuite")
                     }
                 }
             }
-        }
-    }
-
-    private func pill(_ symbol: String, on: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundColor(on ? Color.black.opacity(0.75) : .white)
-                .frame(width: 44, height: 30)
-                .background(Capsule().fill(on ? Color.white : Color.white.opacity(0.15)))
-        }
-        .haptic(.selection, trigger: on)
-    }
-
-    private func row(_ t: Track, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 12) {
-                Artwork(track: t, cornerRadius: 4, pixels: 120).frame(width: 44, height: 44)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(t.title).font(.body).lineLimit(1)
-                    Text(t.displayArtist).font(.subheadline).foregroundColor(.white.opacity(0.55)).lineLimit(1)
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .navigationTitle("File d’attente")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) { EditButton() }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("OK") { dismiss() }.fontWeight(.semibold)
                 }
-                Spacer(minLength: 0)
             }
-            .padding(.vertical, 6)
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .presentationBackground(.ultraThinMaterial)
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+    }
+
+    private func header(_ text: String) -> some View {
+        Text(text).font(.headline).foregroundStyle(.primary).textCase(nil)
     }
 }
