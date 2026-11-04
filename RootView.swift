@@ -149,22 +149,22 @@ struct AccessoryPlayer: View {
         let t = player.currentID.flatMap { library.track($0) }
         let inline = placement == .inline
         HStack(spacing: 10) {
-            Group {
+            // Pochette en carré arrondi, comme Musique : assez petite et assez loin du bord
+            // pour rester entièrement à l'intérieur de la pilule (rien ne dépasse du verre).
+            let side: CGFloat = inline ? 24 : 30
+            let corner: CGFloat = inline ? 6 : 7
+            ZStack {
+                RoundedRectangle(cornerRadius: corner, style: .continuous).fill(Color.white.opacity(0.12))
                 if let t {
-                    ArtworkView(track: t, animated: false, small: true, cornerRadius: inline ? 6 : 8, bordered: false)
+                    ArtworkView(track: t, animated: false, small: true, cornerRadius: corner, bordered: false)
                 } else {
-                    // Rien en lecture : la note grise de Musique, bien centrée.
-                    RoundedRectangle(cornerRadius: inline ? 6 : 8, style: .continuous)
-                        .fill(Color.white.opacity(0.12))
-                        .overlay(
-                            Image(systemName: "music.note")
-                                .font(.system(size: inline ? 12 : 15, weight: .semibold))
-                                .foregroundStyle(.secondary)
-                        )
+                    Image(systemName: "music.note")
+                        .font(.system(size: side * 0.42, weight: .semibold))
+                        .foregroundStyle(.secondary)
                 }
             }
-            .frame(width: inline ? 28 : 34, height: inline ? 28 : 34)
-            .clipShape(RoundedRectangle(cornerRadius: inline ? 6 : 8, style: .continuous))
+            .frame(width: side, height: side)
+            .clipShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
             .id(t?.id)
             VStack(alignment: .leading, spacing: 0) {
                 Text(t?.title ?? "À l’arrêt").font(.subheadline.weight(.semibold)).lineLimit(1)
@@ -192,7 +192,8 @@ struct AccessoryPlayer: View {
             }
         }
         .buttonStyle(.plain)
-        .padding(.horizontal, 12)
+        .padding(.leading, inline ? 10 : 12)
+        .padding(.trailing, 10)
         .contentShape(Rectangle())
         .onTapGesture { if t != nil { onOpen() } }
         .modifier(PlayerZoomSource())
