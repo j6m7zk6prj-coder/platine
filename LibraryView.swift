@@ -489,6 +489,7 @@ extension View {
 // MARK: - Mini-lecteur
 
 struct MiniPlayer: View {
+    var zoomID = "miniPlayer-0"
     var onOpen: () -> Void
     @Environment(Player.self) private var player
     @Environment(Library.self) private var library
@@ -496,73 +497,99 @@ struct MiniPlayer: View {
     @State private var dragY: CGFloat = 0
 
     var body: some View {
-        if let id = player.currentID, let t = library.track(id) {
-            HStack(spacing: 12) {
-                ArtworkView(track: t, animated: false, small: true, cornerRadius: 9)
-                    .frame(width: 44, height: 44)
-                    .id(t.id)
-                    .transition(.opacity)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(t.title).font(.body.weight(.semibold)).lineLimit(1)
-                    Text(t.displayArtist).font(.subheadline).foregroundStyle(.primary.opacity(0.75)).lineLimit(1)
+        let t = player.currentID.flatMap { library.track($0) }
+        HStack(spacing: 12) {
+            // Pochette en carré arrondi, assez petite pour rester bien dans l'arrondi de la pilule.
+            ZStack {
+                RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.white.opacity(0.12))
+                if let t {
+                    ArtworkView(track: t, animated: false, small: true, cornerRadius: 8, bordered: false)
+                } else {
+                    Image(systemName: "music.note")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(.secondary)
                 }
-                .id(t.id)
-                .transition(.opacity)
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-                Button { player.togglePlay() } label: {
-                    Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                        .font(.system(size: 24))
-                        .contentTransition(.symbolEffect(.replace))
-                        .frame(width: 44, height: 44)
-                }
-                .accessibilityLabel(player.isPlaying ? "Pause" : "Lecture")
-                Button { player.next() } label: {
-                    Image(systemName: "forward.fill")
-                        .font(.system(size: 22))
-                        .frame(width: 48, height: 44)
-                }
-                .accessibilityLabel("Suivant")
             }
-            .buttonStyle(PressStyle())
-            .foregroundStyle(.primary)
-            .padding(.leading, 10)
-            .padding(.trailing, 12)
-            .padding(.vertical, 9)
-            .contentShape(Capsule())
-            .onTapGesture(perform: onOpen)
-            // Comme Musique : une pilule en Liquid Glass (verre dépoli sur les iOS plus anciens).
-            .glassCapsule(interactive: true)
-            .modifier(PlayerZoomSource())
-            .contextMenu {
+            .frame(width: 36, height: 36)
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .id(t?.id)
+            .transition(.opacity)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(t?.title ?? "À l’arrêt").font(.body.weight(.semibold)).lineLimit(1)
+                if let t {
+                    Text(t.displayArtist).font(.subheadline).foregroundStyle(.primary.opacity(0.7)).lineLimit(1)
+                }
+            }
+            .id(t?.id)
+            .transition(.opacity)
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Button { player.togglePlay() } label: {
+                Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
+                    .font(.system(size: 22))
+                    .contentTransition(.symbolEffect(.replace))
+                    .frame(width: 40, height: 40)
+            }
+            .disabled(t == nil)
+            .accessibilityLabel(player.isPlaying ? "Pause" : "Lecture")
+            Button { player.next() } label: {
+                Image(systemName: "forward.fill")
+                    .font(.system(size: 20))
+                    .frame(width: 40, height: 40)
+            }
+            .disabled(t == nil)
+            .accessibilityLabel("Suivant")
+        }
+        .buttonStyle(PressStyle())
+        .foregroundStyle(.primary)
+        .padding(.leading, 12)
+        .padding(.trailing, 10)
+        .padding(.vertical, 8)
+        .contentShape(Capsule())
+        .onTapGesture { if t != nil { onOpen() } }
+        // Comme Musique : une pilule en Liquid Glass. Le lecteur sort d'elle et s'y referme.
+        .glassCapsule(interactive: true)
+        .modifier(PlayerZoomSource(id: zoomID))
+        .contextMenu {
+            if t != nil {
                 Button(player.isPlaying ? "Pause" : "Lecture", systemImage: player.isPlaying ? "pause.fill" : "play.fill") {
                     player.togglePlay()
                 }
                 Button("Arrêter la lecture", systemImage: "stop.fill") { player.quit() }
             }
-            // Glisse le mini-lecteur vers le bas pour quitter la lecture.
-            .offset(y: max(0, dragY))
-            .opacity(1 - Double(min(max(0, dragY), 120)) / 160)
-            .simultaneousGesture(
-                DragGesture(minimumDistance: 12)
-                    .onChanged { value in
-                        if value.translation.height > 0 { dragY = value.translation.height }
-                    }
-                    .onEnded { value in
-                        if value.translation.height > 70 || value.predictedEndTranslation.height > 180 {
-                            withAnimation(.smooth(duration: 0.3)) { dragY = 160 }
-                            player.quit()
-                        }
-                        withAnimation(.spring(response: 0.4, dampingFraction: 0.8).delay(0.3)) { dragY = 0 }
-                    }
-            )
-            .sensoryFeedback(trigger: player.currentID == nil) { _, stopped in
-                stopped && settings.haptics ? .impact(weight: .light) : nil
-            }
-            .animation(.smooth(duration: 0.4), value: t.id)
-            .transition(.move(edge: .bottom).combined(with: .opacity))
-            .accessibilityAction(named: "Ouvrir le lecteur", onOpen)
-            .accessibilityAction(named: "Arrêter la lecture") { player.quit() }
         }
+        // Toute la pilule suit le doigt vers le bas ; assez loin, elle part et le son s'arrête.
+        .offset(y: dragY)
+        .scaleEffect(1 - min(dragY, 120) / 900, anchor: .bottom)
+        .opacity(1 - Double(min(dragY, 120)) / 170)
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 8)
+                .onChanged { g in
+                    guard t != nil, g.translation.height > 0, abs(g.translation.height) > abs(g.translation.width) else { return }
+                    // Un peu de résistance, comme un élastique.
+                    dragY = g.translation.height * (1 - min(g.translation.height, 200) / 600)
+                }
+                .onEnded { g in
+                    guard t != nil else { return }
+                    if g.translation.height > 60 || g.predictedEndTranslation.height > 160 {
+                        withAnimation(.smooth(duration: 0.28)) { dragY = 140 }
+                        Task { @MainActor in
+                            try? await Task.sleep(for: .milliseconds(240))
+                            player.quit()
+                            // La pilule « À l'arrêt » remonte en douceur.
+                            dragY = 60
+                            withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) { dragY = 0 }
+                        }
+                    } else {
+                        withAnimation(.spring(response: 0.4, dampingFraction: 0.72)) { dragY = 0 }
+                    }
+                }
+        )
+        .sensoryFeedback(trigger: player.currentID == nil) { _, stopped in
+            stopped && settings.haptics ? .impact(weight: .medium) : nil
+        }
+        .animation(.smooth(duration: 0.35), value: t?.id)
+        .accessibilityAction(named: "Ouvrir le lecteur", onOpen)
     }
 }

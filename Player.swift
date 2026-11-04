@@ -567,10 +567,15 @@ final class Player {
         }
     }
 
-    /// Prépare dès maintenant la pochette animée des deux morceaux suivants.
-    private func warmUpcomingLockArtwork() {
+    /// Prépare dès maintenant la pochette animée du morceau en cours et des suivants.
+    func warmUpcomingLockArtwork() {
         guard settings.lockScreenAnimation else { return }
-        for i in upcomingInQueue.prefix(2) {
+        // Le morceau en cours d'abord, puis les six suivants : tout est prêt avant que tu verrouilles
+        // (iOS interdit de préparer la vidéo une fois l'iPhone verrouillé).
+        if let id = currentID, let t = library.track(id), let m = library.motion(t) {
+            LockScreenArtwork.shared.warm(source: m.url, kind: m.kind)
+        }
+        for i in upcomingInQueue.prefix(6) {
             guard let t = library.track(queue[i]), let m = library.motion(t) else { continue }
             LockScreenArtwork.shared.warm(source: m.url, kind: m.kind)
         }

@@ -17,7 +17,7 @@ struct RootView: View {
         @Bindable var ui = ui
         tabs(selection: $ui.selectedTab)
         .overlay(alignment: .top) { Banner() }
-        .modifier(PlayerPresenter(isPresented: $ui.showPlayer, namespace: playerZoom))
+        .modifier(PlayerPresenter(isPresented: $ui.showPlayer, namespace: playerZoom, sourceID: "miniPlayer-\(ui.selectedTab)"))
         .environment(\.playerZoomNamespace, playerZoom)
         .sheet(item: $ui.editing) { target in
             ArtworkEditor(trackID: target.id)
@@ -59,11 +59,12 @@ struct RootView: View {
             // Seulement les 4 pochettes animées écoutées le plus récemment, et après un moment :
             // l'encodage vidéo est lourd, il ne doit jamais ralentir l'app (Mode voyage prépare tout le reste).
             if settings.lockScreenAnimation {
-                try? await Task.sleep(for: .seconds(20))
+                try? await Task.sleep(for: .seconds(6))
+                player.warmUpcomingLockArtwork()
                 let recent = library.tracks
                     .filter { library.motion($0) != nil }
                     .sorted { ($0.lastPlayed ?? .distantPast) > ($1.lastPlayed ?? .distantPast) }
-                    .prefix(4)
+                    .prefix(12)
                 for t in recent {
                     if let m = library.motion(t) {
                         LockScreenArtwork.shared.warm(source: m.url, kind: m.kind)
@@ -73,6 +74,8 @@ struct RootView: View {
         }
         .onChange(of: phase) { _, newPhase in
             if newPhase == .active, settings.autoImport { Task { await library.scanInbox() } }
+            // De retour dans l'app : on prépare les pochettes animées de l'écran verrouillé qui manquent.
+            if newPhase == .active { player.warmUpcomingLockArtwork() }
         }
         .onChange(of: library.artworkRevision) { _, _ in
             player.updateNowPlaying()
@@ -88,22 +91,20 @@ extension RootView {
         if #available(iOS 26.0, *) {
             TabView(selection: selection) {
                 Tab("Accueil", systemImage: "house.fill", value: 0) {
-                    NavigationStack { HomeView() }
+                    NavigationStack { HomeView() }.modifier(MiniPlayerInset(tab: 0))
                 }
                 Tab("Découvrir", systemImage: "play.rectangle.on.rectangle.fill", value: 4) {
                     NavigationStack { FeedView() }
                 }
                 Tab("Bibliothèque", systemImage: "square.stack.fill", value: 1) {
-                    NavigationStack { LibraryHomeView() }
+                    NavigationStack { LibraryHomeView() }.modifier(MiniPlayerInset(tab: 1))
                 }
                 Tab(value: 2, role: .search) {
-                    NavigationStack { SearchView() }
+                    NavigationStack { SearchView() }.modifier(MiniPlayerInset(tab: 2))
                 }
             }
-            .tabBarMinimizeBehavior(.onScrollDown)
-            .tabViewBottomAccessory {
-                AccessoryPlayer { ui.showPlayer = true }
-            }
+            // La pilule est notre propre mini-lecteur (au-dessus de la barre d'onglets) :
+            // on peut la faire glisser en entier, et le lecteur s'y referme en se réduisant.
         } else {
             legacyTabs(selection: selection)
         }
@@ -115,18 +116,18 @@ extension RootView {
     @ViewBuilder func legacyTabs(selection: Binding<Int>) -> some View {
         TabView(selection: selection) {
             NavigationStack { HomeView() }
-                .modifier(MiniPlayerInset())
+                .modifier(MiniPlayerInset(tab: 0))
                 .tabItem { Label("Accueil", systemImage: "house.fill") }
                 .tag(0)
             NavigationStack { FeedView() }
                 .tabItem { Label("Découvrir", systemImage: "play.rectangle.on.rectangle.fill") }
                 .tag(4)
             NavigationStack { LibraryHomeView() }
-                .modifier(MiniPlayerInset())
+                .modifier(MiniPlayerInset(tab: 1))
                 .tabItem { Label("Bibliothèque", systemImage: "square.stack.fill") }
                 .tag(1)
             NavigationStack { SearchView() }
-                .modifier(MiniPlayerInset())
+                .modifier(MiniPlayerInset(tab: 2))
                 .tabItem { Label("Recherche", systemImage: "magnifyingglass") }
                 .tag(2)
         }
@@ -223,12 +224,13 @@ struct AccessoryPlayer: View {
 
 /// Place le mini-lecteur au-dessus de la barre d'onglets.
 struct MiniPlayerInset: ViewModifier {
+    var tab = 0
     @Environment(UIState.self) private var ui
     @Environment(Player.self) private var player
 
     func body(content: Content) -> some View {
         content.safeAreaInset(edge: .bottom) {
-            MiniPlayer { ui.showPlayer = true }
+            MiniPlayer(zoomID: "miniPlayer-\(tab)") { ui.showPlayer = true }
                 .padding(.horizontal, 12)
                 .padding(.bottom, 6)
                 .animation(.spring(response: 0.5, dampingFraction: 0.82), value: player.currentID)
@@ -288,12 +290,13 @@ extension EnvironmentValues {
 
 /// Le mini-lecteur sert de point de départ : le lecteur en sort en s'agrandissant.
 struct PlayerZoomSource: ViewModifier {
+    var id = "miniPlayer-0"
     @Environment(\.playerZoomNamespace) private var namespace
 
     func body(content: Content) -> some View {
         if #available(iOS 18.0, *), let namespace {
-            content.matchedTransitionSource(id: "miniPlayer", in: namespace) { source in
-                source.clipShape(RoundedRectangle(cornerRadius: 32, style: .continuous))
+            content.matchedTransitionSource(id: id, in: namespace) { source in
+                source.clipShape(Capsule())
             }
         } else {
             content
@@ -306,6 +309,8 @@ struct PlayerZoomSource: ViewModifier {
 struct PlayerPresenter: ViewModifier {
     @Binding var isPresented: Bool
     let namespace: Namespace.ID
+    /// La pilule de l'onglet affiché : le lecteur en sort et s'y referme.
+    var sourceID = "miniPlayer-0"
 
     func body(content: Content) -> some View {
         if #available(iOS 18.0, *) {
@@ -313,7 +318,7 @@ struct PlayerPresenter: ViewModifier {
                 NowPlayingView()
                     .environment(\.colorScheme, .dark)
                     .overlay(alignment: .top) { Grabber() }
-                    .navigationTransition(.zoom(sourceID: "miniPlayer", in: namespace))
+                    .navigationTransition(.zoom(sourceID: sourceID, in: namespace))
             }
         } else {
             content.sheet(isPresented: $isPresented) {

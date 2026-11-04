@@ -132,7 +132,7 @@ struct ArtworkView: View {
             let moving = animated && settings.animatedArtwork ? library.motion(t) : nil
             Group {
                 if let moving, moving.kind == .video {
-                    LoopingVideoView(url: moving.url)
+                    LoopingVideoView(url: moving.url, poster: small ? library.thumbnail(for: t) : library.image(for: t))
                 } else if let moving, moving.kind == .gif {
                     AnimatedImageView(url: moving.url)
                 } else if let img = small ? library.thumbnail(for: t) : library.image(for: t) {
@@ -154,56 +154,120 @@ struct ArtworkView: View {
     }
 }
 
-// Vidéo muette en boucle.
+// Vidéo muette en boucle, posée sur la pochette fixe : tant que la vidéo n'a pas sa première image
+// (ou si iOS n'a plus de décodeur libre), c'est la pochette fixe qu'on voit — jamais un carré vide.
 final class LoopingVideoUIView: UIView {
-    override class var layerClass: AnyClass { AVPlayerLayer.self }
-    private var playerLayer: AVPlayerLayer { layer as! AVPlayerLayer }
+    private let poster = UIImageView()
+    private let videoView = PlayerLayerView()
     private let queuePlayer = AVQueuePlayer()
     private var looper: AVPlayerLooper?
     private var url: URL?
-    private var foregroundObserver: NSObjectProtocol?
+    private var observers: [NSObjectProtocol] = []
+    private var readyObservation: NSKeyValueObservation?
+    private var statusObservation: NSKeyValueObservation?
+
+    final class PlayerLayerView: UIView {
+        override class var layerClass: AnyClass { AVPlayerLayer.self }
+        var playerLayer: AVPlayerLayer { layer as! AVPlayerLayer }
+    }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         clipsToBounds = true
+        poster.contentMode = .scaleAspectFill
+        poster.clipsToBounds = true
+        for v in [poster, videoView] as [UIView] {
+            v.frame = bounds
+            v.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            addSubview(v)
+        }
+        videoView.alpha = 0
         queuePlayer.isMuted = true
         queuePlayer.preventsDisplaySleepDuringVideoPlayback = false
-        playerLayer.player = queuePlayer
-        playerLayer.videoGravity = .resizeAspectFill
-        foregroundObserver = NotificationCenter.default.addObserver(
-            forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.queuePlayer.play() }
+        // Ne jamais couper ni baisser la musique.
+        queuePlayer.audiovisualBackgroundPlaybackPolicy = .pauses
+        videoView.playerLayer.player = queuePlayer
+        videoView.playerLayer.videoGravity = .resizeAspectFill
+        // Dès que la première image est prête, la vidéo apparaît en fondu.
+        readyObservation = videoView.playerLayer.observe(\.isReadyForDisplay, options: [.new]) { [weak self] layer, _ in
+            let ready = layer.isReadyForDisplay
+            DispatchQueue.main.async {
+                guard let self else { return }
+                UIView.animate(withDuration: 0.25) { self.videoView.alpha = ready ? 1 : 0 }
+            }
         }
+        let center = NotificationCenter.default
+        observers.append(center.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.resume() }
+        })
+        // Une coupure (appel, Siri…) met la vidéo en pause : on la relance ensuite.
+        observers.append(center.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.resume() }
+        })
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
+    func setPoster(_ image: UIImage?) {
+        if poster.image !== image { poster.image = image }
+    }
+
     func load(_ url: URL) {
-        guard url != self.url else { return }
+        guard url != self.url else { resume(); return }
         self.url = url
+        videoView.alpha = 0
         queuePlayer.removeAllItems()
-        looper = AVPlayerLooper(player: queuePlayer, templateItem: AVPlayerItem(url: url))
-        queuePlayer.play()
+        let item = AVPlayerItem(url: url)
+        looper = AVPlayerLooper(player: queuePlayer, templateItem: item)
+        // Si la lecture échoue (trop de vidéos à la fois), on réessaie un peu plus tard.
+        statusObservation = queuePlayer.observe(\.status, options: [.new]) { [weak self] player, _ in
+            guard player.status == .failed else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                guard let self, let u = self.url else { return }
+                self.url = nil
+                self.load(u)
+            }
+        }
+        resume()
+    }
+
+    /// Relance la vidéo si elle est à l'écran et à l'arrêt.
+    func resume() {
+        guard window != nil, looper != nil else { return }
+        if queuePlayer.timeControlStatus != .playing { queuePlayer.play() }
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        // Hors de l'écran : pause (libère le décodeur vidéo pour les pochettes visibles).
+        if window == nil { queuePlayer.pause() } else { resume() }
     }
 
     func stop() {
         queuePlayer.pause()
         looper = nil
-        if let foregroundObserver { NotificationCenter.default.removeObserver(foregroundObserver) }
+        readyObservation = nil
+        statusObservation = nil
+        observers.forEach { NotificationCenter.default.removeObserver($0) }
+        observers.removeAll()
     }
 }
 
 struct LoopingVideoView: UIViewRepresentable {
     let url: URL
+    var poster: UIImage? = nil
 
     func makeUIView(context: Context) -> LoopingVideoUIView {
         let view = LoopingVideoUIView()
+        view.setPoster(poster)
         view.load(url)
         return view
     }
 
-    func updateUIView(_ uiView: LoopingVideoUIView, context: Context) { uiView.load(url) }
+    func updateUIView(_ uiView: LoopingVideoUIView, context: Context) {
+        uiView.setPoster(poster)
+        uiView.load(url)
+    }
 
     static func dismantleUIView(_ uiView: LoopingVideoUIView, coordinator: ()) { uiView.stop() }
 }

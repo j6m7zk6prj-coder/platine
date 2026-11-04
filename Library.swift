@@ -146,31 +146,31 @@ final class Library {
 
     // MARK: Albums exposés dans la Collection
 
-    /// Albums que tu as choisi de ne pas exposer dans la Collection.
-    private(set) var hiddenFromCollection: Set<String> =
-        Set(UserDefaults.standard.stringArray(forKey: "hiddenFromCollection") ?? [])
+    /// Albums que tu as cochés pour la Collection. Par défaut, aucun : c'est toi qui choisis.
+    private(set) var shownInCollection: Set<String> =
+        Set(UserDefaults.standard.stringArray(forKey: "shownInCollection") ?? [])
 
-    /// Les albums rangés dans la Collection (ceux que tu as choisis).
-    var exposedAlbums: [AlbumInfo] { albums.filter { !hiddenFromCollection.contains($0.id) } }
+    /// Les albums rangés dans la Collection (ceux que tu as cochés).
+    var exposedAlbums: [AlbumInfo] { albums.filter { shownInCollection.contains($0.id) } }
 
-    func isExposed(_ albumID: String) -> Bool { !hiddenFromCollection.contains(albumID) }
+    func isExposed(_ albumID: String) -> Bool { shownInCollection.contains(albumID) }
 
     func setExposed(_ albumID: String, _ on: Bool) {
-        if on { hiddenFromCollection.remove(albumID) } else {
-            hiddenFromCollection.insert(albumID)
+        if on { shownInCollection.insert(albumID) } else {
+            shownInCollection.remove(albumID)
             // Rangé : il retrouve son blister neuf la prochaine fois qu'il est exposé.
             setSealed(albumID, true)
         }
-        UserDefaults.standard.set(Array(hiddenFromCollection), forKey: "hiddenFromCollection")
+        UserDefaults.standard.set(Array(shownInCollection), forKey: "shownInCollection")
     }
 
     func setAllExposed(_ on: Bool) {
-        hiddenFromCollection = on ? [] : Set(albums.map(\.id))
+        shownInCollection = on ? Set(albums.map(\.id)) : []
         if !on {
             unwrappedAlbums = []
             UserDefaults.standard.set([String](), forKey: "unwrappedAlbums")
         }
-        UserDefaults.standard.set(Array(hiddenFromCollection), forKey: "hiddenFromCollection")
+        UserDefaults.standard.set(Array(shownInCollection), forKey: "shownInCollection")
     }
 
     /// Prix que tu as choisis (sinon un prix de disquaire est proposé).
