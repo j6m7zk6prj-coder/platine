@@ -15,7 +15,7 @@ targets:
     info:
       path: Support/Info.plist
       properties:
-        CFBundleDisplayName: Platine
+        CFBundleDisplayName: iQuran
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         UILaunchScreen: {}
@@ -23,7 +23,7 @@ targets:
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
-        NSPhotoLibraryAddUsageDescription: "Platine enregistre les pochettes que tu choisis dans tes Photos."
+        NSPhotoLibraryAddUsageDescription: "iQuran enregistre les pochettes que tu choisis dans tes Photos."
         ITSAppUsesNonExemptEncryption: false
     settings:
       base:

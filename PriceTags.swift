@@ -203,7 +203,7 @@ struct PriceSection: View {
                     Text("€").foregroundStyle(.secondary)
                 }
                 if library.hasCustomPrice(album.id) {
-                    Button("Prix proposé par Platine") {
+                    Button("Prix proposé par iQuran") {
                         draft = ""
                         library.setPrice(nil, for: album.id)
                     }

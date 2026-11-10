@@ -91,7 +91,7 @@ struct SettingsView: View {
                     HStack {
                         Label("Icône de l’app", systemImage: "app.badge")
                         Spacer()
-                        Text(AppIconChoice.all.first { $0.iconName == UIApplication.shared.alternateIconName }?.title ?? "Platine")
+                        Text(AppIconChoice.all.first { $0.iconName == UIApplication.shared.alternateIconName }?.title ?? "iQuran")
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -134,7 +134,7 @@ struct SettingsView: View {
             Section {
                 LabeledContent("Version", value: "11.6")
             } footer: {
-                Text("Platine lit ta propre musique. Seule la recherche de paroles contacte internet (LRCLIB), et uniquement quand tu ouvres des paroles absentes ou lances la recherche.")
+                Text("iQuran lit ta propre musique. Seule la recherche de paroles contacte internet (LRCLIB), et uniquement quand tu ouvres des paroles absentes ou lances la recherche.")
             }
         }
         .scrollContentBackground(.hidden)
@@ -150,7 +150,7 @@ struct SettingsView: View {
                 library.removeAll()
             }
         } message: {
-            Text("Tes morceaux, pochettes et playlists seront effacés de Platine. Les fichiers d’origine ne sont pas touchés.")
+            Text("Tes morceaux, pochettes et playlists seront effacés de iQuran. Les fichiers d’origine ne sont pas touchés.")
         }
     }
 
@@ -172,10 +172,10 @@ struct AppearanceSettingsView: View {
 
     private var lockFooter: String {
         if !settings.lockScreenPlayer {
-            return "Lecteur caché : rien ne s’affiche sur l’écran verrouillé ni dans le Centre de contrôle. Les boutons des AirPods et du casque ne pilotent plus Platine, et la musique peut se mélanger au son des autres apps."
+            return "Lecteur caché : rien ne s’affiche sur l’écran verrouillé ni dans le Centre de contrôle. Les boutons des AirPods et du casque ne pilotent plus iQuran, et la musique peut se mélanger au son des autres apps."
         }
         if #available(iOS 26.0, *) {
-            return "Les pochettes vidéo ou GIF s’animent en plein écran quand l’iPhone est verrouillé. La première fois, Platine prépare le clip en quelques secondes, app ouverte. iOS montre l’image fixe à la place en mode Économie d’énergie, avec « Réduire les animations », ou si « Lecture auto des aperçus vidéo » est désactivé (Réglages › Accessibilité)."
+            return "Les pochettes vidéo ou GIF s’animent en plein écran quand l’iPhone est verrouillé. La première fois, iQuran prépare le clip en quelques secondes, app ouverte. iOS montre l’image fixe à la place en mode Économie d’énergie, avec « Réduire les animations », ou si « Lecture auto des aperçus vidéo » est désactivé (Réglages › Accessibilité)."
         }
         return "Nécessite iOS 26 ou plus récent."
     }
