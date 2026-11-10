@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -79,6 +79,17 @@ jobs:
         with:
           name: Platine-ipa
           path: Platine.ipa
+
+      - name: Publier dans Releases (lien sans connexion)
+        run: cp Platine.ipa iQuran.ipa
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: iQuran (dernière version)
+          body: Téléchargez **iQuran.ipa** ci-dessous, puis installez-le avec iLoader.
+          make_latest: true
+          files: iQuran.ipa
 
       - uses: actions/upload-artifact@v4
         if: failure()
