@@ -334,6 +334,7 @@ private struct FeedPage: View {
     var onListen: () -> Void
     @Environment(Library.self) private var library
     @Environment(UIState.self) private var ui
+    @Environment(AppSettings.self) private var settings
     @State private var liked = false
     @State private var burst = 0
     @State private var art: FeedArtCache.Art?
@@ -358,6 +359,20 @@ private struct FeedPage: View {
                             .frame(width: w, height: artHeight)
                             .clipped()
                             .transition(.opacity)
+                    }
+                    // La pochette animée, seulement sur la page affichée (le défilement reste fluide).
+                    if active, settings.animatedArtwork, let moving = library.motion(track) {
+                        Group {
+                            if moving.kind == .gif {
+                                AnimatedImageView(url: moving.url)
+                            } else {
+                                LoopingVideoView(url: moving.url, poster: art?.image)
+                            }
+                        }
+                        .frame(width: w, height: artHeight)
+                        .clipped()
+                        .allowsHitTesting(false)
+                        .transition(.opacity)
                     }
                 }
                 .frame(width: w, height: artHeight)
@@ -390,6 +405,7 @@ private struct FeedPage: View {
                 .onTapGesture(count: 2) { like() }
                 .onTapGesture { active && preview.playing ? preview.pause() : preview.resume() }
                 .animation(.easeOut(duration: 0.25), value: art?.image)
+                .animation(.easeOut(duration: 0.35), value: active)
 
                 VStack(alignment: .leading, spacing: 14) {
                     Spacer(minLength: geo.safeAreaInsets.top + 60)
