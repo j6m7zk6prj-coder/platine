@@ -130,7 +130,7 @@ struct ArtworkEditor: View {
                 .animation(.smooth, value: t.motionArtwork)
 
                 if albumID != nil {
-                    Text("Seule la pochette de l’album change (bibliothèque, page de l’album, Collection). Chaque morceau garde la sienne dans le lecteur.")
+                    Text("Seule la pochette de l’album change (bibliothèque, page de l’album). Chaque morceau garde la sienne dans le lecteur.")
                         .font(.footnote)
                         .foregroundStyle(.white.opacity(0.6))
                         .multilineTextAlignment(.center)

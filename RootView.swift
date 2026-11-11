@@ -8,8 +8,6 @@ struct RootView: View {
     @Environment(AppSettings.self) private var settings
     @Environment(UIState.self) private var ui
     @Environment(\.scenePhase) private var phase
-    /// La Collection est chargée (cachée) peu après le lancement, pour s'ouvrir sans attendre.
-    @State private var shelfMounted = false
     /// Le mini-lecteur s'agrandit en lecteur plein écran (et s'y referme en glissant vers le bas).
     @Namespace private var playerZoom
 
@@ -21,19 +19,6 @@ struct RootView: View {
         .environment(\.playerZoomNamespace, playerZoom)
         .sheet(item: $ui.editing) { target in
             ArtworkEditor(trackID: target.id)
-        }
-        .overlay {
-            if shelfMounted {
-                ShelfView(visible: ui.showShelf, onClose: { ui.showShelf = false })
-                    .environment(\.colorScheme, .dark)
-                    .opacity(ui.showShelf ? 1 : 0)
-                    .allowsHitTesting(ui.showShelf)
-                    .accessibilityHidden(!ui.showShelf)
-                    .animation(.smooth(duration: 0.32), value: ui.showShelf)
-            }
-        }
-        .onChange(of: ui.showShelf) { _, shown in
-            if shown { shelfMounted = true }
         }
         .sheet(item: $ui.editingInfo) { target in
             TrackInfoEditor(trackID: target.id)
@@ -48,12 +33,6 @@ struct RootView: View {
         }
         .task {
             if settings.autoImport { await library.scanInbox() }
-            // La Collection 3D est préparée en douce : elle s'ouvrira instantanément.
-            try? await Task.sleep(for: .seconds(1.5))
-            let playing = player.currentID.flatMap { library.track($0) }?.albumKey
-            let start = library.albums.firstIndex { $0.id == playing } ?? 0
-            await ShelfSceneController.warmUp(library: library, settings: settings, start: start)
-            shelfMounted = true
             // Les pochettes animées de l'écran verrouillé sont préparées pendant que l'app est ouverte
             // (iOS ne permet pas de le faire une fois l'iPhone verrouillé).
             // Seulement les 4 pochettes animées écoutées le plus récemment, et après un moment :

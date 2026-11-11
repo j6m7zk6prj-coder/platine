@@ -284,8 +284,6 @@ struct AppearanceSettingsView: View {
                 .pickerStyle(.segmented)
                 Toggle("Pochettes animées", isOn: $settings.animatedArtwork)
                 Toggle("Pochette étendue dans les albums", isOn: $settings.extendedAlbumArtwork)
-                Toggle("CD neufs sous blister", isOn: $settings.shrinkWrap)
-                Toggle("Étiquettes prix du disquaire", isOn: $settings.priceStickers)
             }
 
 
@@ -317,15 +315,6 @@ struct AppearanceSettingsView: View {
                     .animation(.smooth(duration: 0.25), value: settings.lyricsSize)
             } header: {
                 Text("Paroles")
-            }
-
-            Section {
-                Toggle("Stickers automatiques", isOn: Binding(get: { library.autoStickers },
-                                                              set: { library.autoStickers = $0 }))
-            } header: {
-                Text("Collection")
-            } footer: {
-                Text("Ajoute tout seul les stickers Or, Platine, Favori et Nouveau. Pour choisir tes propres stickers holographiques, appuie longtemps sur un album dans la Collection.")
             }
 
             Section("Bibliothèque") {
