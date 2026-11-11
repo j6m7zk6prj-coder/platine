@@ -75,11 +75,6 @@ jobs:
           cp -R build/Release-iphoneos/Platine.app Payload/
           zip -qry Platine.ipa Payload
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: Platine-ipa
-          path: Platine.ipa
-
       - uses: softprops/action-gh-release@v2
         if: github.ref_name == 'platine-9'
         with:
@@ -89,6 +84,12 @@ jobs:
           body: Téléchargez **Platine.ipa** ci-dessous, puis installez-le avec iLoader.
           make_latest: false
           files: Platine.ipa
+
+      - uses: actions/upload-artifact@v4
+        continue-on-error: true
+        with:
+          name: Platine-ipa
+          path: Platine.ipa
 
       - uses: actions/upload-artifact@v4
         if: failure()
