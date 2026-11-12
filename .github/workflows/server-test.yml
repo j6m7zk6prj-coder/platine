@@ -13,5 +13,5 @@ jobs:
       - uses: actions/checkout@v4
       - name: Compiler et tester le serveur
         run: |
-          swiftc -O WifiServer.swift ServerTest/main.swift -o servertest
-          ./servertest
+          swiftc -O WifiServer.swift ServerTest/main.swift -o wifi-test-bin
+          ./wifi-test-bin
