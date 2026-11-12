@@ -18,91 +18,130 @@ struct FeedItem: Identifiable, Equatable {
 }
 
 /// Lecteur d'extraits, séparé du lecteur principal : ta file d'attente n'est jamais touchée.
+/// Comme TikTok : la page suivante (et la précédente) sont déjà chargées et calées au bon endroit,
+/// en silence ; en arrivant dessus, le son part tout de suite.
 @MainActor
 @Observable
 final class FeedPreview {
-    private let player = AVPlayer()
     private(set) var playing = false
-    @ObservationIgnored private var loopObserver: Any?
-    @ObservationIgnored private var fadeTask: Task<Void, Never>?
+    @ObservationIgnored private var slots: [UUID: Slot] = [:]
     @ObservationIgnored private var current: UUID?
-    @ObservationIgnored private var loadTask: Task<Void, Never>?
-    /// Tant que le morceau n'est pas calé au bon endroit, on annonce le début de l'extrait
-    /// (les paroles ne montrent jamais le début du morceau par erreur).
-    @ObservationIgnored private var pendingStart: Double?
+    @ObservationIgnored private var fadeTask: Task<Void, Never>?
     /// Durée d'un extrait avant qu'il reprenne au début.
     static let length = 30.0
 
-    var time: Double {
-        if let pendingStart { return pendingStart }
-        let t = player.currentTime().seconds
-        return t.isFinite ? t : 0
+    @MainActor
+    final class Slot {
+        let player = AVPlayer()
+        let start: Double
+        var ready = false
+        var loop: Any?
+        var task: Task<Void, Never>?
+        init(start: Double) { self.start = start }
     }
 
-    func play(_ url: URL, from start: Double, item: UUID) {
-        guard current != item else { if !playing { resume() }; return }
-        current = item
-        fadeTask?.cancel()
-        loadTask?.cancel()
-        player.pause()
-        playing = false
-        if let loopObserver { player.removeTimeObserver(loopObserver) }
-        loopObserver = nil
-        pendingStart = start
+    /// Où en est l'extrait affiché (le début de l'extrait tant qu'il n'est pas prêt).
+    var time: Double {
+        guard let current, let s = slots[current] else { return 0 }
+        guard s.ready else { return s.start }
+        let t = s.player.currentTime().seconds
+        return t.isFinite ? t : s.start
+    }
+
+    /// Charge un extrait à l'avance, en silence, calé exactement à son début.
+    func prepare(_ url: URL, from start: Double, item: UUID) {
+        guard slots[item] == nil else { return }
+        let slot = Slot(start: start)
+        slots[item] = slot
+        let p = slot.player
+        p.automaticallyWaitsToMinimizeStalling = false
+        p.volume = 0
         // Temps exact : sans ça, le saut au milieu d'un MP3 ou d'un FLAC tombe à côté (paroles décalées).
         let playerItem = AVPlayerItem(asset: AVURLAsset(url: url, options: [AVURLAssetPreferPreciseDurationAndTimingKey: true]))
-        player.replaceCurrentItem(with: playerItem)
+        p.replaceCurrentItem(with: playerItem)
         let begin = CMTime(seconds: start, preferredTimescale: 600)
-        loadTask = Task { [weak self] in
-            // Le saut n'est fiable qu'une fois le fichier prêt : sinon l'extrait part du début du morceau.
-            for _ in 0..<150 where playerItem.status == .unknown {
+        slot.task = Task { [weak self, weak slot] in
+            for _ in 0..<250 where playerItem.status == .unknown {
                 try? await Task.sleep(for: .milliseconds(20))
                 if Task.isCancelled { return }
             }
-            guard let self, self.current == item, playerItem.status == .readyToPlay else { return }
-            _ = await self.player.seek(to: begin, toleranceBefore: .zero, toleranceAfter: .zero)
-            guard !Task.isCancelled, self.current == item else { return }
-            self.pendingStart = nil
+            guard let slot, playerItem.status == .readyToPlay else { return }
+            _ = await p.seek(to: begin, toleranceBefore: .zero, toleranceAfter: .zero)
+            guard !Task.isCancelled else { return }
             // L'extrait tourne en boucle sur 30 secondes.
             let end = CMTime(seconds: start + Self.length, preferredTimescale: 600)
-            self.loopObserver = self.player.addBoundaryTimeObserver(forTimes: [NSValue(time: end)], queue: .main) { [weak self] in
-                MainActor.assumeIsolated {
-                    self?.player.seek(to: begin, toleranceBefore: .zero, toleranceAfter: .zero)
-                }
+            slot.loop = p.addBoundaryTimeObserver(forTimes: [NSValue(time: end)], queue: .main) { [weak p] in
+                MainActor.assumeIsolated { p?.seek(to: begin, toleranceBefore: .zero, toleranceAfter: .zero) }
             }
-            self.fadeIn()
+            p.preroll(atRate: 1) { _ in }
+            slot.ready = true
+            if self?.current == item { self?.startCurrent() }
+        }
+    }
+
+    /// Joue l'extrait de la page affichée (tout de suite s'il est déjà prêt).
+    func play(_ url: URL, from start: Double, item: UUID) {
+        if current == item {
+            if !playing { resume() }
+            return
+        }
+        if let old = current, let s = slots[old] {
+            s.player.pause()
+            s.player.volume = 0
+        }
+        current = item
+        playing = false
+        prepare(url, from: start, item: item)
+        if slots[item]?.ready == true { startCurrent() }
+    }
+
+    /// Garde seulement les extraits utiles (la page affichée et ses voisines).
+    func keep(_ ids: Set<UUID>) {
+        for (id, s) in slots where !ids.contains(id) && id != current {
+            release(s)
+            slots[id] = nil
         }
     }
 
     func resume() {
-        guard player.currentItem != nil, pendingStart == nil else { return }
-        fadeIn()
+        guard current != nil else { return }
+        startCurrent()
     }
 
     func pause() {
         fadeTask?.cancel()
-        player.pause()
+        if let current { slots[current]?.player.pause() }
         playing = false
     }
 
     func stop() {
         pause()
-        loadTask?.cancel()
-        pendingStart = nil
+        for s in slots.values { release(s) }
+        slots = [:]
         current = nil
-        player.replaceCurrentItem(with: nil)
     }
 
-    /// Montée du son en douceur (pas de coupure brutale en changeant d'extrait).
-    private func fadeIn() {
-        player.volume = 0
-        player.play()
+    private func release(_ s: Slot) {
+        s.task?.cancel()
+        s.player.pause()
+        if let loop = s.loop { s.player.removeTimeObserver(loop) }
+        s.loop = nil
+        s.player.replaceCurrentItem(with: nil)
+    }
+
+    private func startCurrent() {
+        guard let current, let s = slots[current], s.ready else { return }
+        let p = s.player
+        p.volume = 0
+        p.playImmediately(atRate: 1)
         playing = true
-        fadeTask = Task { [weak self] in
-            for i in 1...12 {
-                try? await Task.sleep(for: .milliseconds(30))
-                guard let self, !Task.isCancelled else { return }
-                self.player.volume = Float(i) / 12
+        // Montée du son très courte : le son part tout de suite, sans claquement.
+        fadeTask?.cancel()
+        fadeTask = Task { [weak p] in
+            for i in 1...8 {
+                try? await Task.sleep(for: .milliseconds(20))
+                guard let p, !Task.isCancelled else { return }
+                p.volume = Float(i) / 8
             }
         }
     }
@@ -132,8 +171,7 @@ struct FeedView: View {
                     LazyVStack(spacing: 0) {
                         ForEach(items) { item in
                             if let t = library.track(item.trackID) {
-                                FeedPage(item: item, track: t, active: item.id == position, preview: preview,
-                                         onListen: { listen(item, t) })
+                                FeedPage(item: item, track: t, active: item.id == position, preview: preview)
                                     .containerRelativeFrame([.horizontal, .vertical])
                                     .id(item.id)
                             }
@@ -147,31 +185,32 @@ struct FeedView: View {
                 .ignoresSafeArea()
             }
 
-            // En haut : le titre et le filtre « avec paroles ».
+            // Le menu se range en un petit bouton Accueil, comme dans Musique.
             VStack {
-                HStack {
-                    Text("Découvrir").font(.title2.bold())
-                    Spacer()
-                    Button {
-                        lyricsOnly.toggle()
-                        rebuild()
-                    } label: {
-                        Label(lyricsOnly ? "Avec paroles" : "Tout", systemImage: lyricsOnly ? "quote.bubble.fill" : "quote.bubble")
-                            .font(.subheadline.weight(.semibold))
-                            .padding(.horizontal, 12)
-                            .frame(height: 34)
-                            .glassCapsule()
-                    }
-                    .buttonStyle(PressStyle(circle: false))
-                }
-                .foregroundStyle(.white)
-                .padding(.horizontal, 20)
-                .padding(.top, 6)
                 Spacer()
+                HStack {
+                    Button {
+                        preview.pause()
+                        ui.selectedTab = 0
+                    } label: {
+                        Image(systemName: "house.fill")
+                            .font(.system(size: 19, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .frame(width: 52, height: 52)
+                            .glassCircle()
+                    }
+                    .buttonStyle(PressStyle())
+                    .accessibilityLabel("Accueil")
+                    Spacer()
+                }
+                .padding(.horizontal, 20)
+                .padding(.bottom, 6)
             }
         }
         .environment(\.colorScheme, .dark)
         .toolbar(.hidden, for: .navigationBar)
+        .toolbar(.hidden, for: .tabBar)
+        .statusBarHidden(true)
         .onAppear {
             if items.isEmpty { rebuild() }
             // Le lecteur principal se met en pause : un seul son à la fois.
@@ -229,23 +268,18 @@ struct FeedView: View {
     }
 
     private func playCurrent() {
-        guard let position, let item = items.first(where: { $0.id == position }),
-              let t = library.track(item.trackID) else { return }
-        preview.play(library.audioURL(t), from: item.start, item: item.id)
-    }
-
-    /// Écouter en entier : le morceau passe dans le lecteur principal, à l'endroit de l'extrait.
-    private func listen(_ item: FeedItem, _ t: Track) {
-        let at = preview.time
-        preview.pause()
-        let album = library.albumTrackIDs(of: t)
-        let ids = library.tracks.filter { album.contains($0.id) }.map(\.id)
-        player.play(ids: ids.isEmpty ? [t.id] : ids, startAt: t.id, shuffled: false)
-        Task {
-            try? await Task.sleep(for: .milliseconds(350))
-            player.seek(to: at)
+        guard let position, let i = items.firstIndex(where: { $0.id == position }),
+              let t = library.track(items[i].trackID) else { return }
+        preview.play(library.audioURL(t), from: items[i].start, item: items[i].id)
+        // Les pages voisines sont prêtes avant qu'on y arrive.
+        var keep: Set<UUID> = [items[i].id]
+        for j in [i + 1, i - 1, i + 2] where items.indices.contains(j) {
+            if let n = library.track(items[j].trackID) {
+                preview.prepare(library.audioURL(n), from: items[j].start, item: items[j].id)
+                keep.insert(items[j].id)
+            }
         }
-        ui.showPlayer = true
+        preview.keep(keep)
     }
 
     /// Une vingtaine d'extraits tirés au hasard (les titres avec paroles d'abord, sans doublon proche).
@@ -394,7 +428,6 @@ private struct FeedPage: View {
     let track: Track
     let active: Bool
     let preview: FeedPreview
-    var onListen: () -> Void
     @Environment(Library.self) private var library
     @Environment(UIState.self) private var ui
     @Environment(AppSettings.self) private var settings
@@ -464,17 +497,6 @@ private struct FeedPage: View {
                     LinearGradient(colors: [.black.opacity(0.4), .clear], startPoint: .top, endPoint: .bottom)
                         .frame(height: geo.safeAreaInsets.top + 100)
                 }
-                .overlay {
-                    if !preview.playing && active {
-                        Image(systemName: "play.fill")
-                            .font(.system(size: 44))
-                            .foregroundStyle(.white.opacity(0.9))
-                            .padding(26)
-                            .glassCircle()
-                            .transition(.scale.combined(with: .opacity))
-                            .allowsHitTesting(false)
-                    }
-                }
                 .overlay { HeartBurst(trigger: burst) }
                 .animation(.easeOut(duration: 0.3), value: art?.image)
                 .animation(.easeInOut(duration: 0.45), value: active)
@@ -484,16 +506,16 @@ private struct FeedPage: View {
                     // Les paroles, posées directement sur le flou (sans cadre).
                     if !lines.isEmpty {
                         FeedLyrics(lines: lines, start: item.start, active: active, preview: preview)
-                            .frame(height: min(250, h * 0.3), alignment: .top)
+                            .frame(height: min(300, h * 0.34), alignment: .top)
+                            .clipped()
                             .allowsHitTesting(false)
                             .transition(.opacity)
                     }
                     info
-                    actions
                     progress
                 }
                 .padding(.horizontal, 20)
-                .padding(.bottom, geo.safeAreaInsets.bottom + 66)
+                .padding(.bottom, geo.safeAreaInsets.bottom + 74)
                 .foregroundStyle(.white)
                 .animation(.easeOut(duration: 0.4), value: lines.isEmpty)
             }
@@ -519,8 +541,9 @@ private struct FeedPage: View {
         }
     }
 
+    /// Le titre et l'artiste ; toucher ouvre l'album.
     private var info: some View {
-        HStack(spacing: 10) {
+        NavigationLink { AlbumDetailView(albumID: track.albumKey) } label: {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 5) {
                     Text(track.title).font(.headline).lineLimit(1)
@@ -528,59 +551,10 @@ private struct FeedPage: View {
                 }
                 Text(track.displayArtist).font(.subheadline).foregroundStyle(.white.opacity(0.7)).lineLimit(1)
             }
-            Spacer(minLength: 8)
-            iconButton(liked ? "star.fill" : "star", label: liked ? "Retirer des favoris" : "Favori",
-                       tint: liked ? .yellow : .white) { like() }
-            Menu {
-                Button("Ajouter à une playlist", systemImage: "text.badge.plus") {
-                    ui.addToPlaylist = AddToPlaylistTarget(trackIDs: [track.id])
-                }
-                Section("Paroles incorrectes ?") {
-                    Button("Chercher les bonnes paroles", systemImage: "magnifyingglass") { researchLyrics() }
-                    Button("Retirer ces paroles", systemImage: "quote.bubble", role: .destructive) {
-                        library.setLyrics(track.id, nil)
-                        library.message = "Paroles retirées"
-                    }
-                }
-            } label: {
-                Image(systemName: "ellipsis")
-                    .font(.system(size: 17, weight: .semibold))
-                    .frame(width: 40, height: 40)
-                    .glassCircle()
-            }
-            .accessibilityLabel("Plus")
-            ShareLink(item: library.audioURL(track)) {
-                Image(systemName: "square.and.arrow.up")
-                    .font(.system(size: 17, weight: .semibold))
-                    .frame(width: 40, height: 40)
-                    .glassCircle()
-            }
-            .accessibilityLabel("Partager")
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .shadow(color: .black.opacity(0.35), radius: 6)
         }
-    }
-
-    private var actions: some View {
-        HStack(spacing: 10) {
-            Button(action: onListen) {
-                Label("Écouter en entier", systemImage: "play.fill")
-                    .font(.subheadline.weight(.semibold))
-                    .padding(.horizontal, 16)
-                    .frame(height: 38)
-                    .glassCapsule(interactive: true)
-            }
-            .buttonStyle(PressStyle(circle: false))
-            if !track.album.isEmpty {
-                NavigationLink { AlbumDetailView(albumID: track.albumKey) } label: {
-                    Label("Album", systemImage: "square.stack")
-                        .font(.subheadline.weight(.semibold))
-                        .padding(.horizontal, 16)
-                        .frame(height: 38)
-                        .glassCapsule(interactive: true)
-                }
-                .buttonStyle(PressStyle(circle: false))
-            }
-            Spacer()
-        }
+        .buttonStyle(.plain)
     }
 
     /// Avancée de l'extrait (seulement sur la page affichée).
@@ -598,41 +572,12 @@ private struct FeedPage: View {
         }
     }
 
-    /// Nouvelle recherche, stricte : seulement des paroles synchronisées du même morceau, même version.
-    private func researchLyrics() {
-        let t = track
-        library.message = "Recherche des paroles…"
-        Task {
-            let found = await LyricsService.search(title: t.title, artist: t.artist, duration: t.duration)
-            if let found, LyricsParser.isSynced(found) {
-                library.setLyrics(t.id, found)
-                library.message = "Paroles mises à jour"
-            } else {
-                library.setLyrics(t.id, nil)
-                library.message = "Pas de paroles synchronisées pour ce morceau"
-            }
-        }
-    }
-
     private func like() {
         if !liked { burst += 1 }
         liked.toggle()
         if liked != track.isFavorite { library.toggleFavorite(track.id) }
     }
 
-    private func iconButton(_ symbol: String, label: String, tint: Color = .white, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: 17, weight: .semibold))
-                .foregroundStyle(tint)
-                .contentTransition(.symbolEffect(.replace))
-                .frame(width: 40, height: 40)
-                .glassCircle()
-        }
-        .buttonStyle(PressStyle())
-        .accessibilityLabel(label)
-        .sensoryFeedback(.impact(weight: .light), trigger: liked)
-    }
 }
 
 /// Les paroles de Découvrir, comme dans Musique : la ligne chantée se remplit de blanc au fil du chant
@@ -651,7 +596,7 @@ private struct FeedLyrics: View {
 
     var body: some View {
         let lo = max(0, current - 1)
-        let hi = min(lines.count - 1, current + 3)
+        let hi = min(lines.count - 1, current + 2)
         VStack(alignment: .leading, spacing: 16) {
             if lo <= hi {
                 ForEach(lo...hi, id: \.self) { i in
