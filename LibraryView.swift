@@ -7,6 +7,7 @@ struct LibraryHomeView: View {
     @Environment(Library.self) private var library
     @Environment(Player.self) private var player
     @Environment(UIState.self) private var ui
+    @State private var showWifi = false
 
     private var currentTrack: Track? { player.currentID.flatMap { library.track($0) } }
 
@@ -19,9 +20,13 @@ struct LibraryHomeView: View {
             }
         }
         .navigationTitle("Bibliothèque")
+        .navigationDestination(isPresented: $showWifi) { WifiTransferView() }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button { ui.importing = true } label: { Image(systemName: "plus") }
+                Menu {
+                    Button("Depuis Fichiers", systemImage: "folder") { ui.importing = true }
+                    Button("Par Wi‑Fi depuis le PC", systemImage: "wifi") { showWifi = true }
+                } label: { Image(systemName: "plus") }
                     .accessibilityLabel("Importer de la musique")
             }
         }

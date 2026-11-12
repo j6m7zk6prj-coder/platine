@@ -24,11 +24,12 @@ targets:
         LSSupportsOpeningDocumentsInPlace: true
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
         NSPhotoLibraryAddUsageDescription: "Platine enregistre les pochettes que tu choisis dans tes Photos."
+        NSLocalNetworkUsageDescription: "Platine reçoit les musiques que tu envoies depuis ton PC sur le même Wi‑Fi."
         ITSAppUsesNonExemptEncryption: false
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.platine.player
-        MARKETING_VERSION: "9.0"
+        MARKETING_VERSION: "9.1"
         CURRENT_PROJECT_VERSION: "1"
         TARGETED_DEVICE_FAMILY: "1"
         SWIFT_VERSION: "5.0"

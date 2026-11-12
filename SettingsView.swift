@@ -108,6 +108,9 @@ struct SettingsView: View {
                 } label: {
                     Label("Importer de la musique", systemImage: "plus.circle")
                 }
+                NavigationLink { WifiTransferView() } label: {
+                    Label("Envoi par Wi‑Fi depuis le PC", systemImage: "wifi")
+                }
             } header: {
                 Text("Bibliothèque")
             } footer: {
