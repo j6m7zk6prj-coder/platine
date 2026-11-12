@@ -110,37 +110,71 @@ enum LyricsService {
     }
 
     static func search(title: String, artist: String, duration: Double) async -> String? {
-        guard var components = URLComponents(string: "https://lrclib.net/api/search") else { return nil }
+        if let exact = await exact(title: title, artist: artist, duration: duration) { return exact }
+        guard let results = await query(title: title, artist: artist) else { return nil }
+        let t = norm(title), a = norm(artist)
+        // Seulement le bon morceau : même titre, même artiste (si connu).
+        let same = results.filter { r in
+            guard !(r.instrumental ?? false) else { return false }
+            return matches(norm(r.trackName ?? ""), t) && (a.isEmpty || matches(norm(r.artistName ?? ""), a))
+        }
+        func gap(_ r: Result) -> Double { abs((r.duration ?? 0) - duration) }
+        // Paroles synchronisées : seulement pour la même version (même durée, à 3 s près), sinon elles seraient décalées.
+        let synced = same
+            .filter { ($0.syncedLyrics ?? "").isEmpty == false && (duration <= 0 || gap($0) <= 3) }
+            .min { gap($0) < gap($1) }
+        if let s = synced?.syncedLyrics { return s }
+        let plain = same.first { ($0.plainLyrics ?? "").isEmpty == false }?.plainLyrics
+        return plain
+    }
+
+    /// Recherche exacte de LRCLIB (titre, artiste et durée) : la plus fiable.
+    private static func exact(title: String, artist: String, duration: Double) async -> String? {
+        guard !artist.isEmpty, duration > 0,
+              var c = URLComponents(string: "https://lrclib.net/api/get") else { return nil }
+        c.queryItems = [URLQueryItem(name: "track_name", value: title),
+                        URLQueryItem(name: "artist_name", value: artist),
+                        URLQueryItem(name: "duration", value: String(Int(duration.rounded())))]
+        guard let url = c.url, let data = await fetch(url),
+              let r = try? JSONDecoder().decode(Result.self, from: data),
+              !(r.instrumental ?? false) else { return nil }
+        if let d = r.duration, abs(d - duration) > 3 { return nil }
+        if let s = r.syncedLyrics, !s.isEmpty { return s }
+        return nil
+    }
+
+    private static func query(title: String, artist: String) async -> [Result]? {
+        guard var c = URLComponents(string: "https://lrclib.net/api/search") else { return nil }
         var items = [URLQueryItem(name: "track_name", value: title)]
         if !artist.isEmpty { items.append(URLQueryItem(name: "artist_name", value: artist)) }
-        components.queryItems = items
-        guard let url = components.url else { return nil }
+        c.queryItems = items
+        guard let url = c.url, let data = await fetch(url) else { return nil }
+        return try? JSONDecoder().decode([Result].self, from: data)
+    }
 
+    private static func fetch(_ url: URL) async -> Data? {
         var request = URLRequest(url: url)
         request.timeoutInterval = 12
         request.setValue("Platine/2.0 (lecteur personnel)", forHTTPHeaderField: "User-Agent")
+        guard let (data, http) = try? await URLSession.shared.data(for: request),
+              (http as? HTTPURLResponse)?.statusCode == 200 else { return nil }
+        return data
+    }
 
-        guard let response = try? await URLSession.shared.data(for: request) else { return nil }
-        let (data, http) = response
-        guard (http as? HTTPURLResponse)?.statusCode == 200,
-              let results = try? JSONDecoder().decode([Result].self, from: data) else { return nil }
-
-        func score(_ r: Result) -> Double {
-            var s = 0.0
-            if let synced = r.syncedLyrics, !synced.isEmpty { s += 10 }
-            if let d = r.duration, duration > 0 {
-                let diff = abs(d - duration)
-                if diff < 2 { s += 6 } else if diff < 6 { s += 3 } else if diff > 20 { s -= 8 }
-            }
-            if let a = r.artistName, !artist.isEmpty, a.localizedCaseInsensitiveContains(artist) { s += 2 }
-            return s
+    /// Titre ou artiste simplifié : sans accents, sans « (feat. …) », sans ponctuation.
+    static func norm(_ s: String) -> String {
+        var t = s.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current).lowercased()
+        t = t.replacingOccurrences(of: #"\([^)]*\)|\[[^\]]*\]"#, with: " ", options: .regularExpression)
+        for sep in [" feat", " ft.", " ft ", " featuring", " - "] {
+            if let r = t.range(of: sep) { t = String(t[..<r.lowerBound]) }
         }
+        return t.unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) }.map(String.init).joined()
+    }
 
-        let best = results
-            .filter { !($0.instrumental ?? false) && (($0.syncedLyrics ?? "").isEmpty == false || ($0.plainLyrics ?? "").isEmpty == false) }
-            .max { score($0) < score($1) }
-        guard let best, score(best) > -5 else { return nil }
-        if let synced = best.syncedLyrics, !synced.isEmpty { return synced }
-        return best.plainLyrics
+    private static func matches(_ a: String, _ b: String) -> Bool {
+        guard !a.isEmpty, !b.isEmpty else { return false }
+        if a == b { return true }
+        let (short, long) = a.count < b.count ? (a, b) : (b, a)
+        return short.count >= 4 && long.contains(short)
     }
 }

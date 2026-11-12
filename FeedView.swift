@@ -511,7 +511,9 @@ private struct FeedPage: View {
         }
         .task(id: track.lyrics) {
             let raw = track.lyrics ?? ""
-            let parsed = LyricsParser.isSynced(raw) ? (LyricsParser.parse(raw) ?? []).filter { !$0.isInterlude } : []
+            var parsed = LyricsParser.isSynced(raw) ? (LyricsParser.parse(raw) ?? []).filter { !$0.isInterlude } : []
+            // Paroles d'une autre version (plus longues que le morceau) : forcément décalées, on ne les montre pas.
+            if let last = parsed.last, track.duration > 0, last.time > track.duration + 3 { parsed = [] }
             if parsed != lines { lines = parsed }
         }
     }
@@ -528,9 +530,24 @@ private struct FeedPage: View {
             Spacer(minLength: 8)
             iconButton(liked ? "star.fill" : "star", label: liked ? "Retirer des favoris" : "Favori",
                        tint: liked ? .yellow : .white) { like() }
-            iconButton("text.badge.plus", label: "Ajouter à une playlist") {
-                ui.addToPlaylist = AddToPlaylistTarget(trackIDs: [track.id])
+            Menu {
+                Button("Ajouter à une playlist", systemImage: "text.badge.plus") {
+                    ui.addToPlaylist = AddToPlaylistTarget(trackIDs: [track.id])
+                }
+                Section("Paroles incorrectes ?") {
+                    Button("Chercher les bonnes paroles", systemImage: "magnifyingglass") { researchLyrics() }
+                    Button("Retirer ces paroles", systemImage: "quote.bubble", role: .destructive) {
+                        library.setLyrics(track.id, nil)
+                        library.message = "Paroles retirées"
+                    }
+                }
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 17, weight: .semibold))
+                    .frame(width: 40, height: 40)
+                    .glassCircle()
             }
+            .accessibilityLabel("Plus")
             ShareLink(item: library.audioURL(track)) {
                 Image(systemName: "square.and.arrow.up")
                     .font(.system(size: 17, weight: .semibold))
@@ -577,6 +594,22 @@ private struct FeedPage: View {
             }
             .frame(height: 3)
             .animation(.linear(duration: 0.2), value: p)
+        }
+    }
+
+    /// Nouvelle recherche, stricte : seulement des paroles synchronisées du même morceau, même version.
+    private func researchLyrics() {
+        let t = track
+        library.message = "Recherche des paroles…"
+        Task {
+            let found = await LyricsService.search(title: t.title, artist: t.artist, duration: t.duration)
+            if let found, LyricsParser.isSynced(found) {
+                library.setLyrics(t.id, found)
+                library.message = "Paroles mises à jour"
+            } else {
+                library.setLyrics(t.id, nil)
+                library.message = "Pas de paroles synchronisées pour ce morceau"
+            }
         }
     }
 

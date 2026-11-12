@@ -17,6 +17,8 @@ final class WifiTransfer {
     private(set) var received = 0
     private(set) var currentFile: String?
     private(set) var failed: String?
+    private(set) var artworks = 0
+    @ObservationIgnored private var albumIndex: [String: AlbumInfo] = [:]
 
     @ObservationIgnored private var listener: NWListener?
     @ObservationIgnored private var scanTask: Task<Void, Never>?
@@ -91,6 +93,49 @@ final class WifiTransfer {
         }
     }
 
+    // MARK: Pochettes
+
+    /// La bibliothèque (albums et sons) pour l'éditeur de pochettes du PC.
+    fileprivate func libraryJSON() -> Data {
+        struct T: Encodable { let id: String; let title: String; let artist: String; let n: Int }
+        struct A: Encodable { let id: String; let title: String; let artist: String; let year: Int; let animated: Bool; let tracks: [T] }
+        guard let library else { return Data(#"{"albums":[]}"#.utf8) }
+        let albums = library.albums.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+        albumIndex = Dictionary(albums.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        let list = albums.map { a in
+            A(id: a.id, title: a.title, artist: a.artist, year: a.year, animated: library.motion(a.cover) != nil,
+              tracks: a.tracks.map { T(id: $0.id.uuidString, title: $0.title, artist: $0.displayArtist, n: $0.trackNumber) })
+        }
+        struct Root: Encodable { let albums: [A] }
+        return (try? JSONEncoder().encode(Root(albums: list))) ?? Data(#"{"albums":[]}"#.utf8)
+    }
+
+    /// Une vignette JPEG de la pochette d'un album ou d'un son.
+    fileprivate func coverJPEG(album: String?, track: String?, size: Int) -> Data? {
+        guard let library else { return nil }
+        var t: Track?
+        if let album { t = (albumIndex[album] ?? library.albums.first { $0.id == album })?.cover }
+        if t == nil, let track, let id = UUID(uuidString: track) { t = library.track(id) }
+        guard let t, let image = library.image(for: t) else { return nil }
+        let side = CGFloat(min(max(size, 60), 1000))
+        let small = image.preparingThumbnail(of: CGSize(width: side, height: side)) ?? image
+        return small.jpegData(compressionQuality: 0.82)
+    }
+
+    /// Pose la pochette reçue : sur tout l'album, ou sur les sons choisis.
+    fileprivate func applyArtwork(file: URL, album: String?, tracks: [UUID], ext: String, kind: ArtworkKind) -> Bool {
+        guard let library, let data = try? Data(contentsOf: file), !data.isEmpty else { return false }
+        if let album, !album.isEmpty {
+            library.setAlbumCover(album, data: data, ext: ext, kind: kind)
+        } else {
+            let ids = Set(tracks.filter { library.track($0) != nil })
+            guard !ids.isEmpty else { return false }
+            library.setCustomArtwork(ids, data: data, ext: ext, kind: kind)
+        }
+        artworks += 1
+        return true
+    }
+
     /// L'adresse IPv4 de l'iPhone sur le Wi‑Fi.
     nonisolated static func wifiAddress() -> String? {
         var ifaddr: UnsafeMutablePointer<ifaddrs>?
@@ -119,6 +164,21 @@ private struct UploadEvents: @unchecked Sendable {
     func began(_ n: String) { Task { @MainActor in owner?.began(n) } }
     func finished(_ n: String) { Task { @MainActor in owner?.finished(n) } }
     func state(_ s: NWListener.State) { Task { @MainActor in owner?.listenerState(s) } }
+
+    func json() async -> Data {
+        let o = owner
+        return await MainActor.run { o?.libraryJSON() } ?? Data(#"{"albums":[]}"#.utf8)
+    }
+
+    func cover(album: String?, track: String?, size: Int) async -> Data? {
+        let o = owner
+        return await MainActor.run { o?.coverJPEG(album: album, track: track, size: size) }
+    }
+
+    func artwork(file: URL, album: String?, tracks: [UUID], ext: String, kind: ArtworkKind) async -> Bool {
+        let o = owner
+        return await MainActor.run { o?.applyArtwork(file: file, album: album, tracks: tracks, ext: ext, kind: kind) } ?? false
+    }
 }
 
 /// Une connexion HTTP : sert la page, ou reçoit un fichier envoyé en PUT (écrit au fur et à mesure).
@@ -134,6 +194,9 @@ private final class UploadConnection: @unchecked Sendable {
     private var finalURL: URL?
     private var remaining = 0
     private var name = ""
+    /// Ce que contient l'envoi en cours : de la musique, ou une pochette à poser.
+    private enum Mode { case music, artwork(album: String?, tracks: [UUID], ext: String, kind: ArtworkKind) }
+    private var mode = Mode.music
 
     init(conn: NWConnection, events: UploadEvents) {
         self.conn = conn
@@ -178,6 +241,37 @@ private final class UploadConnection: @unchecked Sendable {
         if method == "GET", path == "/" {
             return reply(200, WifiPage.html, type: "text/html; charset=utf-8")
         }
+        let query = Dictionary((comps?.queryItems ?? []).map { ($0.name, $0.value ?? "") }, uniquingKeysWith: { a, _ in a })
+        if method == "GET", path == "/api/library" {
+            Task { reply(200, data: await events?.json() ?? Data(), type: "application/json") }
+            return
+        }
+        if method == "GET", path == "/api/cover" {
+            let size = Int(query["s"] ?? "") ?? 240
+            Task {
+                if let d = await events?.cover(album: query["album"], track: query["track"], size: size) {
+                    reply(200, data: d, type: "image/jpeg")
+                } else {
+                    reply(404, "Pas de pochette")
+                }
+            }
+            return
+        }
+        if method == "PUT" || method == "POST", path == "/api/artwork" {
+            let ext = (query["ext"] ?? "jpg").lowercased()
+            let kinds: [String: ArtworkKind] = ["jpg": .image, "jpeg": .image, "png": .image, "heic": .image,
+                                                "gif": .gif, "mp4": .video, "mov": .video, "m4v": .video]
+            guard let kind = kinds[ext] else { return reply(415, #"{"ok":false}"#, type: "application/json") }
+            let album = query["album"].flatMap { $0.isEmpty ? nil : $0 }
+            let ids = (query["tracks"] ?? "").split(separator: ",").compactMap { UUID(uuidString: String($0)) }
+            guard album != nil || !ids.isEmpty else { return reply(400, #"{"ok":false}"#, type: "application/json") }
+            remaining = Int(headers["content-length"] ?? "") ?? -1
+            guard remaining > 0, remaining < 600_000_000 else { return reply(411, "Taille manquante") }
+            guard openPart() else { return reply(500, "Écriture impossible") }
+            mode = .artwork(album: album, tracks: ids, ext: ext == "jpeg" ? "jpg" : ext, kind: kind)
+            write(body)
+            return
+        }
         if method == "PUT" || method == "POST", path == "/upload" {
             let raw = comps?.queryItems?.first { $0.name == "name" }?.value ?? ""
             guard let clean = Self.safeName(raw) else {
@@ -186,20 +280,27 @@ private final class UploadConnection: @unchecked Sendable {
             remaining = Int(headers["content-length"] ?? "") ?? -1
             guard remaining >= 0 else { return reply(411, "Taille manquante") }
             name = clean
-            let fm = FileManager.default
-            let staging = fm.temporaryDirectory.appendingPathComponent("wifi-upload", isDirectory: true)
-            try? fm.createDirectory(at: staging, withIntermediateDirectories: true)
-            let part = staging.appendingPathComponent(UUID().uuidString + ".part")
-            fm.createFile(atPath: part.path, contents: nil)
-            guard let h = try? FileHandle(forWritingTo: part) else { return reply(500, "Écriture impossible") }
-            file = h
-            partURL = part
+            guard openPart() else { return reply(500, "Écriture impossible") }
+            mode = .music
             finalURL = Self.freeURL(in: Self.inbox, name: clean)
             events?.began(clean)
             write(body)
             return
         }
         reply(404, "Introuvable")
+    }
+
+    /// Fichier temporaire où l'envoi est écrit au fur et à mesure.
+    private func openPart() -> Bool {
+        let fm = FileManager.default
+        let staging = fm.temporaryDirectory.appendingPathComponent("wifi-upload", isDirectory: true)
+        try? fm.createDirectory(at: staging, withIntermediateDirectories: true)
+        let part = staging.appendingPathComponent(UUID().uuidString + ".part")
+        fm.createFile(atPath: part.path, contents: nil)
+        guard let h = try? FileHandle(forWritingTo: part) else { return false }
+        file = h
+        partURL = part
+        return true
     }
 
     private func write(_ data: Data) {
@@ -223,6 +324,14 @@ private final class UploadConnection: @unchecked Sendable {
     private func complete() {
         try? file?.close()
         file = nil
+        if case let .artwork(album, tracks, ext, kind) = mode, let part = partURL {
+            Task {
+                let ok = await events?.artwork(file: part, album: album, tracks: tracks, ext: ext, kind: kind) ?? false
+                try? FileManager.default.removeItem(at: part)
+                reply(ok ? 200 : 500, ok ? #"{"ok":true}"# : #"{"ok":false}"#, type: "application/json")
+            }
+            return
+        }
         guard let part = partURL, let dest = finalURL else { return reply(500, "Erreur") }
         do {
             try FileManager.default.moveItem(at: part, to: dest)
@@ -242,9 +351,12 @@ private final class UploadConnection: @unchecked Sendable {
     }
 
     private func reply(_ code: Int, _ body: String, type: String = "text/plain; charset=utf-8") {
+        reply(code, data: Data(body.utf8), type: type)
+    }
+
+    private func reply(_ code: Int, data: Data, type: String) {
         let status = [200: "OK", 400: "Bad Request", 404: "Not Found", 411: "Length Required",
                       415: "Unsupported Media Type", 500: "Internal Server Error"][code] ?? "OK"
-        let data = Data(body.utf8)
         var head = "HTTP/1.1 \(code) \(status)\r\n"
         head += "Content-Type: \(type)\r\nContent-Length: \(data.count)\r\n"
         head += "Cache-Control: no-store\r\nConnection: close\r\n\r\n"
@@ -317,6 +429,7 @@ struct WifiTransferView: View {
             Section("En direct") {
                 LabeledContent("Fichiers reçus", value: "\(transfer.received)")
                 LabeledContent("Morceaux ajoutés", value: "\(max(0, library.tracks.count - startCount))")
+                LabeledContent("Pochettes posées", value: "\(transfer.artworks)")
                 if let f = transfer.currentFile {
                     HStack(spacing: 10) {
                         ProgressView()
@@ -335,7 +448,8 @@ struct WifiTransferView: View {
 
             Section {
                 Label("Ouvre l’adresse dans Chrome, Edge ou Safari sur ton PC.", systemImage: "1.circle")
-                Label("Glisse tes musiques (ou un dossier entier) dans la page.", systemImage: "2.circle")
+                Label("Onglet Musique : glisse tes musiques (ou un dossier entier).", systemImage: "2.circle")
+                Label("Onglet Pochettes : choisis un album, dépose une image, un GIF ou une vidéo, recadre-la puis envoie-la.", systemImage: "photo.on.rectangle")
                 Label("Garde cet écran ouvert jusqu’à la fin de l’envoi.", systemImage: "3.circle")
             } header: {
                 Text("Comment faire")
@@ -365,41 +479,159 @@ enum WifiPage {
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Platine · Envoi par Wi‑Fi</title>
 <style>
-:root{color-scheme:dark;--bg:#0b0b12;--card:#16161f;--line:#2a2a38;--text:#f4f4f8;--muted:#9a9aae;--accent:#fa2d48;--ok:#30d158}
-*{box-sizing:border-box}body{margin:0;background:radial-gradient(1200px 600px at 20% -10%,#3a1450 0,transparent 60%),radial-gradient(900px 500px at 100% 110%,#0a3a6a 0,transparent 60%),var(--bg);color:var(--text);font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;min-height:100vh}
-main{max-width:760px;margin:0 auto;padding:48px 20px}
-h1{font-size:30px;margin:0 0 4px;letter-spacing:-.02em}p.sub{color:var(--muted);margin:0 0 28px}
-#drop{border:2px dashed var(--line);border-radius:24px;padding:56px 20px;text-align:center;background:rgba(255,255,255,.04);backdrop-filter:blur(20px);transition:.2s;cursor:pointer}
-#drop.over{border-color:var(--accent);background:rgba(250,45,72,.08);transform:scale(1.01)}
-#drop b{display:block;font-size:20px;margin-bottom:6px}#drop span{color:var(--muted)}
-.btn{display:inline-block;margin-top:18px;padding:10px 20px;border-radius:999px;background:var(--accent);color:#fff;font-weight:600;border:0;cursor:pointer;font-size:15px}
-#sum{margin:26px 0 10px;color:var(--muted);display:flex;justify-content:space-between;gap:12px}
-#bar{height:6px;border-radius:9px;background:var(--line);overflow:hidden;margin-bottom:16px}#bar i{display:block;height:100%;width:0;background:var(--accent);transition:width .2s}
+:root{color-scheme:dark;--bg:#0b0b12;--card:rgba(255,255,255,.05);--card2:rgba(255,255,255,.08);--line:rgba(255,255,255,.12);--text:#f4f4f8;--muted:#9a9aae;--accent:#fa2d48;--ok:#30d158}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(1200px 600px at 20% -10%,#3a1450 0,transparent 60%),radial-gradient(900px 500px at 100% 110%,#0a3a6a 0,transparent 60%),var(--bg) fixed;color:var(--text);font:15px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;min-height:100vh}
+main{max-width:1180px;margin:0 auto;padding:36px 20px 60px}
+header{display:flex;align-items:center;gap:18px;flex-wrap:wrap;margin-bottom:26px}h1{font-size:30px;margin:0;letter-spacing:-.02em;flex:1}
+.tabs{display:flex;gap:4px;padding:4px;border-radius:999px;background:var(--card);border:1px solid var(--line)}
+.tab{border:0;background:none;color:var(--muted);font:600 14px inherit;font-family:inherit;padding:8px 18px;border-radius:999px;cursor:pointer}.tab.on{background:#fff;color:#000}
+.panel{display:none}.panel.on{display:block}p.sub{color:var(--muted);margin:0 0 22px}
+.drop{border:2px dashed var(--line);border-radius:24px;padding:48px 20px;text-align:center;background:var(--card);backdrop-filter:blur(20px);transition:.2s;cursor:pointer}
+.drop.over{border-color:var(--accent);background:rgba(250,45,72,.08)}.drop b{display:block;font-size:19px;margin-bottom:6px}.drop span{color:var(--muted)}
+.btn{display:inline-flex;align-items:center;gap:6px;padding:10px 20px;border-radius:999px;background:var(--accent);color:#fff;font:600 15px inherit;font-family:inherit;border:0;cursor:pointer}
+.btn.ghost{background:var(--card2);border:1px solid var(--line)}.btn:disabled{opacity:.4;cursor:default}.mt{margin-top:16px}
+#sum{margin:24px 0 10px;color:var(--muted);display:flex;justify-content:space-between;gap:12px}
+.bar{height:6px;border-radius:9px;background:var(--line);overflow:hidden;margin-bottom:14px}.bar i{display:block;height:100%;width:0;background:var(--accent);transition:width .2s}
 ul{list-style:none;margin:0;padding:0}li{display:flex;align-items:center;gap:12px;padding:10px 14px;border-radius:14px;background:var(--card);margin-bottom:6px}
-li .n{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}li .s{color:var(--muted);font-variant-numeric:tabular-nums;min-width:64px;text-align:right}
-li.ok .s{color:var(--ok)}li.err .s{color:var(--accent)}
+li .n{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}li .s{color:var(--muted);font-variant-numeric:tabular-nums;min-width:70px;text-align:right}li.ok .s{color:var(--ok)}li.err .s{color:var(--accent)}
+.art{display:grid;grid-template-columns:1fr 400px;gap:24px;align-items:start}@media(max-width:900px){.art{grid-template-columns:1fr}}
+.tools{display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap}input[type=search]{flex:1;min-width:200px;padding:11px 16px;border-radius:999px;border:1px solid var(--line);background:var(--card);color:var(--text);font:inherit;outline:none}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:16px}
+.card{background:none;border:0;color:inherit;text-align:left;padding:0;cursor:pointer;font:inherit}.card .im{position:relative;aspect-ratio:1;border-radius:14px;overflow:hidden;background:var(--card2);box-shadow:0 8px 24px rgba(0,0,0,.35);transition:transform .15s}
+.card:hover .im{transform:translateY(-2px)}.card.sel .im{outline:3px solid var(--accent);outline-offset:3px}.card img{width:100%;height:100%;object-fit:cover;display:block}
+.card b{display:block;margin-top:8px;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.card span{display:block;color:var(--muted);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.badge{position:absolute;top:8px;left:8px;font-size:11px;font-weight:700;padding:3px 8px;border-radius:99px;background:rgba(0,0,0,.55);backdrop-filter:blur(8px)}
+.editor{position:sticky;top:20px;padding:20px;border-radius:24px;background:rgba(20,20,30,.6);border:1px solid var(--line);backdrop-filter:blur(30px)}
+.editor h2{margin:0;font-size:20px}.editor .who{color:var(--muted);margin-bottom:14px}
+.stage{position:relative;aspect-ratio:1;border-radius:18px;overflow:hidden;background:#000;touch-action:none}
+.stage canvas,.stage img,.stage video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}.stage canvas{cursor:grab}.stage canvas:active{cursor:grabbing}
+.stage .hint{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;text-align:center;padding:20px;background:rgba(0,0,0,.45);opacity:0;transition:.2s;pointer-events:none}
+.stage.empty .hint,.stage.over .hint{opacity:1}.hint b{font-size:16px}.hint span{color:#ddd;font-size:13px}
+.ctl{display:grid;grid-template-columns:96px 1fr;gap:8px 12px;align-items:center;margin-top:14px;font-size:13px;color:var(--muted)}input[type=range]{width:100%;accent-color:var(--accent)}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}.target{margin-top:16px;padding-top:14px;border-top:1px solid var(--line)}
+.target label{display:flex;align-items:center;gap:8px;padding:4px 0;cursor:pointer}.tracks{max-height:180px;overflow:auto;margin:6px 0 0 24px;font-size:14px}
+.status{margin-top:12px;color:var(--muted);min-height:20px}.status.ok{color:var(--ok)}.status.err{color:var(--accent)}
+.empty-ed{color:var(--muted);text-align:center;padding:40px 10px}
+dialog{background:#15151f;color:var(--text);border:1px solid var(--line);border-radius:22px;padding:22px;width:min(720px,94vw)}dialog::backdrop{background:rgba(0,0,0,.6)}
+.bl{display:grid;grid-template-columns:56px 1fr 1.2fr 70px;gap:12px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)}.bl img{width:56px;height:56px;object-fit:cover;border-radius:8px}
+.bl select{width:100%;padding:8px;border-radius:10px;background:var(--card2);color:var(--text);border:1px solid var(--line)}.bl .n{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 </style></head><body><main>
-<h1>Platine</h1><p class="sub">Glisse tes musiques ici : elles arrivent directement dans ta bibliothèque sur l’iPhone.</p>
-<div id="drop"><b>Dépose tes musiques ou un dossier</b><span>MP3, M4A, FLAC, WAV, AIFF… et paroles .lrc</span><br>
-<button class="btn" id="pick">Choisir des fichiers</button><input id="file" type="file" multiple hidden accept="audio/*,.lrc,.flac,.m4a,.aiff,.aif,.alac,.caf,.m4b"></div>
-<div id="sum"><span id="count">Aucun envoi</span><span id="size"></span></div><div id="bar"><i></i></div><ul id="list"></ul>
+<header><h1>Platine</h1><div class="tabs"><button class="tab on" data-t="music">Musique</button><button class="tab" data-t="art">Pochettes</button></div></header>
+
+<section class="panel on" id="p-music">
+<p class="sub">Glisse tes musiques ici : elles arrivent directement dans ta bibliothèque sur l’iPhone.</p>
+<div class="drop" id="drop"><b>Dépose tes musiques ou un dossier</b><span>MP3, M4A, FLAC, WAV, AIFF… et paroles .lrc</span><br>
+<button class="btn mt" id="pick">Choisir des fichiers</button><input id="file" type="file" multiple hidden accept="audio/*,.lrc,.flac,.m4a,.aiff,.aif,.alac,.caf,.m4b"></div>
+<div id="sum"><span id="count">Aucun envoi</span><span id="size"></span></div><div class="bar" id="bar"><i></i></div><ul id="list"></ul>
+</section>
+
+<section class="panel" id="p-art">
+<p class="sub">Choisis un album, dépose une image, un GIF ou une vidéo, ajuste-la, puis envoie-la sur l’iPhone.</p>
+<div class="art"><div>
+<div class="tools"><input type="search" id="q" placeholder="Rechercher un album, un artiste, un son…"><button class="btn ghost" id="bulkBtn">Plusieurs pochettes d’un coup</button><input id="bulk" type="file" multiple hidden accept="image/*,.gif,video/*"></div>
+<div class="grid" id="grid"><div class="empty-ed">Chargement de la bibliothèque…</div></div>
+</div>
+<aside class="editor" id="ed"><div class="empty-ed">Choisis un album à gauche.</div></aside>
+</div>
+</section>
+
+<dialog id="dlg"><h2 style="margin:0 0 4px">Plusieurs pochettes</h2><p class="sub" style="margin-bottom:10px">Chaque fichier est associé à l’album dont le nom ressemble le plus. Corrige si besoin.</p>
+<div id="bulkList"></div><div class="row" style="justify-content:flex-end;margin-top:16px"><button class="btn ghost" id="bulkCancel">Annuler</button><button class="btn" id="bulkSend">Tout envoyer</button></div></dialog>
 </main><script>
-const ok=/\.(mp3|m4a|aac|wav|aif|aiff|caf|flac|alac|m4b|lrc)$/i;const q=[];let active=0,done=0,total=0,bytesDone=0,bytesTotal=0;
-const $=s=>document.querySelector(s),list=$('#list');
+const $=s=>document.querySelector(s);
+const el=(t,c)=>{const e=document.createElement(t);if(c)e.className=c;return e};
 const fmt=b=>b>1e9?(b/1e9).toFixed(2)+' Go':(b/1e6).toFixed(1)+' Mo';
+const norm=s=>(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase().replace(/\(.*?\)|\[.*?\]/g,'').replace(/[^a-z0-9]/g,'');
+document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('on',x==b));document.querySelectorAll('.panel').forEach(p=>p.classList.toggle('on',p.id=='p-'+b.dataset.t));if(b.dataset.t=='art'&&!lib)loadLib()});
+
+/* ---------- Musique ---------- */
+const ok=/\.(mp3|m4a|aac|wav|aif|aiff|caf|flac|alac|m4b|lrc)$/i;const q=[];let active=0,done=0,total=0,bytesDone=0,bytesTotal=0;const list=$('#list');
 function upd(){$('#count').textContent=total?`${done} / ${total} envoyés`:'Aucun envoi';$('#size').textContent=bytesTotal?`${fmt(bytesDone)} / ${fmt(bytesTotal)}`:'';$('#bar i').style.width=bytesTotal?(100*bytesDone/bytesTotal)+'%':'0'}
-function add(f){if(!ok.test(f.name))return;const li=document.createElement('li');li.innerHTML='<span class="n"></span><span class="s">En attente</span>';li.querySelector('.n').textContent=f.name;list.appendChild(li);q.push({f,li,sent:0});total++;bytesTotal+=f.size;upd();next()}
+function add(f){if(!ok.test(f.name))return;const li=el('li');li.innerHTML='<span class="n"></span><span class="s">En attente</span>';li.querySelector('.n').textContent=f.name;list.appendChild(li);q.push({f,li,sent:0});total++;bytesTotal+=f.size;upd();next()}
 function next(){while(active<2&&q.length){send(q.shift())}}
 function send(it){active++;const x=new XMLHttpRequest();x.open('PUT','/upload?name='+encodeURIComponent(it.f.name));const s=it.li.querySelector('.s');
 x.upload.onprogress=e=>{bytesDone+=e.loaded-it.sent;it.sent=e.loaded;s.textContent=Math.round(100*e.loaded/(e.total||1))+' %';upd()};
-x.onload=()=>{active--;done++;bytesDone+=it.f.size-it.sent;it.sent=it.f.size;if(x.status==200){it.li.className='ok';s.textContent='✓'}else{it.li.className='err';s.textContent=x.status==415?'Format refusé':'Erreur'}upd();next()};
+x.onload=()=>{active--;done++;bytesDone+=it.f.size-it.sent;it.sent=it.f.size;if(x.status==200){it.li.className='ok';s.textContent='✓'}else{it.li.className='err';s.textContent=x.status==415?'Format refusé':'Erreur'}upd();next();lib=null};
 x.onerror=()=>{active--;done++;it.li.className='err';s.textContent='Coupé';upd();next()};x.send(it.f)}
 function walk(e){if(e.isFile)e.file(add);else if(e.isDirectory){const r=e.createReader();const rd=()=>r.readEntries(es=>{if(es.length){es.forEach(walk);rd()}});rd()}}
 const d=$('#drop');['dragenter','dragover'].forEach(t=>d.addEventListener(t,e=>{e.preventDefault();d.classList.add('over')}));
 ['dragleave','drop'].forEach(t=>d.addEventListener(t,e=>{e.preventDefault();d.classList.remove('over')}));
 d.addEventListener('drop',e=>{const its=[...e.dataTransfer.items];if(its.length&&its[0].webkitGetAsEntry){its.forEach(i=>{const en=i.webkitGetAsEntry();if(en)walk(en)})}else[...e.dataTransfer.files].forEach(add)});
 $('#pick').onclick=e=>{e.stopPropagation();$('#file').click()};d.onclick=()=>$('#file').click();$('#file').onchange=e=>{[...e.target.files].forEach(add);e.target.value=''};
-window.addEventListener('beforeunload',e=>{if(active||q.length){e.preventDefault();e.returnValue=''}});
+window.addEventListener('beforeunload',e=>{if(active||q.length||busy){e.preventDefault();e.returnValue=''}});
+
+/* ---------- Pochettes ---------- */
+let lib=null,sel=null,ed=null,busy=false;const ver={};
+const coverURL=(a,s)=>`/api/cover?album=${encodeURIComponent(a.id)}&s=${s||300}&v=${ver[a.id]||0}`;
+async function loadLib(){try{const r=await fetch('/api/library',{cache:'no-store'});lib=(await r.json()).albums;renderGrid()}catch(e){$('#grid').innerHTML='<div class="empty-ed">Impossible de lire la bibliothèque. Garde l’écran Envoi par Wi‑Fi ouvert sur l’iPhone.</div>'}}
+function renderGrid(){const g=$('#grid'),k=norm($('#q').value);g.innerHTML='';
+const items=lib.filter(a=>!k||norm(a.title+' '+a.artist).includes(k)||a.tracks.some(t=>norm(t.title).includes(k)));
+if(!items.length){g.innerHTML='<div class="empty-ed">Aucun album.</div>';return}
+items.forEach(a=>{const c=el('button','card'+(sel&&sel.id==a.id?' sel':''));const im=el('div','im');const img=el('img');img.loading='lazy';img.src=coverURL(a);img.onerror=()=>{img.remove()};im.appendChild(img);
+if(a.animated){const b=el('span','badge');b.textContent='Animée';im.appendChild(b)}c.appendChild(im);const t=el('b');t.textContent=a.title;const s=el('span');s.textContent=a.artist+(a.tracks.length>1?` · ${a.tracks.length} sons`:'');c.append(t,s);c.onclick=()=>select(a);c.dataset.id=a.id;g.appendChild(c)})}
+$('#q').oninput=()=>lib&&renderGrid();
+
+function select(a){sel=a;ed=null;document.querySelectorAll('.card').forEach(c=>c.classList.toggle('sel',c.dataset.id==a.id));
+const box=$('#ed');box.innerHTML=`<h2></h2><div class="who"></div>
+<div class="stage empty" id="stage"><img id="cur" alt=""><div class="hint"><b>Dépose une nouvelle pochette</b><span>Image, GIF ou vidéo (pochette animée)</span></div></div>
+<div class="row"><button class="btn ghost" id="choose">Choisir un fichier</button><input type="file" id="one" hidden accept="image/*,.gif,video/*,.mov,.mp4,.m4v"></div>
+<div id="adj"></div>
+<div class="target"><label><input type="radio" name="tg" value="album" checked> Tout l’album</label><label><input type="radio" name="tg" value="some"> Seulement certains sons</label><div class="tracks" id="tl" hidden></div></div>
+<div class="row"><button class="btn" id="go" disabled>Envoyer sur l’iPhone</button></div><div class="bar" id="ebar" style="margin-top:12px;display:none"><i></i></div><div class="status" id="st"></div>`;
+box.querySelector('h2').textContent=a.title;box.querySelector('.who').textContent=a.artist+(a.year?' · '+a.year:'');
+const cur=$('#cur');cur.src=coverURL(a,800);cur.onerror=()=>cur.remove();
+const tl=$('#tl');a.tracks.forEach(t=>{const l=el('label');const i=el('input');i.type='checkbox';i.value=t.id;l.append(i,document.createTextNode(' '+(t.n?t.n+'. ':'')+t.title));tl.appendChild(l)});
+box.querySelectorAll('input[name=tg]').forEach(r=>r.onchange=()=>{tl.hidden=r.value!='some'||!r.checked});
+const st=$('#stage');['dragenter','dragover'].forEach(t=>st.addEventListener(t,e=>{e.preventDefault();st.classList.add('over')}));
+['dragleave','drop'].forEach(t=>st.addEventListener(t,e=>{e.preventDefault();st.classList.remove('over')}));
+st.addEventListener('drop',e=>{const f=e.dataTransfer.files[0];if(f)loadFile(f)});
+$('#choose').onclick=()=>$('#one').click();$('#one').onchange=e=>{const f=e.target.files[0];if(f)loadFile(f);e.target.value=''};
+$('#go').onclick=sendArt;box.scrollIntoView({block:'nearest',behavior:'smooth'})}
+
+function kindOf(f){const x=f.name.split('.').pop().toLowerCase();if(f.type.startsWith('video/')||['mp4','mov','m4v'].includes(x))return{kind:'video',ext:x=='mov'?'mov':'mp4'};if(x=='gif'||f.type=='image/gif')return{kind:'gif',ext:'gif'};return{kind:'image',ext:'jpg'}}
+function loadFile(f){const k=kindOf(f),st=$('#stage');st.querySelectorAll('canvas,video,img').forEach(n=>n.remove());st.classList.remove('empty');$('#adj').innerHTML='';status('');
+if(k.kind!='image'){const m=el(k.kind=='video'?'video':'img');m.src=URL.createObjectURL(f);if(k.kind=='video'){m.muted=true;m.loop=true;m.autoplay=true;m.playsInline=true}st.prepend(m);ed={...k,file:f};
+$('#adj').innerHTML='<div class="status">'+(k.kind=='video'?'Vidéo envoyée telle quelle : elle devient la pochette animée.':'GIF envoyé tel quel : il devient la pochette animée.')+'</div>';$('#go').disabled=false;return}
+const img=new Image();img.onload=()=>{ed={kind:'image',ext:'jpg',img,zoom:1,ox:0,oy:0,rot:0,b:100,c:100,s:100};const cv=el('canvas');cv.width=cv.height=800;st.prepend(cv);ed.cv=cv;controls();paint(cv.getContext('2d'),800);drag(cv);$('#go').disabled=false};
+img.onerror=()=>status('Cette image ne peut pas être lue par le navigateur (essaie JPG ou PNG).','err');img.src=URL.createObjectURL(f)}
+
+function controls(){const a=$('#adj');a.innerHTML=`<div class="ctl"><span>Zoom</span><input type="range" id="z" min="1" max="4" step=".01" value="1">
+<span>Luminosité</span><input type="range" id="lb" min="50" max="150" value="100"><span>Contraste</span><input type="range" id="lc" min="50" max="150" value="100"><span>Saturation</span><input type="range" id="ls" min="0" max="200" value="100"></div>
+<div class="row"><button class="btn ghost" id="rot">↻ Pivoter</button><button class="btn ghost" id="ctr">Recentrer</button><button class="btn ghost" id="rst">Réinitialiser</button></div>`;
+const bind=(id,key)=>$(id).oninput=e=>{ed[key]=+e.target.value;redraw()};bind('#z','zoom');bind('#lb','b');bind('#lc','c');bind('#ls','s');
+$('#rot').onclick=()=>{ed.rot=(ed.rot+90)%360;redraw()};$('#ctr').onclick=()=>{ed.ox=ed.oy=0;redraw()};
+$('#rst').onclick=()=>{Object.assign(ed,{zoom:1,ox:0,oy:0,rot:0,b:100,c:100,s:100});controls();redraw()}}
+function dims(S){const e=ed,rw=e.rot%180?e.img.height:e.img.width,rh=e.rot%180?e.img.width:e.img.height,k=S/Math.min(rw,rh)*e.zoom;return{k,mx:Math.max(0,(rw*k-S)/2/S),my:Math.max(0,(rh*k-S)/2/S)}}
+function clamp(){const m=dims(1000);ed.ox=Math.min(m.mx,Math.max(-m.mx,ed.ox));ed.oy=Math.min(m.my,Math.max(-m.my,ed.oy))}
+function paint(ctx,S){const e=ed;clamp();const {k}=dims(S);ctx.save();ctx.fillStyle='#000';ctx.fillRect(0,0,S,S);ctx.filter=`brightness(${e.b}%) contrast(${e.c}%) saturate(${e.s}%)`;
+ctx.translate(S/2+e.ox*S,S/2+e.oy*S);ctx.rotate(e.rot*Math.PI/180);ctx.scale(k,k);ctx.imageSmoothingQuality='high';ctx.drawImage(e.img,-e.img.width/2,-e.img.height/2);ctx.restore()}
+let raf=0;function redraw(){cancelAnimationFrame(raf);raf=requestAnimationFrame(()=>paint(ed.cv.getContext('2d'),800))}
+function drag(cv){let p=null;cv.onpointerdown=e=>{p={x:e.clientX,y:e.clientY};cv.setPointerCapture(e.pointerId)};
+cv.onpointermove=e=>{if(!p)return;const w=cv.clientWidth;ed.ox+=(e.clientX-p.x)/w;ed.oy+=(e.clientY-p.y)/w;p={x:e.clientX,y:e.clientY};redraw()};cv.onpointerup=cv.onpointercancel=()=>p=null;
+cv.onwheel=e=>{e.preventDefault();ed.zoom=Math.min(4,Math.max(1,ed.zoom*(e.deltaY<0?1.06:1/1.06)));const z=$('#z');if(z)z.value=ed.zoom;redraw()}}
+function status(t,c){const s=$('#st');if(!s)return;s.textContent=t;s.className='status '+(c||'')}
+function render(e,S){const cv=el('canvas');cv.width=cv.height=S;const prev=ed;ed=e;paint(cv.getContext('2d'),S);ed=prev;return new Promise(r=>cv.toBlob(r,'image/jpeg',.92))}
+function put(url,body,onp){return new Promise(res=>{const x=new XMLHttpRequest();x.open('PUT',url);if(onp)x.upload.onprogress=e=>onp(e.loaded/(e.total||1));x.onload=()=>res(x.status==200);x.onerror=()=>res(false);x.send(body)})}
+async function sendArt(){if(!ed||!sel)return;let target;const some=document.querySelector('input[name=tg][value=some]').checked;
+if(some){const ids=[...document.querySelectorAll('#tl input:checked')].map(i=>i.value);if(!ids.length){status('Coche au moins un son.','err');return}target='tracks='+ids.join(',')}else target='album='+encodeURIComponent(sel.id);
+const body=ed.kind=='image'?await render(ed,1400):ed.file;$('#go').disabled=true;busy=true;const bar=$('#ebar');bar.style.display='block';status('Envoi…');
+const okk=await put(`/api/artwork?ext=${ed.ext}&${target}`,body,p=>bar.querySelector('i').style.width=(p*100)+'%');busy=false;$('#go').disabled=false;
+if(okk){status('✓ Pochette posée sur l’iPhone','ok');ver[sel.id]=Date.now();if(ed.kind!='image')sel.animated=true;renderGrid()}else status('L’envoi a échoué. L’écran Envoi par Wi‑Fi est-il toujours ouvert ?','err')}
+
+/* ---------- Plusieurs pochettes ---------- */
+let bulk=[];$('#bulkBtn').onclick=()=>{if(!lib){loadLib();return}$('#bulk').click()};
+$('#bulk').onchange=e=>{bulk=[...e.target.files].map(f=>({f,a:guess(f.name)}));e.target.value='';showBulk()};
+function guess(name){const n=norm(name.replace(/\.[^.]+$/,''));let best=null,score=0;for(const a of lib){const t=norm(a.title),ar=norm(a.artist);let s=0;
+if(n==t||n==norm(a.artist+a.title)||n==norm(a.title+a.artist))s=3;else if(t.length>=4&&n.includes(t))s=2+(ar&&n.includes(ar)?.5:0);else if(n.length>=4&&t.includes(n))s=1;if(s>score){score=s;best=a}}return best}
+function showBulk(){const L=$('#bulkList');L.innerHTML='';bulk.forEach(b=>{const r=el('div','bl');const k=kindOf(b.f);const th=el(k.kind=='video'?'video':'img');th.src=URL.createObjectURL(b.f);if(k.kind=='video'){th.muted=true;th.style.cssText='width:56px;height:56px;object-fit:cover;border-radius:8px'}
+const n=el('div','n');n.textContent=b.f.name;const s=el('select');s.innerHTML='<option value="">— Ne pas envoyer —</option>'+lib.map((a,i)=>`<option value="${i}">${esc(a.title)} — ${esc(a.artist)}</option>`).join('');if(b.a)s.value=lib.indexOf(b.a);s.onchange=()=>b.a=s.value===''?null:lib[+s.value];
+const st=el('div');st.style.color='var(--muted)';b.st=st;r.append(th,n,s,st);L.appendChild(r)});$('#dlg').showModal()}
+const esc=s=>(s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+$('#bulkCancel').onclick=()=>$('#dlg').close();
+$('#bulkSend').onclick=async()=>{busy=true;$('#bulkSend').disabled=true;for(const b of bulk){if(!b.a){b.st.textContent='—';continue}b.st.textContent='…';const k=kindOf(b.f);let body=b.f;
+if(k.kind=='image'){const img=await new Promise(r=>{const i=new Image();i.onload=()=>r(i);i.onerror=()=>r(null);i.src=URL.createObjectURL(b.f)});if(!img){b.st.textContent='Illisible';continue}body=await render({img,zoom:1,ox:0,oy:0,rot:0,b:100,c:100,s:100},1400)}
+const r=await put(`/api/artwork?ext=${k.ext}&album=${encodeURIComponent(b.a.id)}`,body);b.st.textContent=r?'✓':'Erreur';b.st.style.color=r?'var(--ok)':'var(--accent)';if(r){ver[b.a.id]=Date.now();if(k.kind!='image')b.a.animated=true}}
+busy=false;$('#bulkSend').disabled=false;renderGrid()};
 </script></body></html>
 """#
 }
