@@ -1,0 +1,17 @@
+name: Test envoi Wi-Fi
+
+on:
+  push:
+    branches: [platine-9]
+    paths: [WifiServer.swift, ServerTest/**, .github/workflows/server-test.yml]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compiler et tester le serveur
+        run: |
+          swiftc -O WifiServer.swift ServerTest/main.swift -o servertest
+          ./servertest

@@ -49,7 +49,8 @@ final class FeedPreview {
         if let loopObserver { player.removeTimeObserver(loopObserver) }
         loopObserver = nil
         pendingStart = start
-        let playerItem = AVPlayerItem(url: url)
+        // Temps exact : sans ça, le saut au milieu d'un MP3 ou d'un FLAC tombe à côté (paroles décalées).
+        let playerItem = AVPlayerItem(asset: AVURLAsset(url: url, options: [AVURLAssetPreferPreciseDurationAndTimingKey: true]))
         player.replaceCurrentItem(with: playerItem)
         let begin = CMTime(seconds: start, preferredTimescale: 600)
         loadTask = Task { [weak self] in

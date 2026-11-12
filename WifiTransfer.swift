@@ -4,56 +4,110 @@ import UIKit
 
 // MARK: - Envoi par Wi‑Fi : depuis le navigateur du PC, sans câble ni compte
 
-/// Petit serveur web local. Tant que l'écran « Envoi par Wi‑Fi » est ouvert,
-/// le PC (sur le même Wi‑Fi) ouvre l'adresse affichée et y glisse ses musiques.
-/// Les fichiers arrivent dans le dossier Platine, puis sont importés comme d'habitude.
+/// Le serveur de l'envoi par Wi‑Fi, côté app. Il reste allumé tant que Platine est ouverte
+/// (même si tu quittes l'écran), et se rallume tout seul quand tu reviens dans l'app.
 @MainActor
 @Observable
 final class WifiTransfer {
+    static let shared = WifiTransfer()
     static let port: UInt16 = 8080
 
+    private(set) var enabled = false
     private(set) var running = false
     private(set) var address: String?
     private(set) var received = 0
+    private(set) var artworks = 0
     private(set) var currentFile: String?
     private(set) var failed: String?
-    private(set) var artworks = 0
-    @ObservationIgnored private var albumIndex: [String: AlbumInfo] = [:]
 
-    @ObservationIgnored private var listener: NWListener?
+    @ObservationIgnored private let server = WifiServer()
     @ObservationIgnored private var scanTask: Task<Void, Never>?
     @ObservationIgnored private var scanAgain = false
     @ObservationIgnored private weak var library: Library?
+    @ObservationIgnored private var albumIndex: [String: AlbumInfo] = [:]
+    @ObservationIgnored private var observers: [NSObjectProtocol] = []
+    @ObservationIgnored private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
 
-    func start(library: Library) {
-        guard listener == nil else { return }
+    private init() {
+        let c = NotificationCenter.default
+        observers.append(c.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.wentToBackground() }
+        })
+        observers.append(c.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.cameBack() }
+        })
+    }
+
+    func enable(library: Library) {
         self.library = library
+        enabled = true
+        UIApplication.shared.isIdleTimerDisabled = true
+        launch()
+    }
+
+    func disable() {
+        enabled = false
+        server.stop()
+        running = false
+        currentFile = nil
+        UIApplication.shared.isIdleTimerDisabled = false
+    }
+
+    private func launch() {
         failed = nil
-        received = 0
         address = Self.wifiAddress().map { "http://\($0):\(Self.port)" }
+        guard !server.isRunning else { return }
         do {
-            let params = NWParameters.tcp
-            params.allowLocalEndpointReuse = true
-            let l = try NWListener(using: params, on: NWEndpoint.Port(rawValue: Self.port)!)
-            let events = UploadEvents(owner: self)
-            l.newConnectionHandler = Self.connectionHandler(events)
-            l.stateUpdateHandler = Self.stateHandler(events)
-            l.start(queue: .global(qos: .userInitiated))
-            listener = l
+            try server.start(port: Self.port, handlers: makeHandlers())
         } catch {
             failed = "Le serveur n’a pas pu démarrer."
         }
     }
 
-    nonisolated private static func connectionHandler(_ events: UploadEvents) -> (NWConnection) -> Void {
-        { conn in UploadConnection(conn: conn, events: events).start() }
+    /// En quittant l'app, iOS laisse encore un peu de temps : les envois en cours peuvent finir.
+    private func wentToBackground() {
+        guard enabled else { return }
+        backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "Envoi Wi‑Fi") { [weak self] in
+            MainActor.assumeIsolated { self?.endBackground() }
+        }
     }
 
-    nonisolated private static func stateHandler(_ events: UploadEvents) -> (NWListener.State) -> Void {
-        { state in events.state(state) }
+    private func endBackground() {
+        server.stop()
+        running = false
+        if backgroundTask != .invalid {
+            UIApplication.shared.endBackgroundTask(backgroundTask)
+            backgroundTask = .invalid
+        }
     }
 
-    fileprivate func listenerState(_ state: NWListener.State) {
+    private func cameBack() {
+        if backgroundTask != .invalid {
+            UIApplication.shared.endBackgroundTask(backgroundTask)
+            backgroundTask = .invalid
+        }
+        guard enabled else { return }
+        UIApplication.shared.isIdleTimerDisabled = true
+        launch()
+    }
+
+    private func makeHandlers() -> WifiHandlers {
+        let inbox = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        return WifiHandlers(
+            page: { Data(WifiPage.html.utf8) },
+            inbox: inbox,
+            began: { n in Task { @MainActor in WifiTransfer.shared.currentFile = n } },
+            finished: { n in Task { @MainActor in WifiTransfer.shared.finished(n) } },
+            failed: { m in Task { @MainActor in WifiTransfer.shared.failed = m } },
+            state: { st in Task { @MainActor in WifiTransfer.shared.listenerState(st) } },
+            library: { await MainActor.run { WifiTransfer.shared.libraryJSON() } },
+            cover: { album, track, size in await MainActor.run { WifiTransfer.shared.coverJPEG(album: album, track: track, size: size) } },
+            artwork: { file, album, tracks, ext, kind in
+                await MainActor.run { WifiTransfer.shared.applyArtwork(file: file, album: album, tracks: tracks, ext: ext, kind: kind) }
+            })
+    }
+
+    private func listenerState(_ state: NWListener.State) {
         switch state {
         case .ready: running = true
         case .failed(let e):
@@ -64,16 +118,7 @@ final class WifiTransfer {
         }
     }
 
-    func stop() {
-        listener?.cancel()
-        listener = nil
-        running = false
-        currentFile = nil
-    }
-
-    fileprivate func began(_ name: String) { currentFile = name }
-
-    fileprivate func finished(_ name: String) {
+    private func finished(_ name: String) {
         received += 1
         if currentFile == name { currentFile = nil }
         requestScan()
@@ -96,9 +141,10 @@ final class WifiTransfer {
     // MARK: Pochettes
 
     /// La bibliothèque (albums et sons) pour l'éditeur de pochettes du PC.
-    fileprivate func libraryJSON() -> Data {
+    private func libraryJSON() -> Data {
         struct T: Encodable { let id: String; let title: String; let artist: String; let n: Int }
         struct A: Encodable { let id: String; let title: String; let artist: String; let year: Int; let animated: Bool; let tracks: [T] }
+        struct Root: Encodable { let albums: [A] }
         guard let library else { return Data(#"{"albums":[]}"#.utf8) }
         let albums = library.albums.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
         albumIndex = Dictionary(albums.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
@@ -106,12 +152,11 @@ final class WifiTransfer {
             A(id: a.id, title: a.title, artist: a.artist, year: a.year, animated: library.motion(a.cover) != nil,
               tracks: a.tracks.map { T(id: $0.id.uuidString, title: $0.title, artist: $0.displayArtist, n: $0.trackNumber) })
         }
-        struct Root: Encodable { let albums: [A] }
         return (try? JSONEncoder().encode(Root(albums: list))) ?? Data(#"{"albums":[]}"#.utf8)
     }
 
     /// Une vignette JPEG de la pochette d'un album ou d'un son.
-    fileprivate func coverJPEG(album: String?, track: String?, size: Int) -> Data? {
+    private func coverJPEG(album: String?, track: String?, size: Int) -> Data? {
         guard let library else { return nil }
         var t: Track?
         if let album { t = (albumIndex[album] ?? library.albums.first { $0.id == album })?.cover }
@@ -123,14 +168,15 @@ final class WifiTransfer {
     }
 
     /// Pose la pochette reçue : sur tout l'album, ou sur les sons choisis.
-    fileprivate func applyArtwork(file: URL, album: String?, tracks: [UUID], ext: String, kind: ArtworkKind) -> Bool {
-        guard let library, let data = try? Data(contentsOf: file), !data.isEmpty else { return false }
+    private func applyArtwork(file: URL, album: String?, tracks: [UUID], ext: String, kind: String) -> Bool {
+        guard let library, let data = try? Data(contentsOf: file), !data.isEmpty,
+              let k = ArtworkKind(rawValue: kind) else { return false }
         if let album, !album.isEmpty {
-            library.setAlbumCover(album, data: data, ext: ext, kind: kind)
+            library.setAlbumCover(album, data: data, ext: ext, kind: k)
         } else {
             let ids = Set(tracks.filter { library.track($0) != nil })
             guard !ids.isEmpty else { return false }
-            library.setCustomArtwork(ids, data: data, ext: ext, kind: kind)
+            library.setCustomArtwork(ids, data: data, ext: ext, kind: k)
         }
         artworks += 1
         return true
@@ -158,243 +204,12 @@ final class WifiTransfer {
     }
 }
 
-/// Relaie les évènements d'une connexion vers l'écran (sur le fil principal).
-private struct UploadEvents: @unchecked Sendable {
-    weak var owner: WifiTransfer?
-    func began(_ n: String) { Task { @MainActor in owner?.began(n) } }
-    func finished(_ n: String) { Task { @MainActor in owner?.finished(n) } }
-    func state(_ s: NWListener.State) { Task { @MainActor in owner?.listenerState(s) } }
-
-    func json() async -> Data {
-        let o = owner
-        return await MainActor.run { o?.libraryJSON() } ?? Data(#"{"albums":[]}"#.utf8)
-    }
-
-    func cover(album: String?, track: String?, size: Int) async -> Data? {
-        let o = owner
-        return await MainActor.run { o?.coverJPEG(album: album, track: track, size: size) }
-    }
-
-    func artwork(file: URL, album: String?, tracks: [UUID], ext: String, kind: ArtworkKind) async -> Bool {
-        let o = owner
-        return await MainActor.run { o?.applyArtwork(file: file, album: album, tracks: tracks, ext: ext, kind: kind) } ?? false
-    }
-}
-
-/// Une connexion HTTP : sert la page, ou reçoit un fichier envoyé en PUT (écrit au fur et à mesure).
-private final class UploadConnection: @unchecked Sendable {
-    private let conn: NWConnection
-    private let events: UploadEvents?
-    /// Le dossier Platine (Documents), surveillé par la bibliothèque.
-    private static let inbox = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-    private static let audio: Set<String> = ["mp3", "m4a", "aac", "wav", "aif", "aiff", "caf", "flac", "alac", "m4b"]
-    private var header = Data()
-    private var file: FileHandle?
-    private var partURL: URL?
-    private var finalURL: URL?
-    private var remaining = 0
-    private var name = ""
-    /// Ce que contient l'envoi en cours : de la musique, ou une pochette à poser.
-    private enum Mode { case music, artwork(album: String?, tracks: [UUID], ext: String, kind: ArtworkKind) }
-    private var mode = Mode.music
-
-    init(conn: NWConnection, events: UploadEvents) {
-        self.conn = conn
-        self.events = events
-    }
-
-    func start() {
-        conn.start(queue: .global(qos: .userInitiated))
-        readHeader()
-    }
-
-    private func readHeader() {
-        conn.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { [self] data, _, done, error in
-            if let data { header.append(data) }
-            if let end = header.range(of: Data("\r\n\r\n".utf8)) {
-                let head = String(decoding: header[..<end.lowerBound], as: UTF8.self)
-                let rest = header[end.upperBound...]
-                handle(head: head, body: Data(rest))
-            } else if done || error != nil || header.count > 64 * 1024 {
-                conn.cancel()
-            } else {
-                readHeader()
-            }
-        }
-    }
-
-    private func handle(head: String, body: Data) {
-        let lines = head.components(separatedBy: "\r\n")
-        let parts = (lines.first ?? "").split(separator: " ")
-        guard parts.count >= 2 else { return reply(400, "Requête invalide") }
-        let method = String(parts[0])
-        let target = String(parts[1])
-        var headers: [String: String] = [:]
-        for l in lines.dropFirst() {
-            if let c = l.firstIndex(of: ":") {
-                headers[l[..<c].lowercased()] = l[l.index(after: c)...].trimmingCharacters(in: .whitespaces)
-            }
-        }
-        let comps = URLComponents(string: target)
-        let path = comps?.path ?? "/"
-
-        if method == "GET", path == "/" {
-            return reply(200, WifiPage.html, type: "text/html; charset=utf-8")
-        }
-        let query = Dictionary((comps?.queryItems ?? []).map { ($0.name, $0.value ?? "") }, uniquingKeysWith: { a, _ in a })
-        if method == "GET", path == "/api/library" {
-            Task { reply(200, data: await events?.json() ?? Data(), type: "application/json") }
-            return
-        }
-        if method == "GET", path == "/api/cover" {
-            let size = Int(query["s"] ?? "") ?? 240
-            Task {
-                if let d = await events?.cover(album: query["album"], track: query["track"], size: size) {
-                    reply(200, data: d, type: "image/jpeg")
-                } else {
-                    reply(404, "Pas de pochette")
-                }
-            }
-            return
-        }
-        if method == "PUT" || method == "POST", path == "/api/artwork" {
-            let ext = (query["ext"] ?? "jpg").lowercased()
-            let kinds: [String: ArtworkKind] = ["jpg": .image, "jpeg": .image, "png": .image, "heic": .image,
-                                                "gif": .gif, "mp4": .video, "mov": .video, "m4v": .video]
-            guard let kind = kinds[ext] else { return reply(415, #"{"ok":false}"#, type: "application/json") }
-            let album = query["album"].flatMap { $0.isEmpty ? nil : $0 }
-            let ids = (query["tracks"] ?? "").split(separator: ",").compactMap { UUID(uuidString: String($0)) }
-            guard album != nil || !ids.isEmpty else { return reply(400, #"{"ok":false}"#, type: "application/json") }
-            remaining = Int(headers["content-length"] ?? "") ?? -1
-            guard remaining > 0, remaining < 600_000_000 else { return reply(411, "Taille manquante") }
-            guard openPart() else { return reply(500, "Écriture impossible") }
-            mode = .artwork(album: album, tracks: ids, ext: ext == "jpeg" ? "jpg" : ext, kind: kind)
-            write(body)
-            return
-        }
-        if method == "PUT" || method == "POST", path == "/upload" {
-            let raw = comps?.queryItems?.first { $0.name == "name" }?.value ?? ""
-            guard let clean = Self.safeName(raw) else {
-                return reply(415, "{\"ok\":false,\"error\":\"Format non pris en charge\"}", type: "application/json")
-            }
-            remaining = Int(headers["content-length"] ?? "") ?? -1
-            guard remaining >= 0 else { return reply(411, "Taille manquante") }
-            name = clean
-            guard openPart() else { return reply(500, "Écriture impossible") }
-            mode = .music
-            finalURL = Self.freeURL(in: Self.inbox, name: clean)
-            events?.began(clean)
-            write(body)
-            return
-        }
-        reply(404, "Introuvable")
-    }
-
-    /// Fichier temporaire où l'envoi est écrit au fur et à mesure.
-    private func openPart() -> Bool {
-        let fm = FileManager.default
-        let staging = fm.temporaryDirectory.appendingPathComponent("wifi-upload", isDirectory: true)
-        try? fm.createDirectory(at: staging, withIntermediateDirectories: true)
-        let part = staging.appendingPathComponent(UUID().uuidString + ".part")
-        fm.createFile(atPath: part.path, contents: nil)
-        guard let h = try? FileHandle(forWritingTo: part) else { return false }
-        file = h
-        partURL = part
-        return true
-    }
-
-    private func write(_ data: Data) {
-        if !data.isEmpty {
-            let chunk = data.prefix(max(0, remaining))
-            file?.write(chunk)
-            remaining -= chunk.count
-        }
-        if remaining <= 0 { return complete() }
-        conn.receive(minimumIncompleteLength: 1, maximumLength: 1 << 20) { [self] data, _, done, error in
-            if let data, !data.isEmpty {
-                write(data)
-            } else if done || error != nil {
-                abort()
-            } else {
-                write(Data())
-            }
-        }
-    }
-
-    private func complete() {
-        try? file?.close()
-        file = nil
-        if case let .artwork(album, tracks, ext, kind) = mode, let part = partURL {
-            Task {
-                let ok = await events?.artwork(file: part, album: album, tracks: tracks, ext: ext, kind: kind) ?? false
-                try? FileManager.default.removeItem(at: part)
-                reply(ok ? 200 : 500, ok ? #"{"ok":true}"# : #"{"ok":false}"#, type: "application/json")
-            }
-            return
-        }
-        guard let part = partURL, let dest = finalURL else { return reply(500, "Erreur") }
-        do {
-            try FileManager.default.moveItem(at: part, to: dest)
-            events?.finished(name)
-            reply(200, "{\"ok\":true}", type: "application/json")
-        } catch {
-            try? FileManager.default.removeItem(at: part)
-            reply(500, "{\"ok\":false}", type: "application/json")
-        }
-    }
-
-    private func abort() {
-        try? file?.close()
-        file = nil
-        if let partURL { try? FileManager.default.removeItem(at: partURL) }
-        conn.cancel()
-    }
-
-    private func reply(_ code: Int, _ body: String, type: String = "text/plain; charset=utf-8") {
-        reply(code, data: Data(body.utf8), type: type)
-    }
-
-    private func reply(_ code: Int, data: Data, type: String) {
-        let status = [200: "OK", 400: "Bad Request", 404: "Not Found", 411: "Length Required",
-                      415: "Unsupported Media Type", 500: "Internal Server Error"][code] ?? "OK"
-        var head = "HTTP/1.1 \(code) \(status)\r\n"
-        head += "Content-Type: \(type)\r\nContent-Length: \(data.count)\r\n"
-        head += "Cache-Control: no-store\r\nConnection: close\r\n\r\n"
-        conn.send(content: Data(head.utf8) + data, completion: .contentProcessed { [conn] _ in conn.cancel() })
-    }
-
-    /// Garde seulement le nom du fichier, et seulement la musique et les paroles.
-    static func safeName(_ raw: String) -> String? {
-        let base = (raw as NSString).lastPathComponent
-            .replacingOccurrences(of: ":", with: "-")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !base.isEmpty, !base.hasPrefix(".") else { return nil }
-        let ext = (base as NSString).pathExtension.lowercased()
-        guard audio.contains(ext) || ext == "lrc" else { return nil }
-        return String(base.prefix(200))
-    }
-
-    /// Un nom libre dans le dossier (« titre (2).mp3 » si le nom existe déjà).
-    static func freeURL(in dir: URL, name: String) -> URL {
-        let fm = FileManager.default
-        var url = dir.appendingPathComponent(name)
-        let stem = (name as NSString).deletingPathExtension
-        let ext = (name as NSString).pathExtension
-        var n = 2
-        while fm.fileExists(atPath: url.path) {
-            url = dir.appendingPathComponent("\(stem) (\(n)).\(ext)")
-            n += 1
-        }
-        return url
-    }
-}
-
 // MARK: - L'écran dans l'app
 
 struct WifiTransferView: View {
     @Environment(Library.self) private var library
-    @State private var transfer = WifiTransfer()
     @State private var startCount = 0
+    private var transfer: WifiTransfer { WifiTransfer.shared }
 
     var body: some View {
         List {
@@ -404,7 +219,9 @@ struct WifiTransferView: View {
                         .font(.system(size: 46, weight: .semibold))
                         .foregroundStyle(transfer.running ? AnyShapeStyle(TintShapeStyle()) : AnyShapeStyle(HierarchicalShapeStyle.secondary))
                         .symbolEffect(.variableColor.iterative, isActive: transfer.running && transfer.currentFile != nil)
-                    if let address = transfer.address {
+                    if !transfer.enabled {
+                        Text("Envoi arrêté").font(.headline)
+                    } else if let address = transfer.address {
                         Text("Sur ton PC, ouvre cette adresse :")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
@@ -421,6 +238,11 @@ struct WifiTransferView: View {
                             .foregroundStyle(.secondary)
                             .multilineTextAlignment(.center)
                     }
+                    Button(transfer.enabled ? "Arrêter l’envoi" : "Relancer l’envoi") {
+                        transfer.enabled ? transfer.disable() : transfer.enable(library: library)
+                    }
+                    .buttonStyle(.bordered)
+                    .buttonBorderShape(.capsule)
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 18)
@@ -449,24 +271,19 @@ struct WifiTransferView: View {
             Section {
                 Label("Ouvre l’adresse dans Chrome, Edge ou Safari sur ton PC.", systemImage: "1.circle")
                 Label("Onglet Musique : glisse tes musiques (ou un dossier entier).", systemImage: "2.circle")
-                Label("Onglet Pochettes : choisis un album, dépose une image, un GIF ou une vidéo, recadre-la puis envoie-la.", systemImage: "photo.on.rectangle")
-                Label("Garde cet écran ouvert jusqu’à la fin de l’envoi.", systemImage: "3.circle")
+                Label("Onglet Pochettes : choisis un album, dépose une image, un GIF ou une vidéo, recadre-la puis envoie-la.", systemImage: "3.circle")
+                Label("Garde Platine ouverte à l’écran pendant l’envoi (tu peux aller dans la Bibliothèque). L’écran ne se met pas en veille.", systemImage: "iphone")
             } header: {
                 Text("Comment faire")
             } footer: {
-                Text("Si iOS demande l’accès au réseau local, accepte : sans ça, le PC ne peut pas joindre l’iPhone. Les paroles .lrc sont acceptées aussi, avec le même nom que le morceau.")
+                Text("Si iOS demande l’accès au réseau local, accepte : sans ça, le PC ne peut pas joindre l’iPhone. Si tu verrouilles l’iPhone ou changes d’app, l’envoi se met en pause et reprend tout seul quand tu reviens dans Platine.")
             }
         }
         .navigationTitle("Envoi par Wi‑Fi")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
             startCount = library.tracks.count
-            transfer.start(library: library)
-            UIApplication.shared.isIdleTimerDisabled = true
-        }
-        .onDisappear {
-            transfer.stop()
-            UIApplication.shared.isIdleTimerDisabled = false
+            if !transfer.enabled { transfer.enable(library: library) }
         }
     }
 }
@@ -485,6 +302,7 @@ main{max-width:1180px;margin:0 auto;padding:36px 20px 60px}
 header{display:flex;align-items:center;gap:18px;flex-wrap:wrap;margin-bottom:26px}h1{font-size:30px;margin:0;letter-spacing:-.02em;flex:1}
 .tabs{display:flex;gap:4px;padding:4px;border-radius:999px;background:var(--card);border:1px solid var(--line)}
 .tab{border:0;background:none;color:var(--muted);font:600 14px inherit;font-family:inherit;padding:8px 18px;border-radius:999px;cursor:pointer}.tab.on{background:#fff;color:#000}
+.conn{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted);padding:6px 12px;border-radius:999px;background:var(--card);border:1px solid var(--line)}.conn i{width:8px;height:8px;border-radius:50%;background:#888}.conn.on i{background:var(--ok);box-shadow:0 0 8px var(--ok)}.conn.off i{background:var(--accent)}.conn.off{color:#fff}
 .panel{display:none}.panel.on{display:block}p.sub{color:var(--muted);margin:0 0 22px}
 .drop{border:2px dashed var(--line);border-radius:24px;padding:48px 20px;text-align:center;background:var(--card);backdrop-filter:blur(20px);transition:.2s;cursor:pointer}
 .drop.over{border-color:var(--accent);background:rgba(250,45,72,.08)}.drop b{display:block;font-size:19px;margin-bottom:6px}.drop span{color:var(--muted)}
@@ -516,7 +334,7 @@ dialog{background:#15151f;color:var(--text);border:1px solid var(--line);border-
 .bl{display:grid;grid-template-columns:56px 1fr 1.2fr 70px;gap:12px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)}.bl img{width:56px;height:56px;object-fit:cover;border-radius:8px}
 .bl select{width:100%;padding:8px;border-radius:10px;background:var(--card2);color:var(--text);border:1px solid var(--line)}.bl .n{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 </style></head><body><main>
-<header><h1>Platine</h1><div class="tabs"><button class="tab on" data-t="music">Musique</button><button class="tab" data-t="art">Pochettes</button></div></header>
+<header><h1>Platine</h1><div class="conn" id="conn"><i></i><span>Connexion…</span></div><div class="tabs"><button class="tab on" data-t="music">Musique</button><button class="tab" data-t="art">Pochettes</button></div></header>
 
 <section class="panel on" id="p-music">
 <p class="sub">Glisse tes musiques ici : elles arrivent directement dans ta bibliothèque sur l’iPhone.</p>
@@ -548,11 +366,21 @@ document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{document.querySelect
 const ok=/\.(mp3|m4a|aac|wav|aif|aiff|caf|flac|alac|m4b|lrc)$/i;const q=[];let active=0,done=0,total=0,bytesDone=0,bytesTotal=0;const list=$('#list');
 function upd(){$('#count').textContent=total?`${done} / ${total} envoyés`:'Aucun envoi';$('#size').textContent=bytesTotal?`${fmt(bytesDone)} / ${fmt(bytesTotal)}`:'';$('#bar i').style.width=bytesTotal?(100*bytesDone/bytesTotal)+'%':'0'}
 function add(f){if(!ok.test(f.name))return;const li=el('li');li.innerHTML='<span class="n"></span><span class="s">En attente</span>';li.querySelector('.n').textContent=f.name;list.appendChild(li);q.push({f,li,sent:0});total++;bytesTotal+=f.size;upd();next()}
-function next(){while(active<2&&q.length){send(q.shift())}}
-function send(it){active++;const x=new XMLHttpRequest();x.open('PUT','/upload?name='+encodeURIComponent(it.f.name));const s=it.li.querySelector('.s');
+function next(){while(active<1&&q.length){send(q.shift())}}
+const wait=ms=>new Promise(r=>setTimeout(r,ms));
+async function waitPhone(s){for(;;){if(await ping())return;s.textContent='En attente de l’iPhone…';await wait(2000)}}
+function send(it){active++;const s=it.li.querySelector('.s');it.tries=(it.tries||0)+1;const x=new XMLHttpRequest();x.open('PUT','/upload?name='+encodeURIComponent(it.f.name));
+const back=()=>{bytesDone-=it.sent;it.sent=0;upd()};
 x.upload.onprogress=e=>{bytesDone+=e.loaded-it.sent;it.sent=e.loaded;s.textContent=Math.round(100*e.loaded/(e.total||1))+' %';upd()};
-x.onload=()=>{active--;done++;bytesDone+=it.f.size-it.sent;it.sent=it.f.size;if(x.status==200){it.li.className='ok';s.textContent='✓'}else{it.li.className='err';s.textContent=x.status==415?'Format refusé':'Erreur'}upd();next();lib=null};
-x.onerror=()=>{active--;done++;it.li.className='err';s.textContent='Coupé';upd();next()};x.send(it.f)}
+x.onload=async()=>{if(x.status==200){active--;done++;bytesDone+=it.f.size-it.sent;it.sent=it.f.size;it.li.className='ok';s.textContent='✓';upd();next();lib=null;return}
+let msg='Erreur '+x.status;try{msg=JSON.parse(x.responseText).error||msg}catch(e){}
+if(x.status>=500&&it.tries<4){back();s.textContent='Nouvel essai…';await wait(1500);active--;send(it);return}
+active--;done++;back();it.li.className='err';s.textContent=msg;upd();next()};
+x.onerror=async()=>{back();if(it.tries<20){s.textContent='Reconnexion…';await waitPhone(s);active--;send(it);return}active--;done++;it.li.className='err';s.textContent='Coupé';upd();next()};
+x.send(it.f)}
+async function ping(){try{const r=await fetch('/api/ping',{cache:'no-store'});const ok=r.ok;setConn(ok);return ok}catch(e){setConn(false);return false}}
+function setConn(ok){const c=$('#conn');c.className='conn '+(ok?'on':'off');c.querySelector('span').textContent=ok?'iPhone connecté':'iPhone injoignable : ouvre Platine sur l’iPhone'}
+ping();setInterval(ping,4000);
 function walk(e){if(e.isFile)e.file(add);else if(e.isDirectory){const r=e.createReader();const rd=()=>r.readEntries(es=>{if(es.length){es.forEach(walk);rd()}});rd()}}
 const d=$('#drop');['dragenter','dragover'].forEach(t=>d.addEventListener(t,e=>{e.preventDefault();d.classList.add('over')}));
 ['dragleave','drop'].forEach(t=>d.addEventListener(t,e=>{e.preventDefault();d.classList.remove('over')}));

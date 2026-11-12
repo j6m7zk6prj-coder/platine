@@ -341,7 +341,9 @@ final class Player {
             guard let self else { return }
             if fadeOut { await self.fade(to: 0, duration: 0.18) }
             if Task.isCancelled { return }
-            let item = AVPlayerItem(url: self.library.audioURL(track))
+            // Temps exact (MP3 et FLAC) : sans ça, un saut dans le morceau tombe à côté et les paroles sont décalées.
+            let item = AVPlayerItem(asset: AVURLAsset(url: self.library.audioURL(track),
+                                                      options: [AVURLAssetPreferPreciseDurationAndTimingKey: true]))
             item.audioTimePitchAlgorithm = self.effect.changesPitch ? .varispeed : .timeDomain
             SoundEffects.attach(to: item)
             self.player.replaceCurrentItem(with: item)
