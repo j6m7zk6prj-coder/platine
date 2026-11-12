@@ -1,6 +1,7 @@
 import SwiftUI
 import AVFoundation
 import ImageIO
+import CoreImage
 
 // MARK: - Découvrir : un fil vertical à faire défiler, comme TikTok
 
@@ -25,10 +26,15 @@ final class FeedPreview {
     @ObservationIgnored private var loopObserver: Any?
     @ObservationIgnored private var fadeTask: Task<Void, Never>?
     @ObservationIgnored private var current: UUID?
+    @ObservationIgnored private var loadTask: Task<Void, Never>?
+    /// Tant que le morceau n'est pas calé au bon endroit, on annonce le début de l'extrait
+    /// (les paroles ne montrent jamais le début du morceau par erreur).
+    @ObservationIgnored private var pendingStart: Double?
     /// Durée d'un extrait avant qu'il reprenne au début.
     static let length = 30.0
 
     var time: Double {
+        if let pendingStart { return pendingStart }
         let t = player.currentTime().seconds
         return t.isFinite ? t : 0
     }
@@ -37,20 +43,38 @@ final class FeedPreview {
         guard current != item else { if !playing { resume() }; return }
         current = item
         fadeTask?.cancel()
+        loadTask?.cancel()
+        player.pause()
+        playing = false
         if let loopObserver { player.removeTimeObserver(loopObserver) }
-        player.replaceCurrentItem(with: AVPlayerItem(url: url))
+        loopObserver = nil
+        pendingStart = start
+        let playerItem = AVPlayerItem(url: url)
+        player.replaceCurrentItem(with: playerItem)
         let begin = CMTime(seconds: start, preferredTimescale: 600)
-        player.seek(to: begin, toleranceBefore: .zero, toleranceAfter: .zero)
-        // L'extrait tourne en boucle sur 30 secondes.
-        let end = CMTime(seconds: start + Self.length, preferredTimescale: 600)
-        loopObserver = player.addBoundaryTimeObserver(forTimes: [NSValue(time: end)], queue: .main) { [weak self] in
-            MainActor.assumeIsolated { self?.player.seek(to: begin) }
+        loadTask = Task { [weak self] in
+            // Le saut n'est fiable qu'une fois le fichier prêt : sinon l'extrait part du début du morceau.
+            for _ in 0..<150 where playerItem.status == .unknown {
+                try? await Task.sleep(for: .milliseconds(20))
+                if Task.isCancelled { return }
+            }
+            guard let self, self.current == item, playerItem.status == .readyToPlay else { return }
+            _ = await self.player.seek(to: begin, toleranceBefore: .zero, toleranceAfter: .zero)
+            guard !Task.isCancelled, self.current == item else { return }
+            self.pendingStart = nil
+            // L'extrait tourne en boucle sur 30 secondes.
+            let end = CMTime(seconds: start + Self.length, preferredTimescale: 600)
+            self.loopObserver = self.player.addBoundaryTimeObserver(forTimes: [NSValue(time: end)], queue: .main) { [weak self] in
+                MainActor.assumeIsolated {
+                    self?.player.seek(to: begin, toleranceBefore: .zero, toleranceAfter: .zero)
+                }
+            }
+            self.fadeIn()
         }
-        fadeIn()
     }
 
     func resume() {
-        guard player.currentItem != nil else { return }
+        guard player.currentItem != nil, pendingStart == nil else { return }
         fadeIn()
     }
 
@@ -62,6 +86,8 @@ final class FeedPreview {
 
     func stop() {
         pause()
+        loadTask?.cancel()
+        pendingStart = nil
         current = nil
         player.replaceCurrentItem(with: nil)
     }
@@ -90,6 +116,8 @@ struct FeedView: View {
     @State private var preview = FeedPreview()
     @State private var muted = false
     @State private var lyricsOnly = false
+    /// Morceaux dont on a déjà cherché les paroles synchronisées (une seule fois chacun).
+    @State private var searched: Set<UUID> = []
 
     var body: some View {
         ZStack {
@@ -153,6 +181,7 @@ struct FeedView: View {
         .onChange(of: position) { _, _ in
             playCurrent()
             prefetch()
+            findSyncedLyrics()
             // Le fil ne finit jamais : de nouveaux extraits arrivent avant la fin.
             if let position, let i = items.firstIndex(where: { $0.id == position }), i >= items.count - 4 {
                 items.append(contentsOf: batch())
@@ -162,6 +191,22 @@ struct FeedView: View {
             if playing { preview.pause() }
         }
         .sensoryFeedback(.selection, trigger: position)
+    }
+
+    /// Sans paroles synchronisées, on les cherche (LRCLIB) pour la page affichée :
+    /// elles s'affichent dès qu'elles arrivent, calées sur le son.
+    private func findSyncedLyrics() {
+        guard let position, let item = items.first(where: { $0.id == position }),
+              let t = library.track(item.trackID), !searched.contains(t.id),
+              !LyricsParser.isSynced(t.lyrics ?? "") else { return }
+        searched.insert(t.id)
+        let id = t.id
+        Task {
+            guard let found = await LyricsService.search(title: t.title, artist: t.artist, duration: t.duration) else { return }
+            if LyricsParser.isSynced(found) || library.track(id)?.lyrics == nil {
+                library.setLyrics(id, found)
+            }
+        }
     }
 
     /// Prépare les pochettes des pages suivantes avant qu'elles n'arrivent à l'écran.
@@ -179,6 +224,7 @@ struct FeedView: View {
         position = items.first?.id
         playCurrent()
         prefetch()
+        findSyncedLyrics()
     }
 
     private func playCurrent() {
@@ -204,7 +250,7 @@ struct FeedView: View {
     /// Une vingtaine d'extraits tirés au hasard (les titres avec paroles d'abord, sans doublon proche).
     private func batch() -> [FeedItem] {
         var pool = library.tracks
-        if lyricsOnly { pool = pool.filter { ($0.lyrics ?? "").isEmpty == false } }
+        if lyricsOnly { pool = pool.filter { LyricsParser.isSynced($0.lyrics ?? "") } }
         if pool.isEmpty { pool = library.tracks }
         let recent = Set(items.suffix(8).map(\.trackID))
         var picked = pool.shuffled().filter { !recent.contains($0.id) }
@@ -244,6 +290,8 @@ final class FeedArtCache {
 
     struct Art {
         let image: UIImage
+        /// Version très floue (minuscule, agrandie à l'écran) : le fond sur lequel s'affichent les paroles.
+        let blurred: UIImage
         let colors: [Color]
     }
 
@@ -287,7 +335,8 @@ final class FeedArtCache {
             let image = await Task.detached(priority: .userInitiated) { FeedArtCache.decode(source) }.value
             guard let image else { return nil }
             let small = image.preparingThumbnail(of: CGSize(width: 64, height: 64)) ?? image
-            let art = Art(image: image, colors: Palette.colors(from: small))
+            let blurred = await Task.detached(priority: .userInitiated) { FeedArtCache.soften(small) }.value
+            let art = Art(image: image, blurred: blurred ?? small, colors: Palette.colors(from: small))
             self.cache.setObject(Box(art), forKey: key as NSString)
             return art
         }
@@ -295,6 +344,19 @@ final class FeedArtCache {
         let result = await task.value
         loading[key] = nil
         return result
+    }
+
+    /// Un flou doux et lumineux à partir d'une toute petite image (rien n'est calculé pendant le défilement).
+    nonisolated static func soften(_ image: UIImage) -> UIImage? {
+        guard let cg = image.cgImage else { return nil }
+        let input = CIImage(cgImage: cg)
+        let blurred = input.clampedToExtent()
+            .applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: 6])
+            .applyingFilter("CIColorControls", parameters: [kCIInputSaturationKey: 1.35, kCIInputBrightnessKey: -0.06])
+            .cropped(to: input.extent)
+        let ctx = CIContext(options: [.useSoftwareRenderer: false])
+        guard let out = ctx.createCGImage(blurred, from: input.extent) else { return nil }
+        return UIImage(cgImage: out)
     }
 
     /// Lit l'image en taille écran, déjà décodée.
@@ -324,8 +386,8 @@ final class FeedArtCache {
     }
 }
 
-/// Une page du fil : la pochette en grand qui se fond dans ses couleurs,
-/// et les paroles posées dessus dans une carte en verre liquide.
+/// Une page du fil : la pochette en grand qui se fond dans sa propre version floue,
+/// et les paroles qui s'allument par-dessus, calées sur le son.
 private struct FeedPage: View {
     let item: FeedItem
     let track: Track
@@ -338,19 +400,33 @@ private struct FeedPage: View {
     @State private var liked = false
     @State private var burst = 0
     @State private var art: FeedArtCache.Art?
+    @State private var lines: [LyricLine] = []
 
     var body: some View {
         GeometryReader { geo in
             let w = geo.size.width
-            let artHeight = min(geo.size.height * 0.68, w * 1.25)
+            let h = geo.size.height
+            let artHeight = min(h * 0.62, w * 1.2)
             let colors = art?.colors ?? Palette.defaults
             ZStack(alignment: .top) {
-                // Fond : les couleurs de la pochette, qui descendent vers le noir.
-                LinearGradient(colors: [colors[0], colors[1].opacity(0.85), .black],
-                               startPoint: .top, endPoint: .bottom)
-                    .overlay(Color.black.opacity(0.25))
+                // Le fond : la pochette floue sur tout l'écran.
+                ZStack {
+                    LinearGradient(colors: [colors[0], colors[1], .black], startPoint: .top, endPoint: .bottom)
+                    if let blurred = art?.blurred {
+                        Image(uiImage: blurred)
+                            .resizable()
+                            .interpolation(.high)
+                            .scaledToFill()
+                            .frame(width: w, height: h)
+                            .clipped()
+                            .transition(.opacity)
+                    }
+                    LinearGradient(colors: [.black.opacity(0.05), .black.opacity(0.35), .black.opacity(0.6)],
+                                   startPoint: .top, endPoint: .bottom)
+                }
+                .frame(width: w, height: h)
 
-                // La pochette en grand : elle se fond dans le fond vers le bas.
+                // La pochette nette en haut, qui se fond dans le flou.
                 ZStack {
                     if let img = art?.image {
                         Image(uiImage: img)
@@ -360,7 +436,7 @@ private struct FeedPage: View {
                             .clipped()
                             .transition(.opacity)
                     }
-                    // La pochette animée, seulement sur la page affichée (le défilement reste fluide).
+                    // La pochette animée, seulement sur la page affichée.
                     if active, settings.animatedArtwork, let moving = library.motion(track) {
                         Group {
                             if moving.kind == .gif {
@@ -378,15 +454,14 @@ private struct FeedPage: View {
                 .frame(width: w, height: artHeight)
                 .mask {
                     LinearGradient(stops: [.init(color: .black, location: 0),
-                                           .init(color: .black, location: 0.5),
-                                           .init(color: .black.opacity(0.55), location: 0.75),
+                                           .init(color: .black, location: 0.45),
+                                           .init(color: .black.opacity(0.5), location: 0.72),
                                            .init(color: .clear, location: 1)],
                                    startPoint: .top, endPoint: .bottom)
                 }
                 .overlay(alignment: .top) {
-                    // Assombrit le haut pour que le titre reste lisible.
-                    LinearGradient(colors: [.black.opacity(0.45), .clear], startPoint: .top, endPoint: .bottom)
-                        .frame(height: geo.safeAreaInsets.top + 110)
+                    LinearGradient(colors: [.black.opacity(0.4), .clear], startPoint: .top, endPoint: .bottom)
+                        .frame(height: geo.safeAreaInsets.top + 100)
                 }
                 .overlay {
                     if !preview.playing && active {
@@ -400,30 +475,32 @@ private struct FeedPage: View {
                     }
                 }
                 .overlay { HeartBurst(trigger: burst) }
-                .contentShape(Rectangle())
-                // Double toucher : aimer ; toucher : pause / lecture.
-                .onTapGesture(count: 2) { like() }
-                .onTapGesture { active && preview.playing ? preview.pause() : preview.resume() }
-                .animation(.easeOut(duration: 0.25), value: art?.image)
-                .animation(.easeOut(duration: 0.35), value: active)
+                .animation(.easeOut(duration: 0.3), value: art?.image)
+                .animation(.easeInOut(duration: 0.45), value: active)
 
-                VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: 16) {
                     Spacer(minLength: geo.safeAreaInsets.top + 60)
-                    // Les paroles, dans une carte en verre posée sur le bas de la pochette.
-                    FeedLyrics(item: item, active: active, preview: preview)
-                        .padding(.horizontal, 20)
-                        .padding(.vertical, 18)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .glass(28)
+                    // Les paroles, posées directement sur le flou (sans cadre).
+                    if !lines.isEmpty {
+                        FeedLyrics(lines: lines, start: item.start, active: active, preview: preview)
+                            .frame(height: min(250, h * 0.3), alignment: .top)
+                            .allowsHitTesting(false)
+                            .transition(.opacity)
+                    }
                     info
                     actions
                     progress
                 }
-                .padding(.horizontal, 16)
+                .padding(.horizontal, 20)
                 .padding(.bottom, geo.safeAreaInsets.bottom + 66)
                 .foregroundStyle(.white)
+                .animation(.easeOut(duration: 0.4), value: lines.isEmpty)
             }
-            .frame(width: w, height: geo.size.height)
+            .frame(width: w, height: h)
+            .contentShape(Rectangle())
+            // Double toucher : aimer ; toucher : pause / lecture.
+            .onTapGesture(count: 2) { like() }
+            .onTapGesture { active && preview.playing ? preview.pause() : preview.resume() }
         }
         .onAppear {
             liked = track.isFavorite
@@ -431,6 +508,11 @@ private struct FeedPage: View {
         }
         .task(id: track.id) {
             if art == nil { art = await FeedArtCache.shared.load(track, library: library) }
+        }
+        .task(id: track.lyrics) {
+            let raw = track.lyrics ?? ""
+            let parsed = LyricsParser.isSynced(raw) ? (LyricsParser.parse(raw) ?? []).filter { !$0.isInterlude } : []
+            if parsed != lines { lines = parsed }
         }
     }
 
@@ -457,7 +539,6 @@ private struct FeedPage: View {
             }
             .accessibilityLabel("Partager")
         }
-        .padding(.horizontal, 4)
     }
 
     private var actions: some View {
@@ -484,7 +565,7 @@ private struct FeedPage: View {
         }
     }
 
-    /// Avancée de l'extrait (mise à jour quelques fois par seconde, seulement sur la page affichée).
+    /// Avancée de l'extrait (seulement sur la page affichée).
     private var progress: some View {
         TimelineView(.animation(minimumInterval: 0.2, paused: !active || !preview.playing)) { _ in
             let p = active ? min(1, max(0, (preview.time - item.start) / FeedPreview.length)) : 0
@@ -497,7 +578,6 @@ private struct FeedPage: View {
             .frame(height: 3)
             .animation(.linear(duration: 0.2), value: p)
         }
-        .padding(.horizontal, 4)
     }
 
     private func like() {
@@ -521,34 +601,111 @@ private struct FeedPage: View {
     }
 }
 
-/// Les paroles de l'extrait : la ligne chantée s'allume si les paroles sont synchronisées.
+/// Les paroles de Découvrir, comme dans Musique : la ligne chantée se remplit de blanc au fil du chant
+/// et brille, les suivantes attendent en retrait, et tout monte en douceur au changement de ligne.
 private struct FeedLyrics: View {
-    let item: FeedItem
+    let lines: [LyricLine]
+    let start: Double
     let active: Bool
     let preview: FeedPreview
+    @State private var current = 0
+    @State private var heights: [Int: CGFloat] = [:]
+
+    private let fontSize: CGFloat = 27
+    /// Petite avance pour que la ligne s'allume au moment où elle est chantée.
+    private let lead = 0.2
 
     var body: some View {
-        if item.lines.isEmpty {
-            Text("♪").font(.system(size: 34, weight: .bold)).foregroundStyle(.white.opacity(0.5))
-                .frame(maxWidth: .infinity, alignment: .leading)
-        } else {
-            TimelineView(.animation(minimumInterval: 1.0 / 15, paused: !active || !item.synced || !preview.playing)) { _ in
-                let now = preview.time
-                VStack(alignment: .leading, spacing: 8) {
-                    ForEach(Array(item.lines.enumerated()), id: \.offset) { i, line in
-                        let next = i + 1 < item.lines.count ? item.lines[i + 1].time : line.time + 4
-                        let on = !item.synced || (active && now >= line.time && now < next)
-                        Text(line.text)
-                            .font(.system(size: 24, weight: .bold))
-                            .foregroundStyle(.white.opacity(on ? 1 : 0.4))
-                            .lineLimit(2)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .animation(.easeOut(duration: 0.3), value: on)
-                    }
+        let lo = max(0, current - 1)
+        let hi = min(lines.count - 1, current + 3)
+        VStack(alignment: .leading, spacing: 16) {
+            if lo <= hi {
+                ForEach(lo...hi, id: \.self) { i in
+                    row(i)
+                        .id(lines[i].id)
+                        .transition(.asymmetric(insertion: .opacity.combined(with: .offset(y: 24)),
+                                                removal: .opacity.combined(with: .offset(y: -24))))
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .mask {
+            LinearGradient(stops: [.init(color: .clear, location: 0),
+                                   .init(color: .black, location: 0.12),
+                                   .init(color: .black, location: 0.82),
+                                   .init(color: .clear, location: 1)],
+                           startPoint: .top, endPoint: .bottom)
+        }
+        .onAppear { current = index(at: start + 1.6) }
+        // Suit le son : on ne redessine qu'au changement de ligne.
+        .task(id: active) {
+            guard active else { return }
+            while !Task.isCancelled {
+                let i = index(at: preview.time + lead)
+                if i != current {
+                    withAnimation(.spring(response: 0.62, dampingFraction: 0.86)) { current = i }
+                }
+                try? await Task.sleep(for: .milliseconds(40))
+            }
+        }
+    }
+
+    @ViewBuilder private func row(_ i: Int) -> some View {
+        let line = lines[i]
+        let isActive = i == current && active
+        let distance = i - current
+        Text(line.text)
+            .font(.system(size: fontSize, weight: .bold))
+            .lineSpacing(3)
+            .fixedSize(horizontal: false, vertical: true)
+            .foregroundStyle(.white.opacity(isActive ? 0.32 : (distance < 0 ? 0.28 : 0.42)))
+            .overlay(alignment: .topLeading) {
+                if isActive {
+                    // Le blanc avance sur la ligne, à chaque image, et la ligne brille.
+                    TimelineView(.animation(paused: !preview.playing)) { _ in
+                        Text(line.text)
+                            .font(.system(size: fontSize, weight: .bold))
+                            .lineSpacing(3)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .foregroundStyle(.white)
+                            .mask(alignment: .topLeading) {
+                                SweepMask(progress: fill(i, at: preview.time), rows: rows(line.id))
+                            }
+                    }
+                    .shadow(color: .white.opacity(0.55), radius: 10)
+                    .shadow(color: .white.opacity(0.35), radius: 3)
+                    .transition(.opacity)
+                }
+            }
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { h in
+                if abs((heights[line.id] ?? 0) - h) > 0.5 { heights[line.id] = h }
+            }
+            .scaleEffect(isActive ? 1 : 0.96, anchor: .leading)
+            .blur(radius: distance >= 2 ? 1.2 : 0)
+            .animation(.spring(response: 0.55, dampingFraction: 0.84), value: isActive)
+    }
+
+    private func fill(_ i: Int, at time: Double) -> Double {
+        let line = lines[i]
+        let end = i + 1 < lines.count ? lines[i + 1].time : line.time + 4
+        let length = max(0.6, min(end - line.time, 8) * 0.9)
+        let p = min(1, max(0, (time + lead - line.time) / length))
+        return p * p * (3 - 2 * p) * 0.25 + p * 0.75
+    }
+
+    private func rows(_ id: Int) -> Int {
+        let rowHeight = fontSize * 1.2 + 3
+        return max(1, Int((((heights[id] ?? rowHeight) + 3) / rowHeight).rounded()))
+    }
+
+    /// La ligne en cours à un instant donné (recherche dichotomique, les lignes sont dans l'ordre).
+    private func index(at time: Double) -> Int {
+        var lo = 0, hi = lines.count - 1, result = 0
+        while lo <= hi {
+            let mid = (lo + hi) / 2
+            if lines[mid].time <= time { result = mid; lo = mid + 1 } else { hi = mid - 1 }
+        }
+        return result
     }
 }
 
