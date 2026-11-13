@@ -59,7 +59,7 @@ enum TrackEnricher {
     /// Toute la bibliothèque, en douceur et une seule fois par morceau : paroles synchronisées,
     /// album et pochette qui manquent encore (y compris pour les sons importés avant).
     static func fillLibrary(_ library: Library) async {
-        let key = "enrichedV2"
+        let key = "enrichedV3"
         var done = Set(UserDefaults.standard.stringArray(forKey: key) ?? [])
         var improved = 0
         for t in library.tracks where !done.contains(t.id.uuidString) {

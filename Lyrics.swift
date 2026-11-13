@@ -128,19 +128,32 @@ enum LyricsService {
             results += await free("\(mainArtist) \(cleanTitle)") ?? []
         }
         let t = norm(cleanTitle), a = norm(mainArtist)
-        // Seulement le bon morceau : même titre, même artiste (si connu).
-        let same = results.filter { r in
-            guard !(r.instrumental ?? false) else { return false }
-            return matches(norm(r.trackName ?? ""), t) && (a.isEmpty || matches(norm(r.artistName ?? ""), a))
+        func gap(_ r: Result) -> Double { duration > 0 ? abs((r.duration ?? 0) - duration) : 0 }
+        func titleOK(_ r: Result) -> Bool { matches(norm(r.trackName ?? ""), t) }
+        func artistOK(_ r: Result) -> Bool { a.isEmpty || matches(norm(r.artistName ?? ""), a) }
+        // Comme les anciennes versions, on trouve presque toujours quelque chose, mais jamais une autre chanson :
+        // même titre et même artiste, ou (titre écrit autrement) même artiste et exactement la même durée.
+        let usable = results.filter { r in
+            guard !(r.instrumental ?? false),
+                  !(r.syncedLyrics ?? "").isEmpty || !(r.plainLyrics ?? "").isEmpty else { return false }
+            return (titleOK(r) && artistOK(r)) || (artistOK(r) && !a.isEmpty && duration > 0 && gap(r) <= 2)
         }
-        func gap(_ r: Result) -> Double { abs((r.duration ?? 0) - duration) }
-        // Paroles synchronisées : seulement pour la même version (même durée, à 5 s près), sinon elles seraient décalées.
-        let synced = same
-            .filter { ($0.syncedLyrics ?? "").isEmpty == false && (duration <= 0 || gap($0) <= 5) }
-            .min { gap($0) < gap($1) }
+        func score(_ r: Result) -> Double {
+            var s = 0.0
+            if !(r.syncedLyrics ?? "").isEmpty { s += 10 }
+            let g = gap(r)
+            if g < 2 { s += 6 } else if g < 6 { s += 3 } else if g > 20 { s -= 8 }
+            if titleOK(r) { s += 4 }
+            return s
+        }
+        // Paroles synchronisées : jusqu'à 10 s d'écart de durée (au-delà, c'est une autre version et ce serait décalé).
+        let synced = usable
+            .filter { !($0.syncedLyrics ?? "").isEmpty && gap($0) <= 10 }
+            .max { score($0) < score($1) }
         if let s = synced?.syncedLyrics { return s }
-        let plain = same.first { ($0.plainLyrics ?? "").isEmpty == false }?.plainLyrics
-        return plain
+        return usable.max { score($0) < score($1) }.flatMap { r in
+            (r.plainLyrics ?? "").isEmpty ? nil : r.plainLyrics
+        }
     }
 
     /// Le titre sans « (feat. …) », « [Clip officiel] », « - Remastered »…
@@ -180,7 +193,7 @@ enum LyricsService {
         guard let url = c.url, let data = await fetch(url),
               let r = try? JSONDecoder().decode(Result.self, from: data),
               !(r.instrumental ?? false) else { return nil }
-        if let d = r.duration, abs(d - duration) > 5 { return nil }
+        if let d = r.duration, abs(d - duration) > 8 { return nil }
         if let s = r.syncedLyrics, !s.isEmpty { return s }
         return nil
     }
