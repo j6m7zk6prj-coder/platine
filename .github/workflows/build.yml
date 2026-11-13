@@ -76,17 +76,17 @@ jobs:
           zip -qry Platine.ipa Payload
 
       - name: Nommer la version iPhone 8
-        run: cp Platine.ipa Platine-iOS16.ipa
+        run: cp Platine.ipa Platine-iPhone8.ipa
 
       - uses: softprops/action-gh-release@v2
         if: github.ref_name == 'platine-16'
         with:
-          tag_name: platine-ios16
+          tag_name: iphone8
           target_commitish: platine-16
           name: Platine pour iPhone 8 (iOS 16)
-          body: Téléchargez **Platine-iOS16.ipa** ci-dessous, puis installez-le avec iLoader.
+          body: Téléchargez **Platine-iPhone8.ipa** ci-dessous, puis installez-le avec iLoader.
           make_latest: false
-          files: Platine-iOS16.ipa
+          files: Platine-iPhone8.ipa
 
       - uses: actions/upload-artifact@v4
         continue-on-error: true
