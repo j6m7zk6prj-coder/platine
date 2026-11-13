@@ -32,6 +32,10 @@ final class WifiTransfer {
         var state: String
         var album: String?
         var lyrics: String?
+        var id: String?
+        var title: String?
+        var artist: String?
+        var cover: Bool?
     }
     @ObservationIgnored private var recent: [String: Status] = [:]
     @ObservationIgnored private var enrichQueue: [(file: String, id: UUID)] = []
@@ -155,7 +159,8 @@ final class WifiTransfer {
         let next = enrichQueue.removeFirst()
         Task {
             let r = await TrackEnricher.enrich(next.id, library: library)
-            recent[next.file] = Status(state: "ok", album: r.album, lyrics: r.lyrics)
+            recent[next.file] = Status(state: "ok", album: r.album, lyrics: r.lyrics,
+                                       id: r.id, title: r.title, artist: r.artist, cover: r.cover)
             enriching = false
             runEnrichment()
         }
@@ -344,6 +349,8 @@ header{display:flex;align-items:center;gap:18px;flex-wrap:wrap;margin-bottom:26p
 .tabs{display:flex;gap:4px;padding:4px;border-radius:999px;background:var(--card);border:1px solid var(--line)}
 .tab{border:0;background:none;color:var(--muted);font:600 14px inherit;font-family:inherit;padding:8px 18px;border-radius:999px;cursor:pointer}.tab.on{background:#fff;color:#000}
 .conn{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted);padding:6px 12px;border-radius:999px;background:var(--card);border:1px solid var(--line)}.conn i{width:8px;height:8px;border-radius:50%;background:#888}.conn.on i{background:var(--ok);box-shadow:0 0 8px var(--ok)}.conn.off i{background:var(--accent)}.conn.off{color:#fff}
+#veil{position:fixed;inset:0;z-index:50;display:none;align-items:center;justify-content:center;background:rgba(10,10,18,.75);backdrop-filter:blur(10px);font-size:26px;font-weight:700;border:3px dashed var(--accent);border-radius:28px;margin:14px}#veil.on{display:flex}
+li .th{width:46px;height:46px;border-radius:8px;object-fit:cover;background:var(--card2);flex:none}
 .panel{display:none}.panel.on{display:block}p.sub{color:var(--muted);margin:0 0 22px}
 .drop{border:2px dashed var(--line);border-radius:24px;padding:48px 20px;text-align:center;background:var(--card);backdrop-filter:blur(20px);transition:.2s;cursor:pointer}
 .drop.over{border-color:var(--accent);background:rgba(250,45,72,.08)}.drop b{display:block;font-size:19px;margin-bottom:6px}.drop span{color:var(--muted)}
@@ -378,8 +385,9 @@ dialog{background:#15151f;color:var(--text);border:1px solid var(--line);border-
 </style></head><body><main>
 <header><h1>Platine</h1><div class="conn" id="conn"><i></i><span>Connexion…</span></div><div class="tabs"><button class="tab on" data-t="music">Musique</button><button class="tab" data-t="art">Pochettes</button></div></header>
 
+<div id="veil">Dépose tes musiques n’importe où</div>
 <section class="panel on" id="p-music">
-<p class="sub">Glisse tes musiques ici : elles arrivent dans ta bibliothèque, avec l’album et les paroles synchronisées trouvés automatiquement. Il ne te reste qu’à ajouter la pochette.</p>
+<p class="sub">Glisse tes musiques n’importe où sur la page, comme dans Musique sur PC : l’artiste, l’album, la pochette et les paroles synchronisées sont trouvés tout seuls.</p>
 <div class="drop" id="drop"><b>Dépose tes musiques ou un dossier</b><span>MP3, M4A, FLAC, WAV, AIFF… et paroles .lrc</span><br>
 <button class="btn mt" id="pick">Choisir des fichiers</button><input id="file" type="file" multiple hidden accept="audio/*,.lrc,.flac,.m4a,.aiff,.aif,.alac,.caf,.m4b"></div>
 <div id="sum"><span id="count">Aucun envoi</span><span id="size"></span></div><div class="bar" id="bar"><i></i></div><ul id="list"></ul>
@@ -407,7 +415,7 @@ document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{document.querySelect
 /* ---------- Musique ---------- */
 const ok=/\.(mp3|m4a|aac|wav|aif|aiff|caf|flac|alac|m4b|lrc)$/i;const q=[];let active=0,done=0,total=0,bytesDone=0,bytesTotal=0;const list=$('#list');
 function upd(){$('#count').textContent=total?`${done} / ${total} envoyés`:'Aucun envoi';$('#size').textContent=bytesTotal?`${fmt(bytesDone)} / ${fmt(bytesTotal)}`:'';$('#bar i').style.width=bytesTotal?(100*bytesDone/bytesTotal)+'%':'0'}
-function add(f){if(!ok.test(f.name))return;const li=el('li');li.innerHTML='<div class="n"><b></b><small></small></div><span class="s">En attente</span>';li.querySelector('.n b').textContent=f.name;list.appendChild(li);q.push({f,li,sent:0});total++;bytesTotal+=f.size;upd();next()}
+function add(f){if(!ok.test(f.name))return;const li=el('li');li.innerHTML='<img class="th" alt=""><div class="n"><b></b><small></small></div><span class="s">En attente</span>';li.querySelector('.th').style.visibility='hidden';li.querySelector('.n b').textContent=f.name;list.appendChild(li);q.push({f,li,sent:0});total++;bytesTotal+=f.size;upd();next()}
 function next(){while(active<1&&q.length){send(q.shift())}}
 const wait=ms=>new Promise(r=>setTimeout(r,ms));
 async function waitPhone(s){for(;;){if(await ping())return;s.textContent='En attente de l’iPhone…';await wait(2000)}}
@@ -428,17 +436,25 @@ async function poll(){if(polling)return;polling=true;while(Object.keys(track).le
 for(const [name,it] of Object.entries(track)){const st=r[name];if(!st)continue;
 if(st.state=='illisible'){detail(it,'Fichier illisible sur l’iPhone','bad');it.li.className='err';delete track[name];continue}
 if(st.state!='ok')continue;delete track[name];
-const ly={synchro:'paroles synchronisées ✓',texte:'paroles (sans synchro)',aucune:'pas de paroles trouvées'}[st.lyrics]||'';
-detail(it,(st.album?'Album : '+st.album:'Album introuvable')+' · '+ly,st.album&&st.lyrics=='synchro'?'good':'');
-if(st.album){const b=el('button','go');b.textContent='Ajouter la pochette';b.onclick=()=>openAlbum(st.album);it.li.querySelector('.s').replaceWith(b)}}}polling=false}
+const ly={synchro:'paroles synchro ✓',texte:'paroles sans synchro',aucune:'sans paroles'}[st.lyrics]||'';
+if(st.title)it.li.querySelector('.n b').textContent=st.title+(st.artist?' — '+st.artist:'');
+if(st.id){const th=it.li.querySelector('.th');th.src='/api/cover?track='+st.id+'&s=120&v='+Date.now();th.onload=()=>th.style.visibility='visible'}
+detail(it,(st.album||'Album introuvable')+' · '+ly+(st.cover?' · pochette ✓':''),st.album&&st.lyrics=='synchro'?'good':'');
+if(st.album){const b=el('button','go');b.textContent=st.cover?'Changer la pochette':'Ajouter la pochette';b.onclick=()=>openAlbum(st.album);it.li.querySelector('.s').replaceWith(b)}}}polling=false}
 function openAlbum(name){document.querySelector('.tab[data-t=art]').click();$('#q').value=name;lib=null;loadLib().then(()=>{const a=lib.find(x=>norm(x.title)==norm(name));if(a)select(a)})}
 async function ping(){try{const r=await fetch('/api/ping',{cache:'no-store'});const ok=r.ok;setConn(ok);return ok}catch(e){setConn(false);return false}}
 function setConn(ok){const c=$('#conn');c.className='conn '+(ok?'on':'off');c.querySelector('span').textContent=ok?'iPhone connecté':'iPhone injoignable : ouvre Platine sur l’iPhone'}
 ping();setInterval(ping,4000);
 function walk(e){if(e.isFile)e.file(add);else if(e.isDirectory){const r=e.createReader();const rd=()=>r.readEntries(es=>{if(es.length){es.forEach(walk);rd()}});rd()}}
+/* Déposer n'importe où sur la page */
+let depth=0;const veil=$('#veil');const musicOn=()=>$('#p-music').classList.contains('on');
+window.addEventListener('dragenter',e=>{if(!musicOn()||!e.dataTransfer.types.includes('Files'))return;e.preventDefault();depth++;veil.classList.add('on')});
+window.addEventListener('dragleave',e=>{if(!musicOn())return;depth=Math.max(0,depth-1);if(!depth)veil.classList.remove('on')});
+window.addEventListener('dragover',e=>{if(musicOn())e.preventDefault()});
+window.addEventListener('drop',e=>{if(!musicOn())return;e.preventDefault();depth=0;veil.classList.remove('on');const its=[...e.dataTransfer.items];if(its.length&&its[0].webkitGetAsEntry){its.forEach(i=>{const en=i.webkitGetAsEntry();if(en)walk(en)})}else[...e.dataTransfer.files].forEach(add)});
 const d=$('#drop');['dragenter','dragover'].forEach(t=>d.addEventListener(t,e=>{e.preventDefault();d.classList.add('over')}));
 ['dragleave','drop'].forEach(t=>d.addEventListener(t,e=>{e.preventDefault();d.classList.remove('over')}));
-d.addEventListener('drop',e=>{const its=[...e.dataTransfer.items];if(its.length&&its[0].webkitGetAsEntry){its.forEach(i=>{const en=i.webkitGetAsEntry();if(en)walk(en)})}else[...e.dataTransfer.files].forEach(add)});
+
 $('#pick').onclick=e=>{e.stopPropagation();$('#file').click()};d.onclick=()=>$('#file').click();$('#file').onchange=e=>{[...e.target.files].forEach(add);e.target.value=''};
 window.addEventListener('beforeunload',e=>{if(active||q.length||busy){e.preventDefault();e.returnValue=''}});
 

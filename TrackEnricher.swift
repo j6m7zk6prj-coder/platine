@@ -8,17 +8,32 @@ import Foundation
 @MainActor
 enum TrackEnricher {
     struct Result: Encodable {
+        var id: String?
+        var title: String?
+        var artist: String?
         var album: String?
+        /// Vrai si la pochette a été trouvée et posée automatiquement.
+        var cover = false
         /// « synchro », « texte » ou « aucune ».
         var lyrics: String
     }
 
     static func enrich(_ id: UUID, library: Library) async -> Result {
         guard let t = library.track(id) else { return Result(album: nil, lyrics: "aucune") }
+        var coverSet = false
 
-        // 1. L'album, si le fichier ne le dit pas.
-        if t.album.isEmpty, let found = await findAlbum(title: t.title, artist: t.artist, duration: t.duration) {
+        // 1. L'album (si le fichier ne le dit pas) et la pochette (si le fichier n'en a pas), comme Musique sur PC.
+        let noArtwork = library.artworkURL(t) == nil
+        if t.album.isEmpty || noArtwork, let found = await findAlbum(title: t.title, artist: t.artist, duration: t.duration) {
             library.fillInfo(id, album: found.album, year: found.year, trackNumber: found.number)
+            if noArtwork, let url = found.cover, let data = await download(url), let now = library.track(id) {
+                if now.album.isEmpty {
+                    library.setCustomArtwork([id], data: data, ext: "jpg", kind: .image)
+                } else {
+                    library.setAlbumCover(now.albumKey, data: data, ext: "jpg", kind: .image)
+                }
+                coverSet = true
+            }
         }
 
         // 2. Les paroles synchronisées, si le fichier n'en a pas.
@@ -35,8 +50,18 @@ enum TrackEnricher {
                 lyrics = "texte"
             }
         }
-        let album = library.track(id)?.album
-        return Result(album: (album?.isEmpty ?? true) ? nil : album, lyrics: lyrics)
+        let final = library.track(id)
+        let album = final?.album
+        return Result(id: id.uuidString, title: final?.title, artist: final?.displayArtist,
+                      album: (album?.isEmpty ?? true) ? nil : album, cover: coverSet, lyrics: lyrics)
+    }
+
+    private static func download(_ url: URL) async -> Data? {
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 15
+        guard let (data, resp) = try? await URLSession.shared.data(for: request),
+              (resp as? HTTPURLResponse)?.statusCode == 200, data.count > 1000 else { return nil }
+        return data
     }
 
     // MARK: Recherche de l'album (catalogue Apple, sans compte)
@@ -51,12 +76,14 @@ enum TrackEnricher {
         let trackTimeMillis: Int?
         let collectionType: String?
         let trackCount: Int?
+        let artworkUrl100: String?
     }
 
     struct Found {
         let album: String
         let year: Int
         let number: Int
+        var cover: URL?
     }
 
     static func findAlbum(title: String, artist: String, duration: Double) async -> Found? {
@@ -77,7 +104,7 @@ enum TrackEnricher {
     }
     private struct DZName: Decodable { let name: String? }
     private struct DZAlbumRef: Decodable { let id: Int; let title: String? }
-    private struct DZAlbum: Decodable { let record_type: String?; let release_date: String?; let title: String? }
+    private struct DZAlbum: Decodable { let record_type: String?; let release_date: String?; let title: String?; let cover_xl: String? }
     private struct DZTrackFull: Decodable { let track_position: Int?; let release_date: String? }
 
     private static func get<T: Decodable>(_ url: URL, as: T.Type) async -> T? {
@@ -124,7 +151,7 @@ enum TrackEnricher {
             number = full.track_position ?? 0
         }
         let year = Int((alb.release_date ?? "").prefix(4)) ?? 0
-        return Found(album: name, year: year, number: number)
+        return Found(album: name, year: year, number: number, cover: alb.cover_xl.flatMap(URL.init(string:)))
     }
 
     // MARK: Catalogue Apple (sans compte)
@@ -177,6 +204,8 @@ enum TrackEnricher {
             name = String(name.dropLast(suffix.count))
         }
         let year = Int((best.releaseDate ?? "").prefix(4)) ?? 0
-        return Found(album: name, year: year, number: isSingle(best) ? 0 : (best.trackNumber ?? 0))
+        let art = best.artworkUrl100.map { $0.replacingOccurrences(of: "100x100bb", with: "1000x1000bb") }
+        return Found(album: name, year: year, number: isSingle(best) ? 0 : (best.trackNumber ?? 0),
+                     cover: art.flatMap(URL.init(string:)))
     }
 }

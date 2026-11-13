@@ -9,10 +9,10 @@ struct AppIconChoice: Identifiable, Equatable {
     /// Image d'aperçu incluse dans l'app.
     var preview: String { "Preview-" + id }
 
-    private static let knownTitles = ["Holo": "Holographique", "Or": "Or", "Menthe": "Menthe", "Graphite": "Graphite"]
+    private static let knownTitles = ["Clair": "Noir sur blanc"]
     /// Toutes les couleurs du disque en verre, dans l'ordre de l'arc-en-ciel.
     private static let knownOrder = ["Rouge", "Orange", "Jaune", "Vert", "Menthe", "Turquoise", "Bleu", "Indigo",
-                                     "Violet", "Rose", "Holo", "Or", "Blanc", "Graphite", "Noir", "Cassette"]
+                                     "Violet", "Or", "Blanc", "Graphite", "Clair"]
 
     /// L'icône principale, puis toutes les icônes incluses dans l'app (lues dans son Info.plist),
     /// y compris celles que tu ajoutes au projet sous le nom icon-MonNom.png.
@@ -27,7 +27,7 @@ struct AppIconChoice: Identifiable, Equatable {
             let b = knownOrder.firstIndex(of: $1) ?? Int.max
             return a != b ? a < b : $0.localizedStandardCompare($1) == .orderedAscending
         }
-        return [AppIconChoice(id: "Platine", title: "Musique", iconName: nil)]
+        return [AppIconChoice(id: "Platine", title: "Platine", iconName: nil)]
             + sorted.map { AppIconChoice(id: $0, title: knownTitles[$0] ?? $0, iconName: "AppIcon-" + $0) }
     }()
 }
