@@ -110,22 +110,64 @@ enum LyricsService {
     }
 
     static func search(title: String, artist: String, duration: Double) async -> String? {
-        if let exact = await exact(title: title, artist: artist, duration: duration) { return exact }
-        guard let results = await query(title: title, artist: artist) else { return nil }
-        let t = norm(title), a = norm(artist)
+        // Variantes : tel quel, puis titre nettoyé (« (feat. …) », « [Clip] »…) et artiste principal seulement.
+        let cleanTitle = clean(title)
+        let mainArtist = Self.mainArtist(artist)
+        var tries = [(title, artist)]
+        if cleanTitle != title || mainArtist != artist { tries.append((cleanTitle, mainArtist)) }
+
+        for (t, a) in tries {
+            if let exact = await exact(title: t, artist: a, duration: duration) { return exact }
+        }
+        var results: [Result] = []
+        for (t, a) in tries {
+            results += await query(title: t, artist: a) ?? []
+        }
+        // Dernier essai : recherche libre (artiste et titre ensemble).
+        if results.isEmpty {
+            results += await free("\(mainArtist) \(cleanTitle)") ?? []
+        }
+        let t = norm(cleanTitle), a = norm(mainArtist)
         // Seulement le bon morceau : même titre, même artiste (si connu).
         let same = results.filter { r in
             guard !(r.instrumental ?? false) else { return false }
             return matches(norm(r.trackName ?? ""), t) && (a.isEmpty || matches(norm(r.artistName ?? ""), a))
         }
         func gap(_ r: Result) -> Double { abs((r.duration ?? 0) - duration) }
-        // Paroles synchronisées : seulement pour la même version (même durée, à 3 s près), sinon elles seraient décalées.
+        // Paroles synchronisées : seulement pour la même version (même durée, à 5 s près), sinon elles seraient décalées.
         let synced = same
-            .filter { ($0.syncedLyrics ?? "").isEmpty == false && (duration <= 0 || gap($0) <= 3) }
+            .filter { ($0.syncedLyrics ?? "").isEmpty == false && (duration <= 0 || gap($0) <= 5) }
             .min { gap($0) < gap($1) }
         if let s = synced?.syncedLyrics { return s }
         let plain = same.first { ($0.plainLyrics ?? "").isEmpty == false }?.plainLyrics
         return plain
+    }
+
+    /// Le titre sans « (feat. …) », « [Clip officiel] », « - Remastered »…
+    static func clean(_ title: String) -> String {
+        var t = title.replacingOccurrences(of: #"\s*[\(\[][^\)\]]*[\)\]]"#, with: "", options: .regularExpression)
+        for sep in [" feat.", " feat ", " ft.", " ft ", " - "] {
+            if let r = t.range(of: sep, options: .caseInsensitive) { t = String(t[..<r.lowerBound]) }
+        }
+        let out = t.trimmingCharacters(in: .whitespaces)
+        return out.isEmpty ? title : out
+    }
+
+    /// Le premier artiste (« Werenoi, Ninho » → « Werenoi »).
+    static func mainArtist(_ artist: String) -> String {
+        var a = artist
+        for sep in [",", " & ", " x ", " X ", " feat", " ft.", ";", "/"] {
+            if let r = a.range(of: sep) { a = String(a[..<r.lowerBound]) }
+        }
+        let out = a.trimmingCharacters(in: .whitespaces)
+        return out.isEmpty ? artist : out
+    }
+
+    private static func free(_ q: String) async -> [Result]? {
+        guard var c = URLComponents(string: "https://lrclib.net/api/search") else { return nil }
+        c.queryItems = [URLQueryItem(name: "q", value: q)]
+        guard let url = c.url, let data = await fetch(url) else { return nil }
+        return try? JSONDecoder().decode([Result].self, from: data)
     }
 
     /// Recherche exacte de LRCLIB (titre, artiste et durée) : la plus fiable.
@@ -138,7 +180,7 @@ enum LyricsService {
         guard let url = c.url, let data = await fetch(url),
               let r = try? JSONDecoder().decode(Result.self, from: data),
               !(r.instrumental ?? false) else { return nil }
-        if let d = r.duration, abs(d - duration) > 3 { return nil }
+        if let d = r.duration, abs(d - duration) > 5 { return nil }
         if let s = r.syncedLyrics, !s.isEmpty { return s }
         return nil
     }

@@ -2,6 +2,10 @@ import Foundation
 
 // Test sur Mac : l'album et les paroles sont-ils bien trouvés pour de vrais morceaux ?
 struct Track {
+    init(title: String, artist: String, album: String, duration: Double, lyrics: String?) {
+        self.title = title; self.artist = artist; self.album = album; self.duration = duration; self.lyrics = lyrics
+    }
+    var id = UUID()
     var title: String; var artist: String; var album: String; var duration: Double; var lyrics: String?
     var albumKey: String { artist.lowercased() + "|" + album.lowercased() }
     var displayArtist: String { artist }
@@ -11,6 +15,8 @@ enum ArtworkKind { case image, gif, video }
     var t: Track
     init(_ t: Track) { self.t = t }
     func track(_ id: UUID) -> Track? { t }
+    var tracks: [Track] { [t] }
+    var message: String?
     func fillInfo(_ id: UUID, album: String?, year: Int?, trackNumber: Int?, artist: String? = nil) {
         if let album, t.album.isEmpty { t.album = album }
         print("   année \(year ?? 0), piste \(trackNumber ?? 0)")

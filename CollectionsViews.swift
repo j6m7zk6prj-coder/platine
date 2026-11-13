@@ -116,8 +116,10 @@ struct AlbumDetailView: View {
                 VStack(spacing: 16) {
                     if extended {
                         // Espace laissé à la grande pochette, qui est dessinée derrière la liste.
+                        // Le titre arrive juste sous la pochette, sans passer dessus.
                         Color.clear
-                            .frame(height: UIScreen.main.bounds.width * 0.6)
+                            .frame(height: max(UIScreen.main.bounds.width * 0.6,
+                                               UIScreen.main.bounds.width * 0.97 - (headerBase ?? 110)))
                             .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minY } action: { y in
                                 if headerBase == nil { headerBase = y }
                                 headerY = y

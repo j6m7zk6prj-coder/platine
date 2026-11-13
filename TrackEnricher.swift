@@ -56,6 +56,32 @@ enum TrackEnricher {
                       album: (album?.isEmpty ?? true) ? nil : album, cover: coverSet, lyrics: lyrics)
     }
 
+    /// Toute la bibliothèque, en douceur et une seule fois par morceau : paroles synchronisées,
+    /// album et pochette qui manquent encore (y compris pour les sons importés avant).
+    static func fillLibrary(_ library: Library) async {
+        let key = "enrichedV2"
+        var done = Set(UserDefaults.standard.stringArray(forKey: key) ?? [])
+        var improved = 0
+        for t in library.tracks where !done.contains(t.id.uuidString) {
+            if Task.isCancelled { return }
+            let needs = !LyricsParser.isSynced(t.lyrics ?? "") || t.album.isEmpty || library.artworkURL(t) == nil
+            if needs {
+                let before = library.track(t.id)
+                let r = await enrich(t.id, library: library)
+                // Pas de bandeau à chaque morceau.
+                library.message = nil
+                if r.cover || (r.lyrics == "synchro" && !LyricsParser.isSynced(before?.lyrics ?? ""))
+                    || (before?.album.isEmpty == true && r.album != nil) { improved += 1 }
+                try? await Task.sleep(for: .milliseconds(250))
+            }
+            done.insert(t.id.uuidString)
+            UserDefaults.standard.set(Array(done), forKey: key)
+        }
+        if improved > 0 {
+            library.message = improved > 1 ? "Paroles et pochettes complétées pour \(improved) morceaux" : "Paroles et pochette complétées"
+        }
+    }
+
     private static func download(_ url: URL) async -> Data? {
         var request = URLRequest(url: url)
         request.timeoutInterval = 15

@@ -292,7 +292,25 @@ struct FeedView: View {
         let recent = Set(items.suffix(8).map(\.trackID))
         var picked = pool.shuffled().filter { !recent.contains($0.id) }
         if picked.isEmpty { picked = pool.shuffled() }
-        return picked.prefix(20).map(Self.excerpt)
+        return Self.spread(Array(picked.prefix(20)), after: items.last.flatMap { library.track($0.trackID) })
+            .map(Self.excerpt)
+    }
+
+    /// Vraiment au hasard : jamais deux fois de suite le même artiste ni le même album quand c'est possible.
+    static func spread(_ list: [Track], after last: Track?) -> [Track] {
+        var rest = list
+        var out: [Track] = []
+        var prev = last
+        while !rest.isEmpty {
+            let i = rest.firstIndex { t in
+                guard let p = prev else { return true }
+                return t.displayArtist.lowercased() != p.displayArtist.lowercased() && t.albumKey != p.albumKey
+            } ?? rest.firstIndex { t in prev.map { t.albumKey != $0.albumKey } ?? true } ?? 0
+            let t = rest.remove(at: i)
+            out.append(t)
+            prev = t
+        }
+        return out
     }
 
     /// Choisit quelques lignes de paroles au hasard et le moment où les jouer.
@@ -372,7 +390,9 @@ final class FeedArtCache {
             let image = await Task.detached(priority: .userInitiated) { FeedArtCache.decode(source) }.value
             guard let image else { return nil }
             let small = image.preparingThumbnail(of: CGSize(width: 64, height: 64)) ?? image
-            let blurred = await Task.detached(priority: .userInitiated) { FeedArtCache.soften(small) }.value
+            // Très petite et très floue : seulement des couleurs, jamais une deuxième pochette reconnaissable.
+            let tiny = image.preparingThumbnail(of: CGSize(width: 24, height: 24)) ?? small
+            let blurred = await Task.detached(priority: .userInitiated) { FeedArtCache.soften(tiny) }.value
             let art = Art(image: image, blurred: blurred ?? small, colors: Palette.colors(from: small))
             self.cache.setObject(Box(art), forKey: key as NSString)
             return art
@@ -388,7 +408,7 @@ final class FeedArtCache {
         guard let cg = image.cgImage else { return nil }
         let input = CIImage(cgImage: cg)
         let blurred = input.clampedToExtent()
-            .applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: 6])
+            .applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: 5])
             .applyingFilter("CIColorControls", parameters: [kCIInputSaturationKey: 1.35, kCIInputBrightnessKey: -0.06])
             .cropped(to: input.extent)
         let ctx = CIContext(options: [.useSoftwareRenderer: false])

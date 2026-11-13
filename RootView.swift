@@ -33,6 +33,8 @@ struct RootView: View {
         }
         .task {
             if settings.autoImport { await library.scanInbox() }
+            // En arrière-plan : les paroles, l'album et la pochette qui manquent encore.
+            Task { await TrackEnricher.fillLibrary(library) }
             // Les pochettes animées de l'écran verrouillé sont préparées pendant que l'app est ouverte
             // (iOS ne permet pas de le faire une fois l'iPhone verrouillé).
             // Seulement les 4 pochettes animées écoutées le plus récemment, et après un moment :
