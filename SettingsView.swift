@@ -239,45 +239,6 @@ struct AppearanceSettingsView: View {
                 Toggle("Fond en mouvement", isOn: $settings.backgroundMotion)
             }
 
-            Section {
-                Toggle("Liquid Glass", isOn: $settings.liquidGlass)
-                if settings.liquidGlass {
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Text("Transparence du verre")
-                            Spacer()
-                            Text("\(Int(settings.glassIntensity * 100)) %")
-                                .monospacedDigit()
-                                .foregroundStyle(.secondary)
-                        }
-                        HStack(spacing: 10) {
-                            Image(systemName: "circle.fill").font(.caption).foregroundStyle(.secondary)
-                            Slider(value: $settings.glassIntensity, in: 0...1)
-                            Image(systemName: "circle.dotted").font(.caption).foregroundStyle(.secondary)
-                        }
-                        // Aperçu en direct.
-                        Text("Aperçu")
-                            .font(.subheadline.weight(.semibold))
-                            .padding(.horizontal, 22)
-                            .padding(.vertical, 10)
-                            .glassCapsule()
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 14)
-                            .background(
-                                LinearGradient(colors: [.pink, .orange, .purple], startPoint: .leading, endPoint: .trailing)
-                                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                            )
-                    }
-                    .padding(.vertical, 4)
-                }
-            } header: {
-                Text("Verre")
-            } footer: {
-                Text(settings.liquidGlass
-                     ? "À gauche, le verre est plus sombre et plus lisible ; à droite, plus transparent."
-                     : "Les boutons et le mini-lecteur utilisent des surfaces pleines, sans effet de verre.")
-            }
-
             Section("Pochettes") {
                 Picker("Forme", selection: $settings.artworkStyle) {
                     ForEach(ArtworkStyle.allCases) { Text($0.label).tag($0) }

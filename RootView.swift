@@ -211,8 +211,6 @@ struct MiniPlayerInset: ViewModifier {
     func body(content: Content) -> some View {
         content.safeAreaInset(edge: .bottom) {
             MiniPlayer(zoomID: "miniPlayer-\(tab)") { ui.showPlayer = true }
-                .padding(.horizontal, 12)
-                .padding(.bottom, 6)
                 .animation(.spring(response: 0.5, dampingFraction: 0.82), value: player.currentID)
         }
     }

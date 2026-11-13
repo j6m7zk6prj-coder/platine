@@ -383,16 +383,14 @@ struct MiniPlayer: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            .frame(width: 36, height: 36)
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .frame(width: 48, height: 48)
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .shadow(color: .black.opacity(0.25), radius: 4, y: 2)
             .id(t?.id)
             .transition(.opacity)
 
             VStack(alignment: .leading, spacing: 1) {
-                Text(t?.title ?? "À l’arrêt").font(.body.weight(.semibold)).lineLimit(1)
-                if let t {
-                    Text(t.displayArtist).font(.subheadline).foregroundStyle(.primary.opacity(0.7)).lineLimit(1)
-                }
+                Text(t?.title ?? "Lecture interrompue").font(.body).lineLimit(1)
             }
             .id(t?.id)
             .transition(.opacity)
@@ -416,17 +414,20 @@ struct MiniPlayer: View {
         }
         .buttonStyle(PressStyle())
         .foregroundStyle(.primary)
-        .padding(.leading, 12)
-        .padding(.trailing, 10)
+        .padding(.leading, 20)
+        .padding(.trailing, 14)
         .padding(.vertical, 8)
-        .contentShape(Capsule())
+        .frame(maxWidth: .infinity)
+        .contentShape(Rectangle())
         .onTapGesture { if t != nil { onOpen() } }
-        // Comme Musique : une pilule en Liquid Glass. Le lecteur sort d'elle et s'y referme.
-        .glassCapsule(interactive: true)
+        // Comme Musique sur iOS 16 : une barre floutée sur toute la largeur, avec un fin trait au-dessus.
+        .background(.regularMaterial)
+        .overlay(alignment: .top) { Divider() }
+        .overlay(alignment: .bottom) { Divider() }
         .modifier(PlayerZoomSource(id: zoomID))
         .contextMenu {
             if t != nil {
-                Button(player.isPlaying ? "Pause" : "Lecture", systemImage: player.isPlaying ? "pause.fill" : "play.fill") {
+                IconButton(player.isPlaying ? "Pause" : "Lecture", systemImage: player.isPlaying ? "pause.fill" : "play.fill") {
                     player.togglePlay()
                 }
                 IconButton("Arrêter la lecture", systemImage: "stop.fill") { player.quit() }

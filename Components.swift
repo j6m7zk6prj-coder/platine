@@ -33,48 +33,14 @@ extension View {
     }
 }
 
-/// Le verre de l'app, réglable dans Réglages → Apparence :
-/// Liquid Glass plus ou moins transparent, ou désactivé (surfaces pleines, plus sobres).
+/// iPhone 8 (iOS 16) : pas de verre. Les surfaces pleines et discrètes des apps d'iOS 16,
+/// comme les boutons « Lire » et « Aléatoire » de Musique.
 struct GlassStyle<S: InsettableShape>: ViewModifier {
     let shape: S
     var interactive = false
-    @Environment(\.optionalAppSettings) private var settings: AppSettings?
 
     func body(content: Content) -> some View {
-        let enabled = settings?.liquidGlass ?? true
-        // 0 = verre presque opaque et sombre, 1 = verre très transparent.
-        let intensity = settings?.glassIntensity ?? 0.6
-        if !enabled {
-            content
-                .background(shape.fill(Color(white: 0.13)))
-                .overlay { shape.strokeBorder(.white.opacity(0.1), lineWidth: 0.75) }
-                .shadow(color: .black.opacity(0.25), radius: 12, y: 6)
-        } else {
-            liquid(content, intensity: intensity)
-        }
-    }
-
-    @ViewBuilder private func liquid(_ content: Content, intensity: Double) -> some View {
-        let tint = Color.black.opacity((1 - intensity) * 0.55)
-        #if compiler(>=6.2)
-        if #available(iOS 26.0, *) {
-            let base: Glass = intensity > 0.85 ? .clear : .regular
-            let glass = base.tint(tint)
-            if interactive {
-                content.glassEffect(glass.interactive(), in: shape)
-            } else {
-                content.glassEffect(glass, in: shape)
-            }
-        } else {
-            content
-                .background(shape.fill(tint))
-                .frostedGlass(shape)
-        }
-        #else
-        content
-            .background(shape.fill(tint))
-            .frostedGlass(shape)
-        #endif
+        content.background(shape.fill(Color(uiColor: .tertiarySystemFill)))
     }
 }
 

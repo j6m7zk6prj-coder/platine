@@ -286,7 +286,7 @@ struct NowPlayingView: View {
                         addTarget = AddToPlaylistTarget(trackIDs: [t.id])
                     }
                     Divider()
-                    Button(player.shuffle ? "Désactiver l’aléatoire" : "Lecture aléatoire", systemImage: "shuffle") {
+                    IconButton(player.shuffle ? "Désactiver l’aléatoire" : "Lecture aléatoire", systemImage: "shuffle") {
                         player.setShuffle(!player.shuffle)
                     }
                     IconButton(repeatLabel, systemImage: player.repeatMode == .one ? "repeat.1" : "repeat") {

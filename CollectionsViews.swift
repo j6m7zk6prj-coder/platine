@@ -557,7 +557,7 @@ struct PlaylistsView: View {
                 }
                 .contextMenu {
                     IconButton("Lire", systemImage: "play.fill") { player.play(ids: p.trackIDs) }
-                    Button(p.pinned ? "Désépingler" : "Épingler", systemImage: p.pinned ? "pin.slash" : "pin") { library.togglePin(p.id) }
+                    IconButton(p.pinned ? "Désépingler" : "Épingler", systemImage: p.pinned ? "pin.slash" : "pin") { library.togglePin(p.id) }
                     IconButton("Renommer", systemImage: "pencil") { renameText = p.name; renaming = p }
                     IconButton("Supprimer", systemImage: "trash", role: .destructive) { library.deletePlaylist(p.id) }
                 }
