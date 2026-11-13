@@ -98,23 +98,18 @@ extension RootView {
         #endif
     }
 
+    /// iPhone 8 : comme Decoupled, Bibliothèque et Lecture, avec Découvrir entre les deux.
     @ViewBuilder func legacyTabs(selection: Binding<Int>) -> some View {
         TabView(selection: selection) {
-            NavigationStack { HomeView() }
-                .modifier(MiniPlayerInset(tab: 0))
-                .tabItem { Label("Accueil", systemImage: "house.fill") }
+            DecoupledLibraryView()
+                .tabItem { Label("Bibliothèque", systemImage: "music.note.house") }
                 .tag(0)
             NavigationStack { FeedView() }
-                .tabItem { Label("Découvrir", systemImage: "play.rectangle.on.rectangle.fill") }
+                .tabItem { Label("Découvrir", systemImage: "play.rectangle.on.rectangle") }
                 .tag(4)
-            NavigationStack { LibraryHomeView() }
-                .modifier(MiniPlayerInset(tab: 1))
-                .tabItem { Label("Bibliothèque", systemImage: "square.stack.fill") }
-                .tag(1)
-            NavigationStack { SearchView() }
-                .modifier(MiniPlayerInset(tab: 2))
-                .tabItem { Label("Recherche", systemImage: "magnifyingglass") }
-                .tag(2)
+            DecoupledPlaybackView()
+                .tabItem { Label("Lecture", systemImage: "play.circle") }
+                .tag(3)
         }
     }
 }

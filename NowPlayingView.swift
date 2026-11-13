@@ -13,6 +13,7 @@ struct NowPlayingView: View {
     @State private var addTarget: AddToPlaylistTarget?
     @State private var showQueue = false
     @State private var showLyrics = false
+    @EnvironmentObject private var uiOpen: UIState
     @State private var bounceNext = 0
     @State private var bouncePrev = 0
     /// Paroles en plein écran : les commandes se cachent après quelques secondes, comme dans Musique.
@@ -75,6 +76,12 @@ struct NowPlayingView: View {
         }
         .animation(.easeInOut(duration: 0.45), value: player.currentID)
         .animation(.spring(response: 0.5, dampingFraction: 0.86), value: showLyrics)
+        .onAppear {
+            if uiOpen.lyricsOnOpen {
+                showLyrics = true
+                uiOpen.lyricsOnOpen = false
+            }
+        }
         .animation(.spring(response: 0.42, dampingFraction: 0.86), value: queueOpen)
         .animation(.spring(response: 0.5, dampingFraction: 0.9), value: controlsHidden)
         .onChangeCompat(of: showLyrics) { _, on in

@@ -195,6 +195,8 @@ final class AppSettings: ObservableObject {
 @MainActor
 final class UIState: ObservableObject {
     @Published var showPlayer = false
+    /// Ouvrir le lecteur directement sur les paroles.
+    @Published var lyricsOnOpen = false
     @Published var editing: EditTarget?
     @Published var editingInfo: EditTarget?
     @Published var addToPlaylist: AddToPlaylistTarget?
