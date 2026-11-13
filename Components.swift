@@ -333,6 +333,14 @@ struct AmbientBackground: View {
     }
 
     var body: some View {
+        if forceDark {
+            themed
+        } else {
+            Color(uiColor: .systemBackground)
+        }
+    }
+
+    private var themed: some View {
         Group {
             switch theme {
             case .dynamic: dynamicBackground(light: false)

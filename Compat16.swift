@@ -187,31 +187,50 @@ private struct UnavailableLabelStyle: LabelStyle {
 
 // MARK: Défilement page par page à la verticale (comme TikTok)
 
-/// Remplace le défilement « paging » d'iOS 17 : une page par élément, on glisse vers le haut.
-/// (Un TabView en mode page, tourné d'un quart de tour : chaque page reste dans SwiftUI,
-/// avec la navigation et les réglages de l'app.)
+/// Remplace le défilement « paging » d'iOS 17 : une page par élément, on glisse vers le haut ou le bas.
+/// Seules la page affichée et ses deux voisines existent (léger pour l'iPhone 8).
 struct VerticalPager<Item: Identifiable, Page: View>: View where Item.ID: Hashable {
     let items: [Item]
     @Binding var selection: Item.ID?
     @ViewBuilder var page: (Item) -> Page
+    @State private var drag: CGFloat = 0
 
     var body: some View {
         GeometryReader { geo in
             let w = geo.size.width, h = geo.size.height
-            TabView(selection: $selection) {
-                ForEach(items) { item in
-                    page(item)
+            let index = items.firstIndex { $0.id == selection } ?? 0
+            let shown = items.indices.filter { abs($0 - index) <= 1 }
+            ZStack {
+                ForEach(shown, id: \.self) { i in
+                    page(items[i])
                         .frame(width: w, height: h)
                         .clipped()
-                        .rotationEffect(.degrees(-90))
-                        .frame(width: h, height: w)
-                        .tag(Optional(item.id))
+                        .offset(y: CGFloat(i - index) * h + drag)
+                        .id(items[i].id)
                 }
             }
-            .tabViewStyle(.page(indexDisplayMode: .never))
-            .frame(width: h, height: w)
-            .rotationEffect(.degrees(90), anchor: .topLeading)
-            .offset(x: w)
+            .frame(width: w, height: h)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 12)
+                    .onChanged { g in
+                        guard abs(g.translation.height) > abs(g.translation.width) else { return }
+                        var y = g.translation.height
+                        // Un peu de résistance au début et à la fin du fil.
+                        if (index == 0 && y > 0) || (index == items.count - 1 && y < 0) { y /= 3 }
+                        drag = y
+                    }
+                    .onEnded { g in
+                        let moved = g.translation.height, flick = g.predictedEndTranslation.height
+                        var target = index
+                        if (moved < -h * 0.18 || flick < -h * 0.45), index < items.count - 1 { target = index + 1 }
+                        if (moved > h * 0.18 || flick > h * 0.45), index > 0 { target = index - 1 }
+                        withAnimation(.spring(response: 0.38, dampingFraction: 0.9)) {
+                            if target != index { selection = items[target].id }
+                            drag = 0
+                        }
+                    }
+            )
         }
     }
 }

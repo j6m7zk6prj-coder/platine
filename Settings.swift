@@ -174,7 +174,9 @@ final class AppSettings: ObservableObject {
         songSort = SongSort(rawValue: d.string(forKey: "songSort") ?? "") ?? .title
         shelfFormat = AlbumFormat(rawValue: d.string(forKey: "shelfFormat") ?? "") ?? .cd
         theme = AppTheme(rawValue: d.string(forKey: "theme") ?? "") ?? .dynamic
-        appearance = AppearanceMode(rawValue: d.string(forKey: "appearance") ?? "") ?? .theme
+        // iPhone 8 : pas de thèmes colorés, seulement Auto, Clair ou Sombre.
+        let saved = AppearanceMode(rawValue: d.string(forKey: "appearance") ?? "") ?? .auto
+        appearance = saved == .theme ? .auto : saved
         lyricsSize = LyricsSize(rawValue: d.string(forKey: "lyricsSize") ?? "") ?? .medium
         artworkStyle = ArtworkStyle(rawValue: d.string(forKey: "artworkStyle") ?? "") ?? .rounded
         backgroundMotion = d.object(forKey: "backgroundMotion") as? Bool ?? true

@@ -186,28 +186,13 @@ struct AppearanceSettingsView: View {
         Form {
             Section {
                 Picker("Mode", selection: $settings.appearance) {
-                    ForEach(AppearanceMode.allCases) { Text($0.label).tag($0) }
+                    ForEach(AppearanceMode.allCases.filter { $0 != .theme }) { Text($0.label).tag($0) }
                 }
                 .pickerStyle(.segmented)
             } header: {
                 Text("Clair ou sombre")
             } footer: {
-                Text("« Thème » garde les couleurs du thème choisi. « Clair » et « Sombre » forcent le mode, « Auto » suit le réglage de l’iPhone.")
-            }
-
-            Section {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 96), spacing: 12)], spacing: 14) {
-                    ForEach(AppTheme.allCases) { theme in
-                        ThemeTile(theme: theme, selected: settings.theme == theme) {
-                            withAnimation(.easeInOut(duration: 0.35)) { settings.theme = theme }
-                        }
-                    }
-                }
-                .padding(.vertical, 6)
-            } header: {
-                Text("Thème")
-            } footer: {
-                Text(settings.theme.detail + ". L’écran « En lecture » et la Collection restent toujours sombres, comme dans Musique.")
+                Text("Fond noir ou blanc, comme les apps d’iOS 16. « Auto » suit le réglage de l’iPhone.")
             }
 
             Section("Couleur d’accent") {

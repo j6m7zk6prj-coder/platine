@@ -174,36 +174,13 @@ struct FeedView: View {
                         Color.black
                     }
                 }
-                .ignoresSafeArea()
+                // La barre d'onglets d'iOS 16 reste visible : les pages s'arrêtent juste au-dessus.
+                .ignoresSafeArea(edges: .top)
             }
 
-            // Le menu se range en un petit bouton Accueil, comme dans Musique.
-            VStack {
-                Spacer()
-                HStack {
-                    Button {
-                        preview.pause()
-                        ui.selectedTab = 0
-                    } label: {
-                        Image(systemName: "house.fill")
-                            .font(.system(size: 19, weight: .semibold))
-                            .foregroundStyle(.white)
-                            .frame(width: 54, height: 54)
-                            // Verre non interactif : le verre « interactif » d'iOS gardait parfois le toucher pour lui.
-                            .modifier(GlassStyle(shape: Circle(), interactive: false))
-                            .contentShape(Circle())
-                    }
-                    .buttonStyle(PressStyle())
-                    .accessibilityLabel("Accueil")
-                    Spacer()
-                }
-                .padding(.horizontal, 20)
-                .padding(.bottom, 6)
-            }
         }
         .environment(\.colorScheme, .dark)
         .toolbar(.hidden, for: .navigationBar)
-        .toolbar(.hidden, for: .tabBar)
         .statusBarHidden(true)
         .onAppear {
             if items.isEmpty { rebuild() }
@@ -529,7 +506,7 @@ private struct FeedPage: View {
                     progress
                 }
                 .padding(.horizontal, 20)
-                .padding(.bottom, geo.safeAreaInsets.bottom + 74)
+                .padding(.bottom, geo.safeAreaInsets.bottom + 22)
                 .foregroundStyle(.white)
                 .animation(.easeOut(duration: 0.4), value: lines.isEmpty)
             }
