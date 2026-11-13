@@ -193,42 +193,54 @@ struct VerticalPager<Item: Identifiable, Page: View>: View where Item.ID: Hashab
     let items: [Item]
     @Binding var selection: Item.ID?
     @ViewBuilder var page: (Item) -> Page
-    @State private var drag: CGFloat = 0
+    /// Le doigt sur l'écran. Remis à zéro tout seul, même si iOS interrompt le geste
+    /// (c'est ce qui laissait l'écran bloqué entre deux pages).
+    @GestureState private var finger: CGFloat = 0
+    /// Ce qui reste du geste quand on lâche : il revient à zéro en douceur avec le changement de page.
+    @State private var settle: CGFloat = 0
 
     var body: some View {
         GeometryReader { geo in
             let w = geo.size.width, h = geo.size.height
             let index = items.firstIndex { $0.id == selection } ?? 0
             let shown = items.indices.filter { abs($0 - index) <= 1 }
-            ZStack {
+            let shift = finger + settle
+            ZStack(alignment: .top) {
                 ForEach(shown, id: \.self) { i in
                     page(items[i])
                         .frame(width: w, height: h)
                         .clipped()
-                        .offset(y: CGFloat(i - index) * h + drag)
-                        .id(items[i].id)
+                        .offset(y: CGFloat(i - index) * h + shift)
                 }
             }
-            .frame(width: w, height: h)
+            .frame(width: w, height: h, alignment: .top)
+            .clipped()
             .contentShape(Rectangle())
-            .gesture(
-                DragGesture(minimumDistance: 12)
-                    .onChanged { g in
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 14)
+                    .updating($finger) { g, state, _ in
                         guard abs(g.translation.height) > abs(g.translation.width) else { return }
                         var y = g.translation.height
-                        // Un peu de résistance au début et à la fin du fil.
                         if (index == 0 && y > 0) || (index == items.count - 1 && y < 0) { y /= 3 }
-                        drag = y
+                        state = y
                     }
                     .onEnded { g in
+                        guard abs(g.translation.height) > abs(g.translation.width) else { return }
                         let moved = g.translation.height, flick = g.predictedEndTranslation.height
                         var target = index
                         if (moved < -h * 0.18 || flick < -h * 0.45), index < items.count - 1 { target = index + 1 }
                         if (moved > h * 0.18 || flick > h * 0.45), index > 0 { target = index - 1 }
-                        withAnimation(.spring(response: 0.38, dampingFraction: 0.9)) {
+                        // Le nouveau point de départ tient compte du changement de page : rien ne saute.
+                        var start = moved
+                        if (index == 0 && start > 0) || (index == items.count - 1 && start < 0) { start /= 3 }
+                        if target != index { start += CGFloat(target - index) * h }
+                        var t = Transaction()
+                        t.disablesAnimations = true
+                        withTransaction(t) {
                             if target != index { selection = items[target].id }
-                            drag = 0
+                            settle = start
                         }
+                        withAnimation(.spring(response: 0.36, dampingFraction: 0.92)) { settle = 0 }
                     }
             )
         }
