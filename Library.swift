@@ -478,11 +478,12 @@ final class Library {
         let lyricFiles = urls.filter { $0.pathExtension.lowercased() == "lrc" }
         let audioFiles = urls.filter { $0.pathExtension.lowercased() != "lrc" }
         var added = 0
+        var pairs: [(file: String, id: UUID)] = []
         for url in audioFiles {
             let scoped = url.startAccessingSecurityScopedResource()
             let t = await importOne(url, move: false)
             if scoped { url.stopAccessingSecurityScopedResource() }
-            if let t { tracks.append(t); added += 1 }
+            if let t { tracks.append(t); added += 1; pairs.append((url.lastPathComponent, t.id)) }
         }
         var lyricsAdded = 0
         for url in lyricFiles {
@@ -491,6 +492,8 @@ final class Library {
             if scoped { url.stopAccessingSecurityScopedResource() }
         }
         finishImport(added, total: audioFiles.count)
+        // Comme pour l'envoi Wi-Fi : album, pochette et paroles cherchés tout seuls.
+        onImported?(pairs, audioFiles.map(\.lastPathComponent))
         if lyricsAdded > 0 && added == 0 {
             message = lyricsAdded == 1 ? "Paroles ajoutées" : "Paroles ajoutées à \(lyricsAdded) morceaux"
         } else if !lyricFiles.isEmpty && lyricsAdded == 0 && audioFiles.isEmpty {

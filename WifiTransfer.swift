@@ -38,8 +38,6 @@ final class WifiTransfer {
         var cover: Bool?
     }
     @ObservationIgnored private var recent: [String: Status] = [:]
-    @ObservationIgnored private var enrichQueue: [(file: String, id: UUID)] = []
-    @ObservationIgnored private var enriching = false
 
     private init() {
         let c = NotificationCenter.default
@@ -53,9 +51,7 @@ final class WifiTransfer {
 
     func enable(library: Library) {
         self.library = library
-        library.onImported = { added, all in
-            MainActor.assumeIsolated { WifiTransfer.shared.imported(added, all: all) }
-        }
+
         enabled = true
         UIApplication.shared.isIdleTimerDisabled = true
         launch()
@@ -143,27 +139,19 @@ final class WifiTransfer {
         requestScan()
     }
 
-    /// Après l'import : on cherche l'album et les paroles de chaque morceau envoyé, un par un.
-    private func imported(_ added: [(file: String, id: UUID)], all: [String]) {
+    /// Après l'import : les fichiers envoyés passent en « recherche » (ou « illisible »).
+    func imported(_ added: [(file: String, id: UUID)], all: [String]) {
         let ok = Set(added.map(\.file))
         for name in all where recent[name] != nil {
             recent[name]?.state = ok.contains(name) ? "recherche" : "illisible"
         }
-        enrichQueue += added.filter { recent[$0.file] != nil }
-        runEnrichment()
     }
 
-    private func runEnrichment() {
-        guard !enriching, !enrichQueue.isEmpty, let library else { return }
-        enriching = true
-        let next = enrichQueue.removeFirst()
-        Task {
-            let r = await TrackEnricher.enrich(next.id, library: library)
-            recent[next.file] = Status(state: "ok", album: r.album, lyrics: r.lyrics,
-                                       id: r.id, title: r.title, artist: r.artist, cover: r.cover)
-            enriching = false
-            runEnrichment()
-        }
+    /// Album, pochette et paroles trouvés pour un fichier envoyé : affiché sur la page du PC.
+    func enriched(_ file: String, _ r: TrackEnricher.Result) {
+        guard recent[file] != nil else { return }
+        recent[file] = Status(state: "ok", album: r.album, lyrics: r.lyrics,
+                              id: r.id, title: r.title, artist: r.artist, cover: r.cover)
     }
 
     private func recentJSON() -> Data {
@@ -532,4 +520,34 @@ const r=await put(`/api/artwork?ext=${k.ext}&album=${encodeURIComponent(b.a.id)}
 busy=false;$('#bulkSend').disabled=false;renderGrid()};
 </script></body></html>
 """#
+}
+
+
+// MARK: - Chaque import (Fichiers, dossier Platine ou Wi-Fi) : album, pochette et paroles trouvés tout seuls
+
+@MainActor
+final class ImportEnricher {
+    static let shared = ImportEnricher()
+    private var queue: [(file: String, id: UUID)] = []
+    private var running = false
+    private weak var library: Library?
+
+    func handle(_ added: [(file: String, id: UUID)], all: [String], library: Library) {
+        self.library = library
+        WifiTransfer.shared.imported(added, all: all)
+        queue += added
+        run()
+    }
+
+    private func run() {
+        guard !running, !queue.isEmpty, let library else { return }
+        running = true
+        let next = queue.removeFirst()
+        Task {
+            let r = await TrackEnricher.enrich(next.id, library: library)
+            WifiTransfer.shared.enriched(next.file, r)
+            running = false
+            run()
+        }
+    }
 }

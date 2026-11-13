@@ -33,6 +33,11 @@ struct RootView: View {
         }
         .task {
             if settings.autoImport { await library.scanInbox() }
+            // Chaque nouvel import est complété tout seul (album, pochette, paroles).
+            let lib = library
+            library.onImported = { added, all in
+                MainActor.assumeIsolated { ImportEnricher.shared.handle(added, all: all, library: lib) }
+            }
             // En arrière-plan : les paroles, l'album et la pochette qui manquent encore.
             Task { await TrackEnricher.fillLibrary(library) }
             // Les pochettes animées de l'écran verrouillé sont préparées pendant que l'app est ouverte
