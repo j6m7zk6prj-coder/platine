@@ -113,9 +113,9 @@ enum TrackEnricher {
     }
 
     static func findAlbum(title: String, artist: String, duration: Double) async -> Found? {
-        // Deezer d'abord (très complet, surtout pour le rap français), puis le catalogue Apple.
-        if let d = await deezer(title: title, artist: artist, duration: duration) { return d }
-        return await itunes(title: title, artist: artist, duration: duration)
+        // Le catalogue officiel d'Apple Music d'abord ; Deezer si Apple ne trouve pas le morceau.
+        if let a = await itunes(title: title, artist: artist, duration: duration) { return a }
+        return await deezer(title: title, artist: artist, duration: duration)
     }
 
     // MARK: Deezer (sans compte)
@@ -230,7 +230,7 @@ enum TrackEnricher {
             name = String(name.dropLast(suffix.count))
         }
         let year = Int((best.releaseDate ?? "").prefix(4)) ?? 0
-        let art = best.artworkUrl100.map { $0.replacingOccurrences(of: "100x100bb", with: "1000x1000bb") }
+        let art = best.artworkUrl100.map { $0.replacingOccurrences(of: "100x100bb", with: "1400x1400bb") }
         return Found(album: name, year: year, number: isSingle(best) ? 0 : (best.trackNumber ?? 0),
                      cover: art.flatMap(URL.init(string:)))
     }
