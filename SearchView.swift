@@ -38,7 +38,7 @@ struct SearchView: View {
         let songs = library.tracks.filter { $0.matches(query) || ($0.lyrics?.localizedCaseInsensitiveContains(query) ?? false) }
 
         if artists.isEmpty && albums.isEmpty && playlists.isEmpty && songs.isEmpty {
-            ContentUnavailableView.search(text: query)
+            ContentUnavailableView("Aucun résultat pour « \(query) »", systemImage: "magnifyingglass", description: Text("Vérifie l’orthographe ou essaie autre chose."))
                 .listRowBackground(Color.clear)
                 .listRowSeparator(.hidden)
         }

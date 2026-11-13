@@ -362,9 +362,9 @@ private struct ArtworkPage: View {
                 }
                 .onTapGesture { onTap() }
                 .gesture(
-                    MagnifyGesture()
+                    MagnificationGesture()
                         .onChanged { g in
-                            scale = min(5, max(1, baseScale * g.magnification))
+                            scale = min(5, max(1, baseScale * g))
                             zoomed = scale > 1.01
                         }
                         .onEnded { _ in

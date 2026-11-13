@@ -238,10 +238,8 @@ struct HomeView: View {
     private func shelf<C: View>(@ViewBuilder _ content: () -> C) -> some View {
         ScrollView(.horizontal) {
             LazyHStack(alignment: .top, spacing: 14) { content() }
-                .scrollTargetLayout()
                 .padding(.horizontal, 20)
         }
-        .scrollTargetBehavior(.viewAligned)
         .scrollIndicators(.hidden)
     }
 
@@ -261,10 +259,8 @@ struct HomeView: View {
                     .buttonStyle(PressStyle(circle: false))
                 }
             }
-            .scrollTargetLayout()
             .padding(.horizontal, 20)
         }
-        .scrollTargetBehavior(.viewAligned)
         .scrollIndicators(.hidden)
     }
 

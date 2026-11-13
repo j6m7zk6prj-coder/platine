@@ -197,7 +197,7 @@ struct NowPlayingView: View {
         ZStack {
             ArtworkView(track: t, cornerRadius: 12)
                 .id(t?.id)
-                .transition(.blurReplace)
+                .transition(.opacity)
         }
         .aspectRatio(1, contentMode: .fit)
         .matchedGeometryEffect(id: "artwork", in: artSpace)
@@ -546,11 +546,11 @@ struct VolumeBar: View {
     }
 }
 
-@MainActor @Observable
-final class VolumeModel {
-    var volume: Float = AVAudioSession.sharedInstance().outputVolume
-    @ObservationIgnored weak var slider: UISlider?
-    @ObservationIgnored private var observation: NSKeyValueObservation?
+@MainActor
+final class VolumeModel: ObservableObject {
+    @Published var volume: Float = AVAudioSession.sharedInstance().outputVolume
+    weak var slider: UISlider?
+    private var observation: NSKeyValueObservation?
 
     init() {
         observation = AVAudioSession.sharedInstance().observe(\.outputVolume, options: [.new]) { [weak self] _, change in

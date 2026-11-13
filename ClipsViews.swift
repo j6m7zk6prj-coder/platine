@@ -677,10 +677,8 @@ struct HomeClipSections: View {
                         importCard(width: videos.isEmpty ? 240 : 150, height: 135,
                                    text: videos.isEmpty ? "Importer un clip" : "Importer", asEdit: false)
                     }
-                    .scrollTargetLayout()
                     .padding(.horizontal, 20)
                 }
-                .scrollTargetBehavior(.viewAligned)
                 .scrollIndicators(.hidden)
             }
 
@@ -697,10 +695,8 @@ struct HomeClipSections: View {
                         }
                         importCard(width: 120, height: 213, text: edits.isEmpty ? "Importer un edit" : "Importer", asEdit: true)
                     }
-                    .scrollTargetLayout()
                     .padding(.horizontal, 20)
                 }
-                .scrollTargetBehavior(.viewAligned)
                 .scrollIndicators(.hidden)
             }
             }
