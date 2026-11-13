@@ -57,23 +57,22 @@ struct HomeItem: Codable, Identifiable, Hashable {
 
 /// L'ordre des rubriques de l'Accueil et l'ordre des artistes, gardés sur l'iPhone.
 @MainActor
-@Observable
-final class HomeLayout {
+final class HomeLayout: ObservableObject {
     static let shared = HomeLayout()
 
-    private(set) var items: [HomeItem] = HomeItem.defaults {
+    @Published private(set) var items: [HomeItem] = HomeItem.defaults {
         didSet { save() }
     }
     /// Tes artistes dans l'ordre choisi (les autres suivent, du plus écouté au moins écouté).
-    private(set) var artistOrder: [String] = [] {
+    @Published private(set) var artistOrder: [String] = [] {
         didSet { UserDefaults.standard.set(artistOrder, forKey: "homeArtistOrder") }
     }
     /// Artistes cachés de la rubrique « Tes artistes ».
-    private(set) var hiddenArtists: Set<String> = [] {
+    @Published private(set) var hiddenArtists: Set<String> = [] {
         didSet { UserDefaults.standard.set(Array(hiddenArtists), forKey: "homeHiddenArtists") }
     }
     /// Mode « modifier l'accueil » : les rubriques tremblent, on peut les déplacer ou les retirer.
-    var editing = false
+    @Published var editing = false
 
     init() {
         if let data = UserDefaults.standard.data(forKey: "homeLayout"),
@@ -148,7 +147,7 @@ struct EditableSection<Content: View>: View {
     @ViewBuilder var content: () -> Content
     @State private var wobble = false
     @State private var options = false
-    private var layout: HomeLayout { .shared }
+    @ObservedObject private var layout: HomeLayout = .shared
 
     var body: some View {
         let editing = layout.editing
@@ -209,7 +208,7 @@ struct EditableSection<Content: View>: View {
             // Le petit tremblement des icônes quand on range l'écran d'accueil.
             .rotationEffect(.degrees(editing ? (wobble ? 0.45 : -0.45) : 0))
             .animation(editing ? .easeInOut(duration: 0.13).repeatForever(autoreverses: true) : .default, value: wobble)
-            .onChange(of: editing, initial: true) { _, on in
+            .onChangeCompat(of: editing, initial: true) { _, on in
                 if on {
                     // Départ décalé pour que les rubriques ne tremblent pas toutes ensemble.
                     DispatchQueue.main.asyncAfter(deadline: .now() + Double.random(in: 0...0.12)) { wobble = true }
@@ -258,9 +257,9 @@ private struct HomeDropDelegate: DropDelegate {
 // MARK: - Ajouter une rubrique (la galerie, comme les widgets)
 
 struct HomeGallery: View {
-    @Environment(Library.self) private var library
+    @EnvironmentObject private var library: Library
     @Environment(\.dismiss) private var dismiss
-    private var layout: HomeLayout { .shared }
+    @ObservedObject private var layout: HomeLayout = .shared
 
     var body: some View {
         NavigationStack {
@@ -322,9 +321,9 @@ struct HomeGallery: View {
 private struct PinPicker: View {
     let kind: HomeItem.Kind
     var done: () -> Void
-    @Environment(Library.self) private var library
+    @EnvironmentObject private var library: Library
     @State private var query = ""
-    private var layout: HomeLayout { .shared }
+    @ObservedObject private var layout: HomeLayout = .shared
 
     var body: some View {
         List {
@@ -376,11 +375,11 @@ private struct PinPicker: View {
 
 /// « Tes artistes » : lesquels montrer, et dans quel ordre.
 struct ArtistOrderSheet: View {
-    @Environment(Library.self) private var library
+    @EnvironmentObject private var library: Library
     @Environment(\.dismiss) private var dismiss
     @State private var order: [String] = []
     @State private var hidden: Set<String> = []
-    private var layout: HomeLayout { .shared }
+    @ObservedObject private var layout: HomeLayout = .shared
 
     var body: some View {
         NavigationStack {
@@ -435,9 +434,9 @@ struct ArtistOrderSheet: View {
 
 /// L'Accueil en mode « tout ranger » : une liste qu'on réordonne au doigt.
 struct HomeOrganizer: View {
-    @Environment(Library.self) private var library
+    @EnvironmentObject private var library: Library
     @Environment(\.dismiss) private var dismiss
-    private var layout: HomeLayout { .shared }
+    @ObservedObject private var layout: HomeLayout = .shared
 
     var body: some View {
         NavigationStack {

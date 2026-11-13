@@ -38,7 +38,7 @@ extension View {
 struct GlassStyle<S: InsettableShape>: ViewModifier {
     let shape: S
     var interactive = false
-    @Environment(AppSettings.self) private var settings: AppSettings?
+    @Environment(\.optionalAppSettings) private var settings: AppSettings?
 
     func body(content: Content) -> some View {
         let enabled = settings?.liquidGlass ?? true
@@ -103,8 +103,8 @@ struct ArtworkView: View {
     var cornerRadius: CGFloat = 12
     /// Fin liseré autour de la pochette (retiré quand elle prend tout l'écran).
     var bordered = true
-    @Environment(Library.self) private var library
-    @Environment(AppSettings.self) private var settings
+    @EnvironmentObject private var library: Library
+    @EnvironmentObject private var settings: AppSettings
 
     var body: some View {
         // Réglage « Pochettes carrées » : coins presque droits.
@@ -356,8 +356,8 @@ struct AmbientBackground: View {
     var dim: Double = 0.3
     /// Écran « En lecture » : reste sombre même avec un thème clair.
     var forceDark = false
-    @Environment(Library.self) private var library
-    @Environment(AppSettings.self) private var settings
+    @EnvironmentObject private var library: Library
+    @EnvironmentObject private var settings: AppSettings
     @State private var drift = false
 
     private var theme: AppTheme {
@@ -428,7 +428,7 @@ struct AmbientBackground: View {
             guard settings.backgroundMotion else { return }
             withAnimation(.easeInOut(duration: 17).repeatForever(autoreverses: true)) { drift = true }
         }
-        .onChange(of: settings.backgroundMotion) { _, on in
+        .onChangeCompat(of: settings.backgroundMotion) { _, on in
             withAnimation(on ? .easeInOut(duration: 17).repeatForever(autoreverses: true) : .easeInOut(duration: 1)) { drift = on }
         }
     }
@@ -437,7 +437,7 @@ struct AmbientBackground: View {
 // MARK: - Barre de progression façon Apple
 
 struct Scrubber: View {
-    @Environment(Player.self) private var player
+    @EnvironmentObject private var player: Player
     @State private var dragValue: Double?
     /// Position du morceau au moment où on a attrapé le point.
     @State private var grabStart: Double?
@@ -485,7 +485,7 @@ struct Scrubber: View {
             }
             .frame(height: 28)
             .scaleEffect(x: active ? 1.03 : 1, y: 1)
-            .sensoryFeedback(.selection, trigger: active)
+            .haptic(.selection, trigger: active)
 
             HStack {
                 Text(formatTime(value))

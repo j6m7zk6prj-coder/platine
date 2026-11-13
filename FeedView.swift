@@ -21,12 +21,11 @@ struct FeedItem: Identifiable, Equatable {
 /// Comme TikTok : la page suivante (et la précédente) sont déjà chargées et calées au bon endroit,
 /// en silence ; en arrivant dessus, le son part tout de suite.
 @MainActor
-@Observable
-final class FeedPreview {
-    private(set) var playing = false
-    @ObservationIgnored private var slots: [UUID: Slot] = [:]
-    @ObservationIgnored private var current: UUID?
-    @ObservationIgnored private var fadeTask: Task<Void, Never>?
+final class FeedPreview: ObservableObject {
+    @Published private(set) var playing = false
+    private var slots: [UUID: Slot] = [:]
+    private var current: UUID?
+    private var fadeTask: Task<Void, Never>?
     /// Durée d'un extrait avant qu'il reprenne au début.
     static let length = 30.0
 
@@ -148,12 +147,12 @@ final class FeedPreview {
 }
 
 struct FeedView: View {
-    @Environment(Library.self) private var library
-    @Environment(Player.self) private var player
-    @Environment(UIState.self) private var ui
+    @EnvironmentObject private var library: Library
+    @EnvironmentObject private var player: Player
+    @EnvironmentObject private var ui: UIState
     @State private var items: [FeedItem] = []
     @State private var position: UUID?
-    @State private var preview = FeedPreview()
+    @StateObject private var preview = FeedPreview()
     @State private var muted = false
     @State private var lyricsOnly = false
     /// Morceaux dont on a déjà cherché les paroles synchronisées (une seule fois chacun).
@@ -167,21 +166,14 @@ struct FeedView: View {
                                        description: Text("Importe de la musique : ses extraits apparaîtront ici."))
                     .foregroundStyle(.white)
             } else {
-                ScrollView(.vertical) {
-                    LazyVStack(spacing: 0) {
-                        ForEach(items) { item in
-                            if let t = library.track(item.trackID) {
-                                FeedPage(item: item, track: t, active: item.id == position, preview: preview)
-                                    .containerRelativeFrame([.horizontal, .vertical])
-                                    .id(item.id)
-                            }
-                        }
+                // iOS 16 : pages verticales (le défilement « paging » n'existe qu'à partir d'iOS 17).
+                VerticalPager(items: items, selection: $position) { item in
+                    if let t = library.track(item.trackID) {
+                        FeedPage(item: item, track: t, active: item.id == position, preview: preview)
+                    } else {
+                        Color.black
                     }
-                    .scrollTargetLayout()
                 }
-                .scrollTargetBehavior(.paging)
-                .scrollPosition(id: $position)
-                .scrollIndicators(.hidden)
                 .ignoresSafeArea()
             }
 
@@ -220,7 +212,7 @@ struct FeedView: View {
             playCurrent()
         }
         .onDisappear { preview.pause() }
-        .onChange(of: position) { _, _ in
+        .onChangeCompat(of: position) { _, _ in
             playCurrent()
             prefetch()
             findSyncedLyrics()
@@ -229,10 +221,10 @@ struct FeedView: View {
                 items.append(contentsOf: batch())
             }
         }
-        .onChange(of: player.isPlaying) { _, playing in
+        .onChangeCompat(of: player.isPlaying) { _, playing in
             if playing { preview.pause() }
         }
-        .sensoryFeedback(.selection, trigger: position)
+        .haptic(.selection, trigger: position)
     }
 
     /// Sans paroles synchronisées, on les cherche (LRCLIB) pour la page affichée :
@@ -449,10 +441,10 @@ private struct FeedPage: View {
     let item: FeedItem
     let track: Track
     let active: Bool
-    let preview: FeedPreview
-    @Environment(Library.self) private var library
-    @Environment(UIState.self) private var ui
-    @Environment(AppSettings.self) private var settings
+    @ObservedObject var preview: FeedPreview
+    @EnvironmentObject private var library: Library
+    @EnvironmentObject private var ui: UIState
+    @EnvironmentObject private var settings: AppSettings
     @State private var liked = false
     @State private var burst = 0
     @State private var art: FeedArtCache.Art?
@@ -608,7 +600,7 @@ private struct FeedLyrics: View {
     let lines: [LyricLine]
     let start: Double
     let active: Bool
-    let preview: FeedPreview
+    @ObservedObject var preview: FeedPreview
     @State private var current = 0
     @State private var heights: [Int: CGFloat] = [:]
 
@@ -723,7 +715,7 @@ private struct HeartBurst: View {
             .scaleEffect(shown ? 1.1 : 0.4)
             .opacity(shown ? 1 : 0)
             .allowsHitTesting(false)
-            .onChange(of: trigger) { _, _ in
+            .onChangeCompat(of: trigger) { _, _ in
                 withAnimation(.spring(response: 0.3, dampingFraction: 0.55)) { shown = true }
                 Task {
                     try? await Task.sleep(for: .milliseconds(650))

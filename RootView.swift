@@ -3,16 +3,15 @@ import UniformTypeIdentifiers
 
 /// Structure de l'app : onglets, mini-lecteur, feuilles partagées.
 struct RootView: View {
-    @Environment(Library.self) private var library
-    @Environment(Player.self) private var player
-    @Environment(AppSettings.self) private var settings
-    @Environment(UIState.self) private var ui
+    @EnvironmentObject private var library: Library
+    @EnvironmentObject private var player: Player
+    @EnvironmentObject private var settings: AppSettings
+    @EnvironmentObject private var ui: UIState
     @Environment(\.scenePhase) private var phase
     /// Le mini-lecteur s'agrandit en lecteur plein écran (et s'y referme en glissant vers le bas).
     @Namespace private var playerZoom
 
     var body: some View {
-        @Bindable var ui = ui
         tabs(selection: $ui.selectedTab)
         .overlay(alignment: .top) { Banner() }
         .modifier(PlayerPresenter(isPresented: $ui.showPlayer, namespace: playerZoom, sourceID: "miniPlayer-\(ui.selectedTab)"))
@@ -53,12 +52,12 @@ struct RootView: View {
                 }
             }
         }
-        .onChange(of: phase) { _, newPhase in
+        .onChangeCompat(of: phase) { _, newPhase in
             if newPhase == .active, settings.autoImport { Task { await library.scanInbox() } }
             // De retour dans l'app : on prépare les pochettes animées de l'écran verrouillé qui manquent.
             if newPhase == .active { player.warmUpcomingLockArtwork() }
         }
-        .onChange(of: library.artworkRevision) { _, _ in
+        .onChangeCompat(of: library.artworkRevision) { _, _ in
             player.updateNowPlaying()
         }
     }
@@ -121,9 +120,9 @@ extension RootView {
 @available(iOS 26.0, *)
 struct AccessoryPlayer: View {
     var onOpen: () -> Void
-    @Environment(Player.self) private var player
-    @Environment(Library.self) private var library
-    @Environment(AppSettings.self) private var settings
+    @EnvironmentObject private var player: Player
+    @EnvironmentObject private var library: Library
+    @EnvironmentObject private var settings: AppSettings
     @Environment(\.tabViewBottomAccessoryPlacement) private var placement
     @State private var dragY: CGFloat = 0
 
@@ -158,7 +157,7 @@ struct AccessoryPlayer: View {
             Button { player.togglePlay() } label: {
                 Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
                     .font(.system(size: 19))
-                    .contentTransition(.symbolEffect(.replace))
+                    .contentTransition(.opacity)
                     .frame(width: 36, height: 36)
             }
             .disabled(t == nil)
@@ -195,10 +194,10 @@ struct AccessoryPlayer: View {
                     withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { dragY = 0 }
                 }
         )
-        .sensoryFeedback(trigger: player.currentID == nil) { _, stopped in
+        .haptic(trigger: player.currentID == nil) { _, stopped in
             stopped && settings.haptics ? .impact(weight: .medium) : nil
         }
-        .animation(.smooth(duration: 0.3), value: t?.id)
+        .animation(.easeInOut(duration: 0.3), value: t?.id)
     }
 }
 #endif
@@ -206,8 +205,8 @@ struct AccessoryPlayer: View {
 /// Place le mini-lecteur au-dessus de la barre d'onglets.
 struct MiniPlayerInset: ViewModifier {
     var tab = 0
-    @Environment(UIState.self) private var ui
-    @Environment(Player.self) private var player
+    @EnvironmentObject private var ui: UIState
+    @EnvironmentObject private var player: Player
 
     func body(content: Content) -> some View {
         content.safeAreaInset(edge: .bottom) {
@@ -221,7 +220,7 @@ struct MiniPlayerInset: ViewModifier {
 
 /// Bandeau de confirmation en haut de l'écran.
 struct Banner: View {
-    @Environment(Library.self) private var library
+    @EnvironmentObject private var library: Library
 
     var body: some View {
         Group {

@@ -4,40 +4,38 @@ import ImageIO
 import CoreImage
 import UIKit
 import SwiftUI
-import Observation
 
 /// Bibliothèque musicale : fichiers copiés dans l'app, métadonnées, pochettes, playlists.
 @MainActor
-@Observable
-final class Library {
-    private(set) var tracks: [Track] = []
-    private(set) var playlists: [Playlist] = []
+final class Library: ObservableObject {
+    @Published private(set) var tracks: [Track] = []
+    @Published private(set) var playlists: [Playlist] = []
     /// Photo choisie pour un artiste : identifiant de l'artiste → nom du fichier image.
-    private(set) var artistImages: [String: String] = [:]
+    @Published private(set) var artistImages: [String: String] = [:]
     /// Format choisi pour chaque album dans la Collection : identifiant de l'album → « cd » ou « cassette ».
-    private(set) var albumFormats: [String: String] = [:]
+    @Published private(set) var albumFormats: [String: String] = [:]
     /// Stickers holographiques posés sur chaque album : identifiant de l'album → stickers.
-    private(set) var albumStickers: [String: [String]] = [:]
+    @Published private(set) var albumStickers: [String: [String]] = [:]
     /// Stickers faits à partir de tes images.
-    private(set) var customStickers: [CustomSticker] = []
+    @Published private(set) var customStickers: [CustomSticker] = []
     /// Où chaque sticker est collé : album → sticker → position.
-    private(set) var stickerPlacements: [String: [String: StickerPlacement]] = [:]
+    @Published private(set) var stickerPlacements: [String: [String: StickerPlacement]] = [:]
     /// Tes images pour le dos, la tranche et le disque : « genre|clé » → fichier.
-    private(set) var extraImages: [String: String] = [:]
+    @Published private(set) var extraImages: [String: String] = [:]
     /// Pochette officielle de chaque album : nom du fichier et type (image, GIF, vidéo).
-    private(set) var albumCovers: [String: AlbumCoverFile] = [:]
+    @Published private(set) var albumCovers: [String: AlbumCoverFile] = [:]
     /// Ajoute aussi les stickers gagnés automatiquement (or, platine, favori, nouveau).
-    var autoStickers: Bool = UserDefaults.standard.bool(forKey: "autoStickers") {
+    @Published var autoStickers: Bool = UserDefaults.standard.bool(forKey: "autoStickers") {
         didSet { UserDefaults.standard.set(autoStickers, forKey: "autoStickers") }
     }
-    var isImporting = false
-    var message: String?
+    @Published var isImporting = false
+    @Published var message: String?
     /// Change à chaque modification de pochette (sert à rafraîchir l'écran verrouillé).
-    private(set) var artworkRevision = 0
+    @Published private(set) var artworkRevision = 0
 
-    @ObservationIgnored private var positions: [UUID: Int] = [:]
-    @ObservationIgnored private let images = NSCache<NSString, UIImage>()
-    @ObservationIgnored private var palettes: [String: [Color]] = [:]
+    private var positions: [UUID: Int] = [:]
+    private let images = NSCache<NSString, UIImage>()
+    private var palettes: [String: [Color]] = [:]
 
     // Stockage interne, invisible dans l'app Fichiers.
     static let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -147,7 +145,7 @@ final class Library {
     // MARK: Albums exposés dans la Collection
 
     /// Albums que tu as cochés pour la Collection. Par défaut, aucun : c'est toi qui choisis.
-    private(set) var shownInCollection: Set<String> =
+    @Published private(set) var shownInCollection: Set<String> =
         Set(UserDefaults.standard.stringArray(forKey: "shownInCollection") ?? [])
 
     /// Les albums rangés dans la Collection (ceux que tu as cochés).
@@ -174,7 +172,7 @@ final class Library {
     }
 
     /// Prix que tu as choisis (sinon un prix de disquaire est proposé).
-    private(set) var customPrices: [String: Double] =
+    @Published private(set) var customPrices: [String: Double] =
         (UserDefaults.standard.dictionary(forKey: "customPrices") as? [String: Double]) ?? [:]
 
     func setPrice(_ price: Double?, for albumID: String) {
@@ -184,7 +182,7 @@ final class Library {
     }
 
     /// Albums dont tu as déjà retiré le blister (le film plastique) dans la Collection.
-    private(set) var unwrappedAlbums: Set<String> =
+    @Published private(set) var unwrappedAlbums: Set<String> =
         Set(UserDefaults.standard.stringArray(forKey: "unwrappedAlbums") ?? [])
 
     func isSealed(_ albumID: String) -> Bool { !unwrappedAlbums.contains(albumID) }
@@ -569,7 +567,7 @@ final class Library {
 
     /// Importe ce qui a été déposé dans le dossier « Platine » (Fichiers ou iTunes sur PC).
     /// Prévenu après chaque import du dossier Platine : morceaux ajoutés, et tous les fichiers traités.
-    @ObservationIgnored var onImported: (([(file: String, id: UUID)], [String]) -> Void)?
+    var onImported: (([(file: String, id: UUID)], [String]) -> Void)?
 
     /// Importe ce qui a été déposé dans le dossier Platine.
     /// Renvoie, pour chaque morceau ajouté, le nom du fichier d'origine et le morceau créé.

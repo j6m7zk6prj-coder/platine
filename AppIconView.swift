@@ -34,7 +34,7 @@ struct AppIconChoice: Identifiable, Equatable {
 
 /// Réglages → Icône de l'app.
 struct AppIconPicker: View {
-    @Environment(Library.self) private var library
+    @EnvironmentObject private var library: Library
     @State private var current: String? = UIApplication.shared.alternateIconName
     @State private var changing = false
 

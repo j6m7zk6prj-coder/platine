@@ -1,35 +1,33 @@
 import AVFoundation
 import MediaPlayer
-import Observation
 import SwiftUI
 import UIKit
 
 /// Lecteur audio : file d'attente, fondus, vitesse, minuterie, écran verrouillé, AirPods.
 @MainActor
-@Observable
-final class Player {
+final class Player: ObservableObject {
     enum RepeatMode: Int { case off, all, one }
 
     /// Ordre de lecture actuel (mélangé si l'aléatoire est actif).
-    private(set) var queue: [UUID] = []
-    private(set) var index: Int = 0
+    @Published private(set) var queue: [UUID] = []
+    @Published private(set) var index: Int = 0
     /// Morceaux ajoutés avec « Lire ensuite » / « Lire plus tard ».
-    private(set) var upNext: [UUID] = []
-    private(set) var currentID: UUID?
+    @Published private(set) var upNext: [UUID] = []
+    @Published private(set) var currentID: UUID?
     /// Intention de lecture (change tout de suite, même pendant un fondu).
-    private(set) var isPlaying = false
-    var currentTime: Double = 0
-    private(set) var duration: Double = 0
-    var isScrubbing = false
-    private(set) var shuffle: Bool = UserDefaults.standard.bool(forKey: "shuffle")
-    var repeatMode: RepeatMode = RepeatMode(rawValue: UserDefaults.standard.integer(forKey: "repeat")) ?? .off {
+    @Published private(set) var isPlaying = false
+    @Published var currentTime: Double = 0
+    @Published private(set) var duration: Double = 0
+    @Published var isScrubbing = false
+    @Published private(set) var shuffle: Bool = UserDefaults.standard.bool(forKey: "shuffle")
+    @Published var repeatMode: RepeatMode = RepeatMode(rawValue: UserDefaults.standard.integer(forKey: "repeat")) ?? .off {
         didSet { UserDefaults.standard.set(repeatMode.rawValue, forKey: "repeat") }
     }
     /// Effet d'écoute (slowed, sped up, réverbe…). Le fichier n'est jamais modifié.
-    private(set) var effect: SoundEffect = SoundEffect(rawValue: UserDefaults.standard.string(forKey: "soundEffect") ?? "") ?? .original
+    @Published private(set) var effect: SoundEffect = SoundEffect(rawValue: UserDefaults.standard.string(forKey: "soundEffect") ?? "") ?? .original
     /// Intensité de la réverbe de l'effet (0,5 = réglage d'origine).
-    private(set) var effectIntensity: Double = UserDefaults.standard.object(forKey: "effectIntensity") as? Double ?? 0.5
-    @ObservationIgnored private var rateTask: Task<Void, Never>?
+    @Published private(set) var effectIntensity: Double = UserDefaults.standard.object(forKey: "effectIntensity") as? Double ?? 0.5
+    private var rateTask: Task<Void, Never>?
 
     /// Position exacte, lue à l'instant même (pour les animations image par image, comme les paroles).
     var liveTime: Double {
@@ -76,8 +74,8 @@ final class Player {
             }
         }
     }
-    private(set) var sleepEndDate: Date?
-    private(set) var sleepAtTrackEnd = false
+    @Published private(set) var sleepEndDate: Date?
+    @Published private(set) var sleepAtTrackEnd = false
 
     var sleepActive: Bool { sleepEndDate != nil || sleepAtTrackEnd }
 
@@ -88,14 +86,14 @@ final class Player {
 
     private let library: Library
     private let settings: AppSettings
-    @ObservationIgnored private let player = AVPlayer()
-    @ObservationIgnored private var originalQueue: [UUID] = []
-    @ObservationIgnored private var timeObserver: Any?
-    @ObservationIgnored private var observers: [NSObjectProtocol] = []
-    @ObservationIgnored private var fadeTask: Task<Void, Never>?
-    @ObservationIgnored private var sleepTask: Task<Void, Never>?
-    @ObservationIgnored private var manualFade = false
-    @ObservationIgnored private var resumeAfterInterruption = false
+    private let player = AVPlayer()
+    private var originalQueue: [UUID] = []
+    private var timeObserver: Any?
+    private var observers: [NSObjectProtocol] = []
+    private var fadeTask: Task<Void, Never>?
+    private var sleepTask: Task<Void, Never>?
+    private var manualFade = false
+    private var resumeAfterInterruption = false
 
     init(library: Library, settings: AppSettings) {
         self.library = library

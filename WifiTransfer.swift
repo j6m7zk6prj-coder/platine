@@ -7,26 +7,25 @@ import UIKit
 /// Le serveur de l'envoi par Wi‑Fi, côté app. Il reste allumé tant que Platine est ouverte
 /// (même si tu quittes l'écran), et se rallume tout seul quand tu reviens dans l'app.
 @MainActor
-@Observable
-final class WifiTransfer {
+final class WifiTransfer: ObservableObject {
     static let shared = WifiTransfer()
     static let port: UInt16 = 8080
 
-    private(set) var enabled = false
-    private(set) var running = false
-    private(set) var address: String?
-    private(set) var received = 0
-    private(set) var artworks = 0
-    private(set) var currentFile: String?
-    private(set) var failed: String?
+    @Published private(set) var enabled = false
+    @Published private(set) var running = false
+    @Published private(set) var address: String?
+    @Published private(set) var received = 0
+    @Published private(set) var artworks = 0
+    @Published private(set) var currentFile: String?
+    @Published private(set) var failed: String?
 
-    @ObservationIgnored private let server = WifiServer()
-    @ObservationIgnored private var scanTask: Task<Void, Never>?
-    @ObservationIgnored private var scanAgain = false
-    @ObservationIgnored private weak var library: Library?
-    @ObservationIgnored private var albumIndex: [String: AlbumInfo] = [:]
-    @ObservationIgnored private var observers: [NSObjectProtocol] = []
-    @ObservationIgnored private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
+    private let server = WifiServer()
+    private var scanTask: Task<Void, Never>?
+    private var scanAgain = false
+    private weak var library: Library?
+    private var albumIndex: [String: AlbumInfo] = [:]
+    private var observers: [NSObjectProtocol] = []
+    private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
     /// Suivi de chaque fichier envoyé, affiché sur la page du PC.
     struct Status: Encodable {
         var state: String
@@ -37,9 +36,9 @@ final class WifiTransfer {
         var artist: String?
         var cover: Bool?
     }
-    @ObservationIgnored private var recent: [String: Status] = [:]
-    @ObservationIgnored private var enrichQueue: [(file: String, id: UUID)] = []
-    @ObservationIgnored private var enriching = false
+    private var recent: [String: Status] = [:]
+    private var enrichQueue: [(file: String, id: UUID)] = []
+    private var enriching = false
 
     private init() {
         let c = NotificationCenter.default
@@ -253,9 +252,9 @@ final class WifiTransfer {
 // MARK: - L'écran dans l'app
 
 struct WifiTransferView: View {
-    @Environment(Library.self) private var library
+    @EnvironmentObject private var library: Library
     @State private var startCount = 0
-    private var transfer: WifiTransfer { WifiTransfer.shared }
+    @ObservedObject private var transfer: WifiTransfer = .shared
 
     var body: some View {
         List {
@@ -264,7 +263,7 @@ struct WifiTransferView: View {
                     Image(systemName: transfer.running ? "wifi" : "wifi.slash")
                         .font(.system(size: 46, weight: .semibold))
                         .foregroundStyle(transfer.running ? AnyShapeStyle(TintShapeStyle()) : AnyShapeStyle(HierarchicalShapeStyle.secondary))
-                        .symbolEffect(.variableColor.iterative, isActive: transfer.running && transfer.currentFile != nil)
+                        
                     if !transfer.enabled {
                         Text("Envoi arrêté").font(.headline)
                     } else if let address = transfer.address {

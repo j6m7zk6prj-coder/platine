@@ -2,8 +2,8 @@ import SwiftUI
 
 /// File d'attente : le morceau en cours, « À suivre » et la suite.
 struct QueueView: View {
-    @Environment(Player.self) private var player
-    @Environment(Library.self) private var library
+    @EnvironmentObject private var player: Player
+    @EnvironmentObject private var library: Library
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -67,7 +67,7 @@ struct QueueView: View {
             .navigationTitle("File d’attente")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) { EditButton() }
+                ToolbarItem(placement: .navigationBarLeading) { EditButton() }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("OK") { dismiss() }.fontWeight(.semibold)
                 }

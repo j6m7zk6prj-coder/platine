@@ -2,8 +2,8 @@ import SwiftUI
 
 /// Recherche dans toute la bibliothèque, paroles comprises.
 struct SearchView: View {
-    @Environment(Library.self) private var library
-    @Environment(Player.self) private var player
+    @EnvironmentObject private var library: Library
+    @EnvironmentObject private var player: Player
     @State private var query = ""
 
     var body: some View {

@@ -4,7 +4,7 @@ import UniformTypeIdentifiers
 /// Modifier le titre, l'artiste, l'album, le numéro, l'année et les paroles d'un morceau.
 struct TrackInfoEditor: View {
     let trackID: UUID
-    @Environment(Library.self) private var library
+    @EnvironmentObject private var library: Library
     @Environment(\.dismiss) private var dismiss
     @State private var title = ""
     @State private var artist = ""
@@ -143,7 +143,7 @@ struct TrackInfoEditor: View {
 /// Photo ronde d'un artiste : celle que tu as choisie, sinon la pochette d'un de ses morceaux.
 struct ArtistAvatar: View {
     let artist: ArtistInfo
-    @Environment(Library.self) private var library
+    @EnvironmentObject private var library: Library
 
     var body: some View {
         Color.clear

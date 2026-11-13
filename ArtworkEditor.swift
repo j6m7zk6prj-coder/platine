@@ -23,7 +23,7 @@ struct ArtworkEditor: View {
     let trackID: UUID
     /// Rempli : on change la pochette officielle de l'album (chaque morceau garde la sienne).
     var albumID: String? = nil
-    @Environment(Library.self) private var library
+    @EnvironmentObject private var library: Library
     @Environment(\.dismiss) private var dismiss
     @State private var pickerItem: PhotosPickerItem?
     @State private var showFiles = false
@@ -50,7 +50,7 @@ struct ArtworkEditor: View {
         }
         .presentationDragIndicator(.visible)
         .presentationBackground(.black)
-        .onChange(of: pickerItem) { _, item in
+        .onChangeCompat(of: pickerItem) { _, item in
             guard let item else { return }
             Task { await loadPicked(item) }
         }
@@ -80,7 +80,7 @@ struct ArtworkEditor: View {
                     .shadow(color: .black.opacity(0.4), radius: 26, y: 16)
                     .padding(.horizontal, 36)
                     .padding(.top, 12)
-                    .animation(.smooth(duration: 0.5), value: library.artworkURL(t))
+                    .animation(.easeInOut(duration: 0.5), value: library.artworkURL(t))
 
                 VStack(spacing: 4) {
                     Text(album?.title ?? t.title).font(.headline).lineLimit(1)
@@ -126,8 +126,8 @@ struct ArtworkEditor: View {
                 }
                 .buttonStyle(PressStyle(circle: false))
                 .disabled(working)
-                .animation(.smooth, value: t.customArtwork)
-                .animation(.smooth, value: t.motionArtwork)
+                .animation(.easeInOut(duration: 0.35), value: t.customArtwork)
+                .animation(.easeInOut(duration: 0.35), value: t.motionArtwork)
 
                 if albumID != nil {
                     Text("Seule la pochette de l’album change (bibliothèque, page de l’album). Chaque morceau garde la sienne dans le lecteur.")
@@ -180,7 +180,7 @@ struct ArtworkEditor: View {
         HStack(spacing: 8) {
             Image(systemName: on ? "checkmark.circle.fill" : symbol)
                 .foregroundStyle(on ? Color.green : .white.opacity(0.45))
-                .contentTransition(.symbolEffect(.replace))
+                .contentTransition(.opacity)
             VStack(alignment: .leading, spacing: 1) {
                 Text(title).font(.subheadline.weight(.semibold))
                 Text(on ? "En place" : "Aucune").font(.caption).foregroundStyle(.white.opacity(0.55))

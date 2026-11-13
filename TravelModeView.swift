@@ -3,8 +3,8 @@ import SwiftUI
 /// Mode voyage : tout préparer pour écouter sans connexion (paroles, pochettes animées),
 /// et savoir combien de jours il reste avant de devoir renouveler l'app.
 struct TravelModeView: View {
-    @Environment(Library.self) private var library
-    @Environment(AppSettings.self) private var settings
+    @EnvironmentObject private var library: Library
+    @EnvironmentObject private var settings: AppSettings
     @State private var preparing = false
     @State private var done = 0
     @State private var total = 0
@@ -32,7 +32,7 @@ struct TravelModeView: View {
                     Image(systemName: "airplane.departure")
                         .font(.system(size: 42, weight: .semibold))
                         .foregroundStyle(.tint)
-                        .symbolEffect(.bounce, value: finished)
+                        
                     Text("Mode voyage").font(.title2.bold())
                     Text("Tout est prêt pour écouter sans connexion")
                         .font(.subheadline)

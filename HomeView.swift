@@ -4,13 +4,13 @@ import SwiftUI
 
 /// La page d'accueil : reprendre l'écoute, tes mix, écoutés récemment, ajouts récents et tes artistes.
 struct HomeView: View {
-    @Environment(Library.self) private var library
-    @Environment(Player.self) private var player
-    @Environment(UIState.self) private var ui
+    @EnvironmentObject private var library: Library
+    @EnvironmentObject private var player: Player
+    @EnvironmentObject private var ui: UIState
     @State private var showSettings = false
     @State private var showGallery = false
     @State private var showOrganizer = false
-    private var layout: HomeLayout { .shared }
+    @ObservedObject private var layout: HomeLayout = .shared
 
     private var currentTrack: Track? { player.currentID.flatMap { library.track($0) } }
 
@@ -36,7 +36,7 @@ struct HomeView: View {
         }
         .navigationTitle("Accueil")
         .toolbar {
-            ToolbarItem(placement: .topBarLeading) {
+            ToolbarItem(placement: .navigationBarLeading) {
                 Button {
                     withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) { layout.editing.toggle() }
                 } label: {
@@ -45,7 +45,7 @@ struct HomeView: View {
                 .disabled(library.tracks.isEmpty)
             }
             // Comme Musique : le profil en haut à droite ouvre les réglages.
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItem(placement: .navigationBarTrailing) {
                 Button { showSettings = true } label: {
                     Image(systemName: "person.crop.circle.fill")
                         .font(.title2)
@@ -340,8 +340,8 @@ struct HomeSection<Content: View, Destination: View>: View {
 /// Grande carte « Reprendre l'écoute » : la pochette, ses couleurs en fond, et Lire / Aléatoire.
 private struct HeroAlbumCard: View {
     let album: AlbumInfo
-    @Environment(Library.self) private var library
-    @Environment(Player.self) private var player
+    @EnvironmentObject private var library: Library
+    @EnvironmentObject private var player: Player
 
     var body: some View {
         let colors = library.palette(for: album.cover)
@@ -415,7 +415,7 @@ struct HomeMix: Identifiable {
 /// Carte d'un mix : dégradé, trois pochettes empilées, lecture aléatoire au toucher.
 private struct MixCard: View {
     let mix: HomeMix
-    @Environment(Player.self) private var player
+    @EnvironmentObject private var player: Player
 
     var body: some View {
         Button { player.play(ids: mix.tracks.map(\.id), shuffled: true) } label: {
@@ -494,7 +494,7 @@ private struct PlaylistCard: View {
 
 /// « Nouvelle playlist » au bout de la rangée.
 private struct NewPlaylistCard: View {
-    @Environment(Library.self) private var library
+    @EnvironmentObject private var library: Library
     @State private var asking = false
     @State private var name = ""
 
@@ -520,7 +520,7 @@ private struct NewPlaylistCard: View {
 /// Un artiste épinglé : sa photo en grand, Lecture / Aléatoire, puis ses albums.
 private struct PinnedArtistSection: View {
     let artist: ArtistInfo
-    @Environment(Player.self) private var player
+    @EnvironmentObject private var player: Player
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -574,8 +574,8 @@ private struct PinnedArtistSection: View {
 /// Une playlist épinglée : sa mosaïque, Lecture / Aléatoire et ses premiers titres.
 private struct PinnedPlaylistSection: View {
     let playlist: Playlist
-    @Environment(Library.self) private var library
-    @Environment(Player.self) private var player
+    @EnvironmentObject private var library: Library
+    @EnvironmentObject private var player: Player
 
     var body: some View {
         let tracks = library.tracks(playlist.trackIDs)

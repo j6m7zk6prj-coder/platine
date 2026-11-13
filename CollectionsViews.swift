@@ -5,13 +5,12 @@ import PhotosUI
 
 struct SongsView: View {
     var favoritesOnly = false
-    @Environment(Library.self) private var library
-    @Environment(Player.self) private var player
-    @Environment(AppSettings.self) private var settings
+    @EnvironmentObject private var library: Library
+    @EnvironmentObject private var player: Player
+    @EnvironmentObject private var settings: AppSettings
     @State private var query = ""
 
     var body: some View {
-        @Bindable var settings = settings
         let base = favoritesOnly ? library.favorites : library.tracks
         let sorted = library.sorted(base, by: settings.songSort)
         let shown = query.isEmpty ? sorted : sorted.filter { $0.matches(query) }
@@ -33,7 +32,7 @@ struct SongsView: View {
         .searchable(text: $query, prompt: "Rechercher")
         .navigationTitle(favoritesOnly ? "Favoris" : "Morceaux")
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItem(placement: .navigationBarTrailing) {
                 Menu {
                     Picker("Trier par", selection: $settings.songSort) {
                         ForEach(SongSort.allCases) { Text($0.label).tag($0) }
@@ -51,8 +50,8 @@ struct SongsView: View {
 // MARK: - Albums
 
 struct AlbumsView: View {
-    @Environment(Library.self) private var library
-    @Environment(Player.self) private var player
+    @EnvironmentObject private var library: Library
+    @EnvironmentObject private var player: Player
     @State private var query = ""
 
     var body: some View {
@@ -78,10 +77,10 @@ struct AlbumsView: View {
 
 struct AlbumDetailView: View {
     let albumID: String
-    @Environment(Library.self) private var library
-    @Environment(Player.self) private var player
-    @Environment(UIState.self) private var ui
-    @Environment(AppSettings.self) private var settings
+    @EnvironmentObject private var library: Library
+    @EnvironmentObject private var player: Player
+    @EnvironmentObject private var ui: UIState
+    @EnvironmentObject private var settings: AppSettings
     /// Position de l'en-tête à l'écran (pour faire suivre la grande pochette au défilement).
     @State private var albumCoverEditing = false
     @State private var headerY: CGFloat = 0
@@ -159,21 +158,21 @@ struct AlbumDetailView: View {
             .plainList()
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .navigationBarTrailing) {
                     Menu {
-                        Button("Lire ensuite", systemImage: "text.line.first.and.arrowtriangle.forward") {
+                        IconButton("Lire ensuite", systemImage: "text.line.first.and.arrowtriangle.forward") {
                             player.playNext(album.tracks.map(\.id))
                         }
-                        Button("Lire plus tard", systemImage: "text.line.last.and.arrowtriangle.forward") {
+                        IconButton("Lire plus tard", systemImage: "text.line.last.and.arrowtriangle.forward") {
                             player.playLater(album.tracks.map(\.id))
                         }
-                        Button("Ajouter à une playlist", systemImage: "text.badge.plus") {
+                        IconButton("Ajouter à une playlist", systemImage: "text.badge.plus") {
                             ui.addToPlaylist = AddToPlaylistTarget(trackIDs: album.tracks.map(\.id))
                         }
-                        Button("Changer la pochette de l’album", systemImage: "photo.on.rectangle") {
+                        IconButton("Changer la pochette de l’album", systemImage: "photo.on.rectangle") {
                             albumCoverEditing = true
                         }
-                        Button("Modifier l’album", systemImage: "pencil") {
+                        IconButton("Modifier l’album", systemImage: "pencil") {
                             editTitle = album.title
                             editArtist = album.artist
                             showEdit = true
@@ -206,8 +205,8 @@ struct AlbumDetailView: View {
 // MARK: - Artistes
 
 struct ArtistsView: View {
-    @Environment(Library.self) private var library
-    @Environment(Player.self) private var player
+    @EnvironmentObject private var library: Library
+    @EnvironmentObject private var player: Player
     @State private var query = ""
 
     var body: some View {
@@ -239,8 +238,8 @@ struct ArtistsView: View {
 
 struct ArtistDetailView: View {
     let artistID: String
-    @Environment(Library.self) private var library
-    @Environment(Player.self) private var player
+    @EnvironmentObject private var library: Library
+    @EnvironmentObject private var player: Player
     @State private var heroY: CGFloat = 0
     @State private var heroBase: CGFloat?
     /// Nouvel identifiant après un renommage.
@@ -274,15 +273,15 @@ struct ArtistDetailView: View {
             }
         }
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItem(placement: .navigationBarTrailing) {
                 Menu {
-                    Button("Renommer l’artiste", systemImage: "pencil") {
+                    IconButton("Renommer l’artiste", systemImage: "pencil") {
                         renameText = library.artist(currentID)?.name ?? ""
                         showRename = true
                     }
-                    Button("Choisir une photo", systemImage: "photo") { showPhotoPicker = true }
+                    IconButton("Choisir une photo", systemImage: "photo") { showPhotoPicker = true }
                     if library.artistImages[currentID] != nil {
-                        Button("Retirer la photo", systemImage: "trash", role: .destructive) {
+                        IconButton("Retirer la photo", systemImage: "trash", role: .destructive) {
                             library.resetArtistImage(currentID)
                         }
                     }
@@ -293,7 +292,7 @@ struct ArtistDetailView: View {
             }
         }
         .photosPicker(isPresented: $showPhotoPicker, selection: $photoItem, matching: .images)
-        .onChange(of: photoItem) { _, item in
+        .onChangeCompat(of: photoItem) { _, item in
             guard let item else { return }
             let id = currentID
             Task {
@@ -359,7 +358,7 @@ struct ArtistDetailView: View {
                         Button { toggleFavoriteArtist(artist.id) } label: {
                             Image(systemName: isFavoriteArtist(artist.id) ? "star.fill" : "star")
                                 .font(.title3.weight(.semibold))
-                                .contentTransition(.symbolEffect(.replace))
+                                .contentTransition(.opacity)
                                 .frame(width: 52, height: 52)
                                 .glassCircle()
                         }
@@ -477,7 +476,7 @@ struct ArtistDetailView: View {
 struct ArtistHero: View {
     let artist: ArtistInfo
     let scroll: CGFloat
-    @Environment(Library.self) private var library
+    @EnvironmentObject private var library: Library
 
     var body: some View {
         GeometryReader { geo in
@@ -514,8 +513,8 @@ struct ArtistHero: View {
 // MARK: - Playlists
 
 struct PlaylistsView: View {
-    @Environment(Library.self) private var library
-    @Environment(Player.self) private var player
+    @EnvironmentObject private var library: Library
+    @EnvironmentObject private var player: Player
     @State private var showNew = false
     @State private var newName = ""
     @State private var renaming: Playlist?
@@ -557,10 +556,10 @@ struct PlaylistsView: View {
                     Button(role: .destructive) { library.deletePlaylist(p.id) } label: { Label("Supprimer", systemImage: "trash") }
                 }
                 .contextMenu {
-                    Button("Lire", systemImage: "play.fill") { player.play(ids: p.trackIDs) }
+                    IconButton("Lire", systemImage: "play.fill") { player.play(ids: p.trackIDs) }
                     Button(p.pinned ? "Désépingler" : "Épingler", systemImage: p.pinned ? "pin.slash" : "pin") { library.togglePin(p.id) }
-                    Button("Renommer", systemImage: "pencil") { renameText = p.name; renaming = p }
-                    Button("Supprimer", systemImage: "trash", role: .destructive) { library.deletePlaylist(p.id) }
+                    IconButton("Renommer", systemImage: "pencil") { renameText = p.name; renaming = p }
+                    IconButton("Supprimer", systemImage: "trash", role: .destructive) { library.deletePlaylist(p.id) }
                 }
             }
         }
@@ -584,7 +583,7 @@ struct PlaylistsView: View {
 struct PlaylistMosaic: View {
     let playlist: Playlist
     var cornerRadius: CGFloat = 8
-    @Environment(Library.self) private var library
+    @EnvironmentObject private var library: Library
 
     /// Un morceau par album, 4 au maximum.
     private var covers: [Track] {
@@ -630,8 +629,8 @@ struct PlaylistMosaic: View {
 
 struct PlaylistDetailView: View {
     let playlistID: UUID
-    @Environment(Library.self) private var library
-    @Environment(Player.self) private var player
+    @EnvironmentObject private var library: Library
+    @EnvironmentObject private var player: Player
     @State private var showPicker = false
 
     var body: some View {
@@ -669,7 +668,7 @@ struct PlaylistDetailView: View {
             .plainList()
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) { EditButton() }
+                ToolbarItem(placement: .navigationBarTrailing) { EditButton() }
             }
             .sheet(isPresented: $showPicker) {
                 TrackPickerSheet(playlistID: p.id)
@@ -684,7 +683,7 @@ struct PlaylistDetailView: View {
 /// Choisir plusieurs morceaux à ajouter à une playlist.
 struct TrackPickerSheet: View {
     let playlistID: UUID
-    @Environment(Library.self) private var library
+    @EnvironmentObject private var library: Library
     @Environment(\.dismiss) private var dismiss
     @State private var selection: [UUID] = []
     @State private var query = ""
@@ -736,7 +735,7 @@ struct TrackPickerSheet: View {
 /// « Ajouter à une playlist » : une existante ou une nouvelle.
 struct AddToPlaylistSheet: View {
     let target: AddToPlaylistTarget
-    @Environment(Library.self) private var library
+    @EnvironmentObject private var library: Library
     @Environment(\.dismiss) private var dismiss
     @State private var showNew = false
     @State private var newName = ""
