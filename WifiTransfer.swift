@@ -27,6 +27,15 @@ final class WifiTransfer {
     @ObservationIgnored private var albumIndex: [String: AlbumInfo] = [:]
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
     @ObservationIgnored private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
+    /// Suivi de chaque fichier envoyé, affiché sur la page du PC.
+    struct Status: Encodable {
+        var state: String
+        var album: String?
+        var lyrics: String?
+    }
+    @ObservationIgnored private var recent: [String: Status] = [:]
+    @ObservationIgnored private var enrichQueue: [(file: String, id: UUID)] = []
+    @ObservationIgnored private var enriching = false
 
     private init() {
         let c = NotificationCenter.default
@@ -40,6 +49,9 @@ final class WifiTransfer {
 
     func enable(library: Library) {
         self.library = library
+        library.onImported = { added, all in
+            MainActor.assumeIsolated { WifiTransfer.shared.imported(added, all: all) }
+        }
         enabled = true
         UIApplication.shared.isIdleTimerDisabled = true
         launch()
@@ -101,6 +113,7 @@ final class WifiTransfer {
             failed: { m in Task { @MainActor in WifiTransfer.shared.failed = m } },
             state: { st in Task { @MainActor in WifiTransfer.shared.listenerState(st) } },
             library: { await MainActor.run { WifiTransfer.shared.libraryJSON() } },
+            recent: { await MainActor.run { WifiTransfer.shared.recentJSON() } },
             cover: { album, track, size in await MainActor.run { WifiTransfer.shared.coverJPEG(album: album, track: track, size: size) } },
             artwork: { file, album, tracks, ext, kind in
                 await MainActor.run { WifiTransfer.shared.applyArtwork(file: file, album: album, tracks: tracks, ext: ext, kind: kind) }
@@ -120,8 +133,36 @@ final class WifiTransfer {
 
     private func finished(_ name: String) {
         received += 1
-        if currentFile == name { currentFile = nil }
+        currentFile = nil
+        let isLyrics = (name as NSString).pathExtension.lowercased() == "lrc"
+        recent[name] = Status(state: isLyrics ? "ok" : "attente", album: nil, lyrics: isLyrics ? "fichier" : nil)
         requestScan()
+    }
+
+    /// Après l'import : on cherche l'album et les paroles de chaque morceau envoyé, un par un.
+    private func imported(_ added: [(file: String, id: UUID)], all: [String]) {
+        let ok = Set(added.map(\.file))
+        for name in all where recent[name] != nil {
+            recent[name]?.state = ok.contains(name) ? "recherche" : "illisible"
+        }
+        enrichQueue += added.filter { recent[$0.file] != nil }
+        runEnrichment()
+    }
+
+    private func runEnrichment() {
+        guard !enriching, !enrichQueue.isEmpty, let library else { return }
+        enriching = true
+        let next = enrichQueue.removeFirst()
+        Task {
+            let r = await TrackEnricher.enrich(next.id, library: library)
+            recent[next.file] = Status(state: "ok", album: r.album, lyrics: r.lyrics)
+            enriching = false
+            runEnrichment()
+        }
+    }
+
+    private func recentJSON() -> Data {
+        (try? JSONEncoder().encode(recent)) ?? Data("{}".utf8)
     }
 
     /// Importe les fichiers reçus (un seul import à la fois ; on relance si d'autres arrivent pendant ce temps).
@@ -311,7 +352,8 @@ header{display:flex;align-items:center;gap:18px;flex-wrap:wrap;margin-bottom:26p
 #sum{margin:24px 0 10px;color:var(--muted);display:flex;justify-content:space-between;gap:12px}
 .bar{height:6px;border-radius:9px;background:var(--line);overflow:hidden;margin-bottom:14px}.bar i{display:block;height:100%;width:0;background:var(--accent);transition:width .2s}
 ul{list-style:none;margin:0;padding:0}li{display:flex;align-items:center;gap:12px;padding:10px 14px;border-radius:14px;background:var(--card);margin-bottom:6px}
-li .n{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}li .s{color:var(--muted);font-variant-numeric:tabular-nums;min-width:70px;text-align:right}li.ok .s{color:var(--ok)}li.err .s{color:var(--accent)}
+li .n{flex:1;min-width:0}li .n b{display:block;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}li .n small{display:block;color:var(--muted);font-size:13px;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}li .n small.good{color:#b9f3c8}li .n small.bad{color:var(--accent)}
+li .go{border:0;background:var(--card2);color:var(--text);border-radius:99px;padding:6px 12px;font:600 13px inherit;font-family:inherit;cursor:pointer;white-space:nowrap}li .s{color:var(--muted);font-variant-numeric:tabular-nums;min-width:70px;text-align:right}li.ok .s{color:var(--ok)}li.err .s{color:var(--accent)}
 .art{display:grid;grid-template-columns:1fr 400px;gap:24px;align-items:start}@media(max-width:900px){.art{grid-template-columns:1fr}}
 .tools{display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap}input[type=search]{flex:1;min-width:200px;padding:11px 16px;border-radius:999px;border:1px solid var(--line);background:var(--card);color:var(--text);font:inherit;outline:none}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:16px}
@@ -337,7 +379,7 @@ dialog{background:#15151f;color:var(--text);border:1px solid var(--line);border-
 <header><h1>Platine</h1><div class="conn" id="conn"><i></i><span>Connexion…</span></div><div class="tabs"><button class="tab on" data-t="music">Musique</button><button class="tab" data-t="art">Pochettes</button></div></header>
 
 <section class="panel on" id="p-music">
-<p class="sub">Glisse tes musiques ici : elles arrivent directement dans ta bibliothèque sur l’iPhone.</p>
+<p class="sub">Glisse tes musiques ici : elles arrivent dans ta bibliothèque, avec l’album et les paroles synchronisées trouvés automatiquement. Il ne te reste qu’à ajouter la pochette.</p>
 <div class="drop" id="drop"><b>Dépose tes musiques ou un dossier</b><span>MP3, M4A, FLAC, WAV, AIFF… et paroles .lrc</span><br>
 <button class="btn mt" id="pick">Choisir des fichiers</button><input id="file" type="file" multiple hidden accept="audio/*,.lrc,.flac,.m4a,.aiff,.aif,.alac,.caf,.m4b"></div>
 <div id="sum"><span id="count">Aucun envoi</span><span id="size"></span></div><div class="bar" id="bar"><i></i></div><ul id="list"></ul>
@@ -365,19 +407,31 @@ document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>{document.querySelect
 /* ---------- Musique ---------- */
 const ok=/\.(mp3|m4a|aac|wav|aif|aiff|caf|flac|alac|m4b|lrc)$/i;const q=[];let active=0,done=0,total=0,bytesDone=0,bytesTotal=0;const list=$('#list');
 function upd(){$('#count').textContent=total?`${done} / ${total} envoyés`:'Aucun envoi';$('#size').textContent=bytesTotal?`${fmt(bytesDone)} / ${fmt(bytesTotal)}`:'';$('#bar i').style.width=bytesTotal?(100*bytesDone/bytesTotal)+'%':'0'}
-function add(f){if(!ok.test(f.name))return;const li=el('li');li.innerHTML='<span class="n"></span><span class="s">En attente</span>';li.querySelector('.n').textContent=f.name;list.appendChild(li);q.push({f,li,sent:0});total++;bytesTotal+=f.size;upd();next()}
+function add(f){if(!ok.test(f.name))return;const li=el('li');li.innerHTML='<div class="n"><b></b><small></small></div><span class="s">En attente</span>';li.querySelector('.n b').textContent=f.name;list.appendChild(li);q.push({f,li,sent:0});total++;bytesTotal+=f.size;upd();next()}
 function next(){while(active<1&&q.length){send(q.shift())}}
 const wait=ms=>new Promise(r=>setTimeout(r,ms));
 async function waitPhone(s){for(;;){if(await ping())return;s.textContent='En attente de l’iPhone…';await wait(2000)}}
 function send(it){active++;const s=it.li.querySelector('.s');it.tries=(it.tries||0)+1;const x=new XMLHttpRequest();x.open('PUT','/upload?name='+encodeURIComponent(it.f.name));
 const back=()=>{bytesDone-=it.sent;it.sent=0;upd()};
 x.upload.onprogress=e=>{bytesDone+=e.loaded-it.sent;it.sent=e.loaded;s.textContent=Math.round(100*e.loaded/(e.total||1))+' %';upd()};
-x.onload=async()=>{if(x.status==200){active--;done++;bytesDone+=it.f.size-it.sent;it.sent=it.f.size;it.li.className='ok';s.textContent='✓';upd();next();lib=null;return}
+x.onload=async()=>{if(x.status==200){active--;done++;bytesDone+=it.f.size-it.sent;it.sent=it.f.size;it.li.className='ok';s.textContent='✓';upd();next();lib=null;
+let saved=it.f.name;try{saved=JSON.parse(x.responseText).saved||saved}catch(e){}if(!/\.lrc$/i.test(saved)){track[saved]=it;detail(it,'Import et recherche de l’album et des paroles…');poll()}return}
 let msg='Erreur '+x.status;try{msg=JSON.parse(x.responseText).error||msg}catch(e){}
 if(x.status>=500&&it.tries<4){back();s.textContent='Nouvel essai…';await wait(1500);active--;send(it);return}
 active--;done++;back();it.li.className='err';s.textContent=msg;upd();next()};
 x.onerror=async()=>{back();if(it.tries<20){s.textContent='Reconnexion…';await waitPhone(s);active--;send(it);return}active--;done++;it.li.className='err';s.textContent='Coupé';upd();next()};
 x.send(it.f)}
+/* Suivi après l'envoi : album et paroles trouvés sur l'iPhone */
+const track={};let polling=false;
+function detail(it,t,c){const d=it.li.querySelector('.n small');d.textContent=t;d.className=c||''}
+async function poll(){if(polling)return;polling=true;while(Object.keys(track).length){await wait(2000);let r;try{r=await (await fetch('/api/recent',{cache:'no-store'})).json()}catch(e){continue}
+for(const [name,it] of Object.entries(track)){const st=r[name];if(!st)continue;
+if(st.state=='illisible'){detail(it,'Fichier illisible sur l’iPhone','bad');it.li.className='err';delete track[name];continue}
+if(st.state!='ok')continue;delete track[name];
+const ly={synchro:'paroles synchronisées ✓',texte:'paroles (sans synchro)',aucune:'pas de paroles trouvées'}[st.lyrics]||'';
+detail(it,(st.album?'Album : '+st.album:'Album introuvable')+' · '+ly,st.album&&st.lyrics=='synchro'?'good':'');
+if(st.album){const b=el('button','go');b.textContent='Ajouter la pochette';b.onclick=()=>openAlbum(st.album);it.li.querySelector('.s').replaceWith(b)}}}polling=false}
+function openAlbum(name){document.querySelector('.tab[data-t=art]').click();$('#q').value=name;lib=null;loadLib().then(()=>{const a=lib.find(x=>norm(x.title)==norm(name));if(a)select(a)})}
 async function ping(){try{const r=await fetch('/api/ping',{cache:'no-store'});const ok=r.ok;setConn(ok);return ok}catch(e){setConn(false);return false}}
 function setConn(ok){const c=$('#conn');c.className='conn '+(ok?'on':'off');c.querySelector('span').textContent=ok?'iPhone connecté':'iPhone injoignable : ouvre Platine sur l’iPhone'}
 ping();setInterval(ping,4000);

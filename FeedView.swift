@@ -196,8 +196,10 @@ struct FeedView: View {
                         Image(systemName: "house.fill")
                             .font(.system(size: 19, weight: .semibold))
                             .foregroundStyle(.white)
-                            .frame(width: 52, height: 52)
-                            .glassCircle()
+                            .frame(width: 54, height: 54)
+                            // Verre non interactif : le verre « interactif » d'iOS gardait parfois le toucher pour lui.
+                            .modifier(GlassStyle(shape: Circle(), interactive: false))
+                            .contentShape(Circle())
                     }
                     .buttonStyle(PressStyle())
                     .accessibilityLabel("Accueil")

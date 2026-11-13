@@ -171,7 +171,7 @@ enum LyricsService {
         return t.unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) }.map(String.init).joined()
     }
 
-    private static func matches(_ a: String, _ b: String) -> Bool {
+    static func matches(_ a: String, _ b: String) -> Bool {
         guard !a.isEmpty, !b.isEmpty else { return false }
         if a == b { return true }
         let (short, long) = a.count < b.count ? (a, b) : (b, a)

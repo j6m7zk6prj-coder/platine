@@ -3,7 +3,7 @@ name: Test envoi Wi-Fi
 on:
   push:
     branches: [platine-9]
-    paths: [WifiServer.swift, ServerTest/**, .github/workflows/server-test.yml]
+    paths: [WifiServer.swift, ServerTest/**, TrackEnricher.swift, Lyrics.swift, EnrichTest/**, .github/workflows/server-test.yml]
   workflow_dispatch:
 
 jobs:
@@ -15,3 +15,7 @@ jobs:
         run: |
           swiftc -O WifiServer.swift ServerTest/main.swift -o wifi-test-bin
           ./wifi-test-bin
+      - name: Tester la recherche d'album et de paroles
+        run: |
+          swiftc -O Lyrics.swift TrackEnricher.swift EnrichTest/main.swift -o enrich-test-bin
+          ./enrich-test-bin

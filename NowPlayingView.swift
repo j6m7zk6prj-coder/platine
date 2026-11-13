@@ -62,13 +62,12 @@ struct NowPlayingView: View {
                 if fullBleed, let t = track {
                     FullBleedArtwork(track: t)
                         .id(t.id)
-                        .opacity(showLyrics ? 0.6 : 1)
-                        .overlay {
-                            if showLyrics {
-                                LinearGradient(colors: [.black.opacity(0.35), .black.opacity(0.65)], startPoint: .top, endPoint: .bottom)
-                                    .transition(.opacity)
-                            }
-                        }
+                        .opacity(showLyrics ? 0 : 1)
+                        .transition(.opacity)
+                }
+                // Derrière les paroles : la pochette floue sur tout l'écran, comme Musique.
+                if showLyrics, let t = track {
+                    LyricsBackdrop(track: t)
                         .transition(.opacity)
                 }
             }
@@ -782,5 +781,35 @@ struct InlineQueue: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(PressStyle(circle: false))
+    }
+}
+
+/// Le fond des paroles : la pochette très floue sur tout l'écran, assombrie pour lire le texte.
+/// L'image est préparée une fois (minuscule et floutée), rien n'est recalculé pendant la lecture.
+struct LyricsBackdrop: View {
+    let track: Track
+    @Environment(Library.self) private var library
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack {
+                let colors = library.palette(for: track)
+                LinearGradient(colors: [colors[0], colors[1], .black], startPoint: .top, endPoint: .bottom)
+                if let img = library.backdrop(for: track) {
+                    Image(uiImage: img)
+                        .resizable()
+                        .interpolation(.high)
+                        .scaledToFill()
+                        .frame(width: geo.size.width, height: geo.size.height)
+                        .saturation(1.3)
+                        .clipped()
+                }
+                LinearGradient(colors: [.black.opacity(0.3), .black.opacity(0.45), .black.opacity(0.6)],
+                               startPoint: .top, endPoint: .bottom)
+            }
+            .frame(width: geo.size.width, height: geo.size.height)
+        }
+        .ignoresSafeArea()
+        .allowsHitTesting(false)
     }
 }

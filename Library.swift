@@ -568,8 +568,14 @@ final class Library {
     }
 
     /// Importe ce qui a été déposé dans le dossier « Platine » (Fichiers ou iTunes sur PC).
-    func scanInbox() async {
-        guard !isImporting else { return }
+    /// Prévenu après chaque import du dossier Platine : morceaux ajoutés, et tous les fichiers traités.
+    @ObservationIgnored var onImported: (([(file: String, id: UUID)], [String]) -> Void)?
+
+    /// Importe ce qui a été déposé dans le dossier Platine.
+    /// Renvoie, pour chaque morceau ajouté, le nom du fichier d'origine et le morceau créé.
+    @discardableResult
+    func scanInbox() async -> [(file: String, id: UUID)] {
+        guard !isImporting else { return [] }
         let fm = FileManager.default
         var found: [URL] = []
         for dir in [Self.inbox, Self.inbox.appendingPathComponent("Inbox")] {
@@ -581,17 +587,35 @@ final class Library {
             let items = (try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? []
             lyricFiles += items.filter { $0.pathExtension.lowercased() == "lrc" }
         }
-        guard !found.isEmpty || !lyricFiles.isEmpty else { return }
+        guard !found.isEmpty || !lyricFiles.isEmpty else { return [] }
         isImporting = true
         defer { isImporting = false }
-        var added = 0
+        var added: [(file: String, id: UUID)] = []
         for url in found {
-            if let t = await importOne(url, move: true) { tracks.append(t); added += 1 }
+            if let t = await importOne(url, move: true) {
+                tracks.append(t)
+                added.append((url.lastPathComponent, t.id))
+            }
         }
         for url in lyricFiles where attachLyricsFile(url) {
             try? fm.removeItem(at: url)
         }
-        finishImport(added, total: found.count)
+        finishImport(added.count, total: found.count)
+        onImported?(added, found.map(\.lastPathComponent))
+        return added
+    }
+
+    /// Complète les infos manquantes d'un morceau (album, année, numéro), sans toucher à ce qui est déjà rempli.
+    func fillInfo(_ id: UUID, album: String?, year: Int?, trackNumber: Int?, artist: String? = nil) {
+        guard let i = tracks.firstIndex(where: { $0.id == id }) else { return }
+        var changed = false
+        if let album, !album.isEmpty, tracks[i].album.isEmpty { tracks[i].album = album; changed = true }
+        if let year, year > 0, tracks[i].year == 0 { tracks[i].year = year; changed = true }
+        if let trackNumber, trackNumber > 0, tracks[i].trackNumber == 0 { tracks[i].trackNumber = trackNumber; changed = true }
+        if let artist, !artist.isEmpty, tracks[i].artist.isEmpty { tracks[i].artist = artist; changed = true }
+        guard changed else { return }
+        sortTracks()
+        save()
     }
 
     private func finishImport(_ added: Int, total: Int) {

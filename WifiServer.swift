@@ -14,6 +14,8 @@ struct WifiHandlers: Sendable {
     var failed: @Sendable (String) -> Void = { _ in }
     var state: @Sendable (NWListener.State) -> Void = { _ in }
     var library: @Sendable () async -> Data = { Data(#"{"albums":[]}"#.utf8) }
+    /// Où en sont les morceaux envoyés (import, album trouvé, paroles).
+    var recent: @Sendable () async -> Data = { Data("{}".utf8) }
     var cover: @Sendable (_ album: String?, _ track: String?, _ size: Int) async -> Data? = { _, _, _ in nil }
     /// Pose une pochette : fichier reçu, album ou sons visés, extension, type (image, gif, video).
     var artwork: @Sendable (_ file: URL, _ album: String?, _ tracks: [UUID], _ ext: String, _ kind: String) async -> Bool = { _, _, _, _, _ in false }
@@ -138,6 +140,13 @@ private final class HTTPConnection: @unchecked Sendable {
                 queue.async { self.reply(200, data: d, type: "application/json") }
             }
 
+        case ("GET", "/api/recent"):
+            let h = handlers
+            Task { [self] in
+                let d = await h.recent()
+                queue.async { self.reply(200, data: d, type: "application/json") }
+            }
+
         case ("GET", "/api/cover"):
             let h = handlers
             let size = Int(query["s"] ?? "") ?? 240
@@ -161,8 +170,10 @@ private final class HTTPConnection: @unchecked Sendable {
                     try FileManager.default.createDirectory(at: h.inbox, withIntermediateDirectories: true)
                     try FileManager.default.moveItem(at: part, to: dest)
                     partURL = nil
-                    h.finished(name)
-                    reply(200, text: #"{"ok":true}"#, type: "application/json")
+                    let saved = dest.lastPathComponent
+                    h.finished(saved)
+                    let json = (try? JSONSerialization.data(withJSONObject: ["ok": true, "saved": saved])) ?? Data(#"{"ok":true}"#.utf8)
+                    reply(200, data: json, type: "application/json")
                 } catch {
                     h.failed("\(name) : \(error.localizedDescription)")
                     reply(500, text: #"{"ok":false,"error":"Enregistrement impossible"}"#, type: "application/json")

@@ -102,6 +102,8 @@ struct SyncedLyricsView: View {
     @State private var isDragging = false
     @State private var browsing = false
     @State private var browseEnd: Task<Void, Never>?
+    /// Vrai une fois toutes les lignes mesurées : avant, pas d'animation (rien ne glisse au chargement).
+    @State private var measured = false
 
     private let spacing: CGFloat = 30
     /// Petit temps d'avance pour que la ligne s'allume au moment où elle est chantée.
@@ -127,9 +129,6 @@ struct SyncedLyricsView: View {
                                       fontSize: fontSize,
                                       height: heights[line.id] ?? 0)
                             .frame(width: max(0, geo.size.width - 12), alignment: .leading)
-                            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { h in
-                                if abs((heights[line.id] ?? 0) - h) > 0.5 { heights[line.id] = h }
-                            }
                             .contentShape(Rectangle())
                             .onTapGesture {
                                 player.seek(to: line.time)
@@ -142,11 +141,41 @@ struct SyncedLyricsView: View {
                             }
                             .offset(y: y)
                             // La vague : chaque ligne part un peu après celle du dessus.
-                            .animation(isDragging ? nil : .spring(response: 0.72, dampingFraction: 0.86).delay(stagger(distance)), value: y)
+                            .animation(isDragging || !measured ? nil : .spring(response: 0.72, dampingFraction: 0.86).delay(stagger(distance)), value: y)
                     }
                 }
             }
             .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
+            // Toutes les lignes sont mesurées d'avance, hors de l'écran : les positions ne bougent plus
+            // quand une ligne entre à l'écran (c'était la cause des paroles qui montaient et descendaient).
+            .background(alignment: .topLeading) {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(lines) { line in
+                        if !line.isInterlude {
+                            Text(line.text)
+                                .font(.system(size: fontSize, weight: .bold))
+                                .lineSpacing(4)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .frame(width: max(0, geo.size.width - 12), alignment: .leading)
+                                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { h in
+                                    if abs((heights[line.id] ?? 0) - h) > 0.5 { heights[line.id] = h }
+                                }
+                        }
+                    }
+                }
+                .hidden()
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+            }
+            .onChange(of: lines) { _, _ in
+                heights = [:]
+                measured = false
+            }
+            .onChange(of: heights.count) { _, n in
+                if !measured, n >= lines.filter({ !$0.isInterlude }).count {
+                    Task { @MainActor in measured = true }
+                }
+            }
             .contentShape(Rectangle())
             .gesture(
                 DragGesture(minimumDistance: 6)
@@ -200,10 +229,14 @@ struct SyncedLyricsView: View {
         var y: CGFloat = 0
         for line in lines {
             result.append(y)
-            let h = heights[line.id] ?? (line.isInterlude ? 0 : estimate)
+            let h = line.isInterlude ? (interludeShown(line) ? 29 : 0) : (heights[line.id] ?? estimate)
             y += h + (h > 0 ? spacing : 0)
         }
         return result
+    }
+
+    private func interludeShown(_ line: LyricLine) -> Bool {
+        line.id == active && endTime(line) - line.time >= 2.5
     }
 
     private func stagger(_ distance: Int) -> Double {
