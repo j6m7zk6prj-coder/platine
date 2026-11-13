@@ -60,6 +60,76 @@ enum TrackEnricher {
     }
 
     static func findAlbum(title: String, artist: String, duration: Double) async -> Found? {
+        // Deezer d'abord (très complet, surtout pour le rap français), puis le catalogue Apple.
+        if let d = await deezer(title: title, artist: artist, duration: duration) { return d }
+        return await itunes(title: title, artist: artist, duration: duration)
+    }
+
+    // MARK: Deezer (sans compte)
+
+    private struct DZSearch: Decodable { let data: [DZTrack]? }
+    private struct DZTrack: Decodable {
+        let id: Int
+        let title: String?
+        let duration: Int?
+        let artist: DZName?
+        let album: DZAlbumRef?
+    }
+    private struct DZName: Decodable { let name: String? }
+    private struct DZAlbumRef: Decodable { let id: Int; let title: String? }
+    private struct DZAlbum: Decodable { let record_type: String?; let release_date: String?; let title: String? }
+    private struct DZTrackFull: Decodable { let track_position: Int?; let release_date: String? }
+
+    private static func get<T: Decodable>(_ url: URL, as: T.Type) async -> T? {
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 12
+        guard let (data, resp) = try? await URLSession.shared.data(for: request),
+              (resp as? HTTPURLResponse)?.statusCode == 200 else { return nil }
+        return try? JSONDecoder().decode(T.self, from: data)
+    }
+
+    private static func deezer(title: String, artist: String, duration: Double) async -> Found? {
+        let q = artist.isEmpty ? "track:\"\(title)\"" : "artist:\"\(artist)\" track:\"\(title)\""
+        var tracks: [DZTrack] = []
+        for query in [q, "\(artist) \(title)"] {
+            guard var c = URLComponents(string: "https://api.deezer.com/search") else { return nil }
+            c.queryItems = [URLQueryItem(name: "q", value: query), URLQueryItem(name: "limit", value: "25")]
+            guard let url = c.url, let r = await get(url, as: DZSearch.self) else { continue }
+            tracks = r.data ?? []
+            if !tracks.isEmpty { break }
+        }
+        let t = LyricsService.norm(title), a = LyricsService.norm(artist)
+        func gap(_ x: DZTrack) -> Double { duration > 0 ? abs(Double(x.duration ?? 0) - duration) : 0 }
+        let same = tracks.filter { x in
+            LyricsService.matches(LyricsService.norm(x.title ?? ""), t)
+                && (a.isEmpty || LyricsService.matches(LyricsService.norm(x.artist?.name ?? ""), a))
+                && x.album != nil
+        }
+        let close = same.filter { gap($0) <= 6 }
+        let candidates = Array((close.isEmpty ? same : close).sorted { gap($0) < gap($1) }.prefix(4))
+        guard !candidates.isEmpty else { return nil }
+        // On préfère l'album au single : on regarde le type de chaque sortie.
+        var best: (DZTrack, DZAlbum)?
+        for x in candidates {
+            guard let ref = x.album, let url = URL(string: "https://api.deezer.com/album/\(ref.id)"),
+                  let alb = await get(url, as: DZAlbum.self) else { continue }
+            if best == nil { best = (x, alb) }
+            if alb.record_type == "album" { best = (x, alb); break }
+        }
+        guard let (x, alb) = best, let name = alb.title ?? x.album?.title else { return nil }
+        let single = alb.record_type == "single"
+        var number = 0
+        if !single, let url = URL(string: "https://api.deezer.com/track/\(x.id)"),
+           let full = await get(url, as: DZTrackFull.self) {
+            number = full.track_position ?? 0
+        }
+        let year = Int((alb.release_date ?? "").prefix(4)) ?? 0
+        return Found(album: name, year: year, number: number)
+    }
+
+    // MARK: Catalogue Apple (sans compte)
+
+    private static func itunes(title: String, artist: String, duration: Double) async -> Found? {
         let term = [artist, title].filter { !$0.isEmpty }.joined(separator: " ")
         guard !term.isEmpty else { return nil }
         for country in ["FR", "US"] {

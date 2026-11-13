@@ -19,9 +19,3 @@ jobs:
         run: |
           swiftc -O Lyrics.swift TrackEnricher.swift EnrichTest/main.swift -o enrich-test-bin
           ./enrich-test-bin
-      - name: Diagnostic catalogue
-        if: always()
-        run: |
-          curl -s -o /dev/null -w "%{http_code}\n" "https://itunes.apple.com/search?term=Werenoi%20C63&media=music&entity=song&limit=5&country=FR"
-          curl -s "https://itunes.apple.com/search?term=Werenoi%20C63&media=music&entity=song&limit=5&country=FR" | python3 -c "import json,sys; d=json.load(sys.stdin); [print(r.get('trackName'),'|',r.get('artistName'),'|',r.get('collectionName'),'|',r.get('trackCount'),r.get('trackTimeMillis')) for r in d['results']]"
-          curl -s "https://itunes.apple.com/search?term=13%20Organis%C3%A9%20Bande%20organis%C3%A9e&media=music&entity=song&limit=5&country=FR" | python3 -c "import json,sys; d=json.load(sys.stdin); [print(r.get('trackName'),'|',r.get('artistName'),'|',r.get('collectionName'),'|',r.get('trackCount'),r.get('trackTimeMillis')) for r in d['results']]"
