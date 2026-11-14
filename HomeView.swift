@@ -10,7 +10,6 @@ struct HomeView: View {
     @State private var showSettings = false
     @State private var showGallery = false
     @State private var showOrganizer = false
-    @State private var pull: CGFloat = 0
     private var layout: HomeLayout { .shared }
 
     private var currentTrack: Track? { player.currentID.flatMap { library.track($0) } }
@@ -80,7 +79,7 @@ struct HomeView: View {
         return ScrollView {
             VStack(alignment: .leading, spacing: 34) {
                 if let album = bannerAlbum {
-                    ResumeBanner(album: album, track: bannerTrack(album), pull: pull)
+                    ResumeBanner(album: album, track: bannerTrack(album))
                         .padding(.bottom, -14)
                 }
 
@@ -128,10 +127,6 @@ struct HomeView: View {
             .animation(.spring(response: 0.4, dampingFraction: 0.85), value: items)
         }
         .scrollIndicators(.hidden)
-        // Tirer vers le bas : la pochette du haut s'agrandit au lieu de laisser un vide.
-        .onScrollGeometryChange(for: CGFloat.self) { g in
-            max(0, -(g.contentOffset.y + g.contentInsets.top))
-        } action: { _, new in pull = new }
         .ignoresSafeArea(edges: showsBanner ? .top : [])
         .sheet(isPresented: $showGallery) { HomeGallery() }
         .sheet(isPresented: $showOrganizer) { HomeOrganizer() }
@@ -644,7 +639,7 @@ struct ResumeBanner: View {
     /// Le son affiché : sa propre pochette, même si l'album en a une autre.
     let track: Track
     /// De combien on tire la page vers le bas (0 au repos).
-    var pull: CGFloat = 0
+    @State private var pull: CGFloat = 0
     @Environment(Library.self) private var library
     @Environment(Player.self) private var player
     @Environment(AppSettings.self) private var settings
@@ -707,6 +702,8 @@ struct ResumeBanner: View {
         }
         .frame(width: width, height: height, alignment: .bottomLeading)
         .animation(.smooth(duration: 0.5), value: track.id)
+        // Le bandeau descend quand on tire la page : la pochette s'agrandit d'autant vers le haut.
+        .onGeometryChange(for: CGFloat.self) { max(0, $0.frame(in: .global).minY) } action: { pull = $0 }
     }
 
     private func resume() {
