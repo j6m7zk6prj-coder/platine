@@ -686,13 +686,31 @@ struct ResumeBanner: View {
                     .multilineTextAlignment(.leading)
                 }
                 .buttonStyle(.plain)
-                Button(action: resume) {
-                    Label(playingHere && player.isPlaying ? "Pause" : "Reprendre",
-                          systemImage: playingHere && player.isPlaying ? "pause.fill" : "play.fill")
-                        .font(.body.weight(.semibold))
-                        .contentTransition(.symbolEffect(.replace))
+                // Deux capsules en Liquid Glass : reprendre, ou lancer l'album en aléatoire.
+                HStack(spacing: 10) {
+                    Button(action: resume) {
+                        Label(playingHere && player.isPlaying ? "Pause" : "Reprendre",
+                              systemImage: playingHere && player.isPlaying ? "pause.fill" : "play.fill")
+                            .font(.body.weight(.semibold))
+                            .contentTransition(.symbolEffect(.replace))
+                            .padding(.horizontal, 20)
+                            .frame(minHeight: 48)
+                            .contentShape(Capsule())
+                            .glassCapsule()
+                    }
+                    Button {
+                        player.play(ids: album.tracks.map(\.id), shuffled: true)
+                    } label: {
+                        Label("Aléatoire", systemImage: "shuffle")
+                            .font(.body.weight(.semibold))
+                            .padding(.horizontal, 20)
+                            .frame(minHeight: 48)
+                            .contentShape(Capsule())
+                            .glassCapsule()
+                    }
                 }
-                .buttonStyle(FilledButtonStyle())
+                .buttonStyle(PressStyle(circle: false))
+                .foregroundStyle(.white)
                 .padding(.top, 10)
                 .sensoryFeedback(trigger: player.isPlaying) { _, _ in settings.haptics ? .impact(weight: .light) : nil }
             }
