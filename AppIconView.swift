@@ -9,10 +9,10 @@ struct AppIconChoice: Identifiable, Equatable {
     /// Image d'aperçu incluse dans l'app.
     var preview: String { "Preview-" + id }
 
-    private static let knownTitles = ["Clair": "Noir sur blanc"]
+    private static let knownTitles: [String: String] = [:]
     /// Toutes les couleurs du disque en verre, dans l'ordre de l'arc-en-ciel.
-    private static let knownOrder = ["Rouge", "Orange", "Jaune", "Vert", "Menthe", "Turquoise", "Bleu", "Indigo",
-                                     "Violet", "Or", "Blanc", "Graphite", "Clair"]
+    private static let knownOrder = ["Noir", "Rouge", "Orange", "Jaune", "Vert", "Menthe", "Bleu", "Indigo",
+                                     "Violet", "Rose", "Or", "Graphite"]
 
     /// L'icône principale, puis toutes les icônes incluses dans l'app (lues dans son Info.plist),
     /// y compris celles que tu ajoutes au projet sous le nom icon-MonNom.png.
