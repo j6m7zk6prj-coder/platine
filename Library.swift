@@ -86,9 +86,28 @@ final class Library {
     func stillURL(_ t: Track) -> URL? {
         if let c = t.customArtwork, (t.customKind ?? .image) == .image { return Self.artDir.appendingPathComponent(c) }
         if let e = t.embeddedArtwork { return Self.artDir.appendingPathComponent(e) }
-        // Un morceau sans aucune pochette prend celle choisie pour son album.
-        if !hasOwnArtwork(t), let c = albumCovers[t.albumKey], c.kind == .image { return Self.artDir.appendingPathComponent(c.file) }
+        // Sinon, la vraie pochette de l'album — même si le morceau a une pochette animée :
+        // l'animation s'ajoute à la pochette, elle ne la remplace pas.
+        if let c = albumCovers[t.albumKey], c.kind == .image { return Self.artDir.appendingPathComponent(c.file) }
+        // Pas de pochette d'album choisie : celle d'un autre son du même album.
+        if !t.album.isEmpty, let name = siblingStill(t) { return Self.artDir.appendingPathComponent(name) }
         return nil
+    }
+
+    /// La pochette (image) d'un autre morceau du même album, gardée en mémoire par album.
+    @ObservationIgnored private var siblingCache: [String: String] = [:]
+    @ObservationIgnored private var siblingCacheRevision = -1
+    private func siblingStill(_ t: Track) -> String? {
+        if siblingCacheRevision != artworkRevision || siblingCache.isEmpty {
+            var map: [String: String] = [:]
+            for x in tracks where !x.album.isEmpty && map[x.albumKey] == nil {
+                if let c = x.customArtwork, (x.customKind ?? .image) == .image { map[x.albumKey] = c }
+                else if let e = x.embeddedArtwork { map[x.albumKey] = e }
+            }
+            siblingCache = map
+            siblingCacheRevision = artworkRevision
+        }
+        return siblingCache[t.albumKey]
     }
 
     /// Le morceau a-t-il une pochette à lui (fichier audio, choisie, ou animée) ?
@@ -907,7 +926,7 @@ final class Library {
     }
 
     func setExtraImage(_ image: UIImage, kind: String, key: String) {
-        let maxSide: CGFloat = 1400
+        let maxSide: CGFloat = 3000
         let scale = min(1, maxSide / max(image.size.width, image.size.height, 1))
         let target = CGSize(width: image.size.width * scale, height: image.size.height * scale)
         let resized = UIGraphicsImageRenderer(size: target).image { _ in image.draw(in: CGRect(origin: .zero, size: target)) }
@@ -1250,7 +1269,7 @@ final class Library {
     // MARK: Persistance
 
     private func saveImage(_ image: UIImage, prefix: String = "") -> String? {
-        let maxSide: CGFloat = 1400
+        let maxSide: CGFloat = 3000
         let scale = min(1, maxSide / max(image.size.width, image.size.height, 1))
         let size = CGSize(width: image.size.width * scale, height: image.size.height * scale)
         let format = UIGraphicsImageRendererFormat()

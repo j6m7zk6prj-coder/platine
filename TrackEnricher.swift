@@ -230,7 +230,7 @@ enum TrackEnricher {
             name = String(name.dropLast(suffix.count))
         }
         let year = Int((best.releaseDate ?? "").prefix(4)) ?? 0
-        let art = best.artworkUrl100.map { $0.replacingOccurrences(of: "100x100bb", with: "1400x1400bb") }
+        let art = best.artworkUrl100.map { $0.replacingOccurrences(of: "100x100bb", with: "3000x3000bb") }
         return Found(album: name, year: year, number: isSingle(best) ? 0 : (best.trackNumber ?? 0),
                      cover: art.flatMap(URL.init(string:)))
     }

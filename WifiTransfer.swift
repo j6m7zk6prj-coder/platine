@@ -500,7 +500,7 @@ function render(e,S){const cv=el('canvas');cv.width=cv.height=S;const prev=ed;ed
 function put(url,body,onp){return new Promise(res=>{const x=new XMLHttpRequest();x.open('PUT',url);if(onp)x.upload.onprogress=e=>onp(e.loaded/(e.total||1));x.onload=()=>res(x.status==200);x.onerror=()=>res(false);x.send(body)})}
 async function sendArt(){if(!ed||!sel)return;let target;const some=document.querySelector('input[name=tg][value=some]').checked;
 if(some){const ids=[...document.querySelectorAll('#tl input:checked')].map(i=>i.value);if(!ids.length){status('Coche au moins un son.','err');return}target='tracks='+ids.join(',')}else target='album='+encodeURIComponent(sel.id);
-const body=ed.kind=='image'?await render(ed,1400):ed.file;$('#go').disabled=true;busy=true;const bar=$('#ebar');bar.style.display='block';status('Envoi…');
+const body=ed.kind=='image'?await render(ed,3000):ed.file;$('#go').disabled=true;busy=true;const bar=$('#ebar');bar.style.display='block';status('Envoi…');
 const okk=await put(`/api/artwork?ext=${ed.ext}&${target}`,body,p=>bar.querySelector('i').style.width=(p*100)+'%');busy=false;$('#go').disabled=false;
 if(okk){status('✓ Pochette posée sur l’iPhone','ok');ver[sel.id]=Date.now();if(ed.kind!='image')sel.animated=true;renderGrid()}else status('L’envoi a échoué. L’écran Envoi par Wi‑Fi est-il toujours ouvert ?','err')}
 
@@ -515,7 +515,7 @@ const st=el('div');st.style.color='var(--muted)';b.st=st;r.append(th,n,s,st);L.a
 const esc=s=>(s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 $('#bulkCancel').onclick=()=>$('#dlg').close();
 $('#bulkSend').onclick=async()=>{busy=true;$('#bulkSend').disabled=true;for(const b of bulk){if(!b.a){b.st.textContent='—';continue}b.st.textContent='…';const k=kindOf(b.f);let body=b.f;
-if(k.kind=='image'){const img=await new Promise(r=>{const i=new Image();i.onload=()=>r(i);i.onerror=()=>r(null);i.src=URL.createObjectURL(b.f)});if(!img){b.st.textContent='Illisible';continue}body=await render({img,zoom:1,ox:0,oy:0,rot:0,b:100,c:100,s:100},1400)}
+if(k.kind=='image'){const img=await new Promise(r=>{const i=new Image();i.onload=()=>r(i);i.onerror=()=>r(null);i.src=URL.createObjectURL(b.f)});if(!img){b.st.textContent='Illisible';continue}body=await render({img,zoom:1,ox:0,oy:0,rot:0,b:100,c:100,s:100},3000)}
 const r=await put(`/api/artwork?ext=${k.ext}&album=${encodeURIComponent(b.a.id)}`,body);b.st.textContent=r?'✓':'Erreur';b.st.style.color=r?'var(--ok)':'var(--accent)';if(r){ver[b.a.id]=Date.now();if(k.kind!='image')b.a.animated=true}}
 busy=false;$('#bulkSend').disabled=false;renderGrid()};
 </script></body></html>
