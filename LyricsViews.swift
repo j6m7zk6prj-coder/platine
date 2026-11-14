@@ -305,7 +305,10 @@ struct LyricLineView: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .scaleEffect(isActive ? 1 : 0.955, anchor: .leading)
+                    // De la place autour du texte : sinon le flou découpe la lueur en rectangle.
+                    .padding(GlowRoom.size)
                     .blur(radius: (isActive || browsing || abs(distance) > 5) ? 0 : min(Double(abs(distance)) * 0.6, 2))
+                    .padding(-GlowRoom.size)
             }
         }
         .animation(.spring(response: 0.6, dampingFraction: 0.84), value: isActive)
@@ -377,6 +380,9 @@ struct InterludeDots: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
+
+/// Marge invisible autour d'une ligne pour que sa lueur ne soit jamais coupée net.
+enum GlowRoom { static let size: CGFloat = 28 }
 
 /// Fondu en haut et en bas de la zone des paroles.
 struct LyricsFade: View {

@@ -10,6 +10,7 @@ struct HomeView: View {
     @State private var showSettings = false
     @State private var showGallery = false
     @State private var showOrganizer = false
+    @State private var pull: CGFloat = 0
     private var layout: HomeLayout { .shared }
 
     private var currentTrack: Track? { player.currentID.flatMap { library.track($0) } }
@@ -32,6 +33,12 @@ struct HomeView: View {
         if let t = currentTrack, let a = library.album(t.albumKey) { return a }
         return recentAlbums.first ?? library.recentlyAdded.first
     }
+    /// Le son lui-même (sa pochette à lui, pas celle de l'album) : celui en cours,
+    /// sinon le dernier écouté de cet album.
+    private func bannerTrack(_ album: AlbumInfo) -> Track {
+        if let t = currentTrack, t.albumKey == album.id { return t }
+        return library.recentlyPlayed.first { $0.albumKey == album.id } ?? album.cover
+    }
     private var showsBanner: Bool { !library.tracks.isEmpty && bannerAlbum != nil }
 
     var body: some View {
@@ -45,14 +52,6 @@ struct HomeView: View {
         .navigationTitle(showsBanner ? "" : "Accueil")
         .navigationBarTitleDisplayMode(showsBanner ? .inline : .large)
         .toolbar {
-            ToolbarItem(placement: .topBarLeading) {
-                Button {
-                    withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) { layout.editing.toggle() }
-                } label: {
-                    Text(layout.editing ? "OK" : "Modifier").fontWeight(layout.editing ? .bold : .regular)
-                }
-                .disabled(library.tracks.isEmpty)
-            }
             // Comme Musique : le profil en haut à droite ouvre les réglages.
             ToolbarItem(placement: .topBarTrailing) {
                 Button { showSettings = true } label: {
@@ -81,7 +80,7 @@ struct HomeView: View {
         return ScrollView {
             VStack(alignment: .leading, spacing: 34) {
                 if let album = bannerAlbum {
-                    ResumeBanner(album: album)
+                    ResumeBanner(album: album, track: bannerTrack(album), pull: pull)
                         .padding(.bottom, -14)
                 }
 
@@ -117,7 +116,7 @@ struct HomeView: View {
                 }
 
                 if items.isEmpty {
-                    Text("Ton Accueil est vide. Touche « Modifier l’Accueil » pour y ajouter des rubriques.")
+                    Text("Ton Accueil est vide.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 20)
@@ -129,6 +128,10 @@ struct HomeView: View {
             .animation(.spring(response: 0.4, dampingFraction: 0.85), value: items)
         }
         .scrollIndicators(.hidden)
+        // Tirer vers le bas : la pochette du haut s'agrandit au lieu de laisser un vide.
+        .onScrollGeometryChange(for: CGFloat.self) { g in
+            max(0, -(g.contentOffset.y + g.contentInsets.top))
+        } action: { _, new in pull = new }
         .ignoresSafeArea(edges: showsBanner ? .top : [])
         .sheet(isPresented: $showGallery) { HomeGallery() }
         .sheet(isPresented: $showOrganizer) { HomeOrganizer() }
@@ -638,6 +641,10 @@ private struct PinnedPlaylistSection: View {
 /// qui se fond dans le fond de l'app, avec le titre de l'Accueil et le bouton pour reprendre.
 struct ResumeBanner: View {
     let album: AlbumInfo
+    /// Le son affiché : sa propre pochette, même si l'album en a une autre.
+    let track: Track
+    /// De combien on tire la page vers le bas (0 au repos).
+    var pull: CGFloat = 0
     @Environment(Library.self) private var library
     @Environment(Player.self) private var player
     @Environment(AppSettings.self) private var settings
@@ -649,22 +656,25 @@ struct ResumeBanner: View {
     var body: some View {
         let width = UIScreen.main.bounds.width
         let height = width * 1.12
+        let grow = height + pull
         ZStack(alignment: .bottomLeading) {
-            ArtworkView(track: album.cover, animated: settings.animatedArtwork, cornerRadius: 0, bordered: false)
-                .frame(width: width, height: height)
+            ArtworkView(track: track, animated: settings.animatedArtwork, cornerRadius: 0, bordered: false)
+                .frame(width: width * (1 + pull / grow * 0.6), height: grow)
+                .frame(width: width, height: grow)
                 .clipped()
                 .mask {
-                    LinearGradient(stops: [.init(color: .black, location: 0),
-                                           .init(color: .black, location: 0.5),
+                    // Fondu en haut (vers la barre d'état) et en bas (vers la page).
+                    LinearGradient(stops: [.init(color: .black.opacity(0.25), location: 0),
+                                           .init(color: .black, location: min(0.4, 0.16 + pull / grow)),
+                                           .init(color: .black, location: 0.52),
                                            .init(color: .black.opacity(0.45), location: 0.78),
                                            .init(color: .clear, location: 1)],
                                    startPoint: .top, endPoint: .bottom)
                 }
-                .overlay(alignment: .top) {
-                    // Les boutons du haut restent lisibles sur la pochette.
-                    LinearGradient(colors: [.black.opacity(0.35), .clear], startPoint: .top, endPoint: .bottom)
-                        .frame(height: 140)
-                }
+                // Plus haute que le bandeau : elle déborde vers le haut quand on tire.
+                .frame(width: width, height: height, alignment: .bottom)
+                .id(track.id)
+                .transition(.opacity)
 
             VStack(alignment: .leading, spacing: 4) {
                 Text("Accueil")
@@ -675,8 +685,8 @@ struct ResumeBanner: View {
                     .foregroundStyle(.secondary)
                 NavigationLink { AlbumDetailView(albumID: album.id) } label: {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(album.title).font(.title2.bold()).lineLimit(2)
-                        Text(album.artist).font(.body).foregroundStyle(.secondary).lineLimit(1)
+                        Text(track.title).font(.title2.bold()).lineLimit(2)
+                        Text(track.displayArtist).font(.body).foregroundStyle(.secondary).lineLimit(1)
                     }
                     .multilineTextAlignment(.leading)
                 }
@@ -689,11 +699,14 @@ struct ResumeBanner: View {
                 }
                 .buttonStyle(FilledButtonStyle())
                 .padding(.top, 10)
-                .sensoryFeedback(.impact(weight: .light), trigger: player.isPlaying)
+                .sensoryFeedback(trigger: player.isPlaying) { _, _ in settings.haptics ? .impact(weight: .light) : nil }
             }
             .padding(.horizontal, 20)
+            .id(track.id)
+            .transition(.opacity)
         }
         .frame(width: width, height: height, alignment: .bottomLeading)
+        .animation(.smooth(duration: 0.5), value: track.id)
     }
 
     private func resume() {
@@ -701,7 +714,6 @@ struct ResumeBanner: View {
             player.togglePlay()
             return
         }
-        let last = library.recentlyPlayed.first { $0.albumKey == album.id } ?? album.first
-        player.play(ids: album.tracks.map(\.id), startAt: last.id)
+        player.play(ids: album.tracks.map(\.id), startAt: track.id)
     }
 }

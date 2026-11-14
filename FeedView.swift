@@ -529,7 +529,6 @@ private struct FeedPage: View {
                     if !lines.isEmpty {
                         FeedLyrics(lines: lines, start: item.start, active: active, preview: preview)
                             .frame(height: min(300, h * 0.34), alignment: .top)
-                            .clipped()
                             .allowsHitTesting(false)
                             .transition(.opacity)
                     }
@@ -630,13 +629,19 @@ private struct FeedLyrics: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        // La lueur peut déborder sur les côtés…
+        .padding(.horizontal, 20)
+        .padding(.vertical, 14)
+        // … et le haut et le bas s'effacent en douceur, comme dans le lecteur.
         .mask {
             LinearGradient(stops: [.init(color: .clear, location: 0),
-                                   .init(color: .black, location: 0.12),
-                                   .init(color: .black, location: 0.82),
+                                   .init(color: .black, location: 0.16),
+                                   .init(color: .black, location: 0.66),
                                    .init(color: .clear, location: 1)],
                            startPoint: .top, endPoint: .bottom)
         }
+        .padding(.horizontal, -20)
+        .padding(.vertical, -14)
         .onAppear { current = index(at: start + 1.6) }
         // Suit le son : on ne redessine qu'au changement de ligne.
         .task(id: active) {
@@ -682,7 +687,10 @@ private struct FeedLyrics: View {
                 if abs((heights[line.id] ?? 0) - h) > 0.5 { heights[line.id] = h }
             }
             .scaleEffect(isActive ? 1 : 0.96, anchor: .leading)
+            // De la place autour du texte : seules les lettres brillent, sans rectangle autour.
+            .padding(GlowRoom.size)
             .blur(radius: distance >= 2 ? 1.2 : 0)
+            .padding(-GlowRoom.size)
             .animation(.spring(response: 0.55, dampingFraction: 0.84), value: isActive)
     }
 
