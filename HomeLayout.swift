@@ -49,9 +49,9 @@ struct HomeItem: Codable, Identifiable, Hashable {
     /// Rubriques qu'on ne met qu'une fois (les épinglées peuvent être plusieurs).
     var isUnique: Bool { ![.artist, .playlist, .album].contains(kind) }
 
+    /// L'Accueil épuré : le bandeau « Reprendre l'écoute », les ajouts récents et tes playlists.
     static let defaults: [HomeItem] = [
-        HomeItem(kind: .resume), HomeItem(kind: .mixes), HomeItem(kind: .playlists), HomeItem(kind: .clips),
-        HomeItem(kind: .edits), HomeItem(kind: .recent), HomeItem(kind: .added), HomeItem(kind: .artists)
+        HomeItem(kind: .resume), HomeItem(kind: .added), HomeItem(kind: .playlists)
     ]
 }
 
@@ -76,6 +76,11 @@ final class HomeLayout {
     var editing = false
 
     init() {
+        // Refonte 2026 : une seule fois, l'Accueil repart sur la nouvelle disposition épurée.
+        if UserDefaults.standard.integer(forKey: "homeLayoutVersion") < 3 {
+            UserDefaults.standard.removeObject(forKey: "homeLayout")
+            UserDefaults.standard.set(3, forKey: "homeLayoutVersion")
+        }
         if let data = UserDefaults.standard.data(forKey: "homeLayout"),
            let list = try? JSONDecoder().decode([HomeItem].self, from: data), !list.isEmpty {
             items = list
@@ -266,7 +271,7 @@ struct HomeGallery: View {
         NavigationStack {
             List {
                 Section("Rubriques") {
-                    ForEach(HomeItem.Kind.allCases.filter { ![.artist, .playlist, .album].contains($0) }, id: \.self) { kind in
+                    ForEach(HomeItem.Kind.allCases.filter { ![.artist, .playlist, .album, .clips].contains($0) }, id: \.self) { kind in
                         let item = HomeItem(kind: kind)
                         let already = layout.contains(kind)
                         Button {

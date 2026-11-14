@@ -85,9 +85,6 @@ extension RootView {
                 Tab("Bibliothèque", systemImage: "square.stack.fill", value: 1) {
                     NavigationStack { LibraryHomeView() }.modifier(MiniPlayerInset(tab: 1))
                 }
-                Tab(value: 2, role: .search) {
-                    NavigationStack { SearchView() }.modifier(MiniPlayerInset(tab: 2))
-                }
             }
             // La pilule est notre propre mini-lecteur (au-dessus de la barre d'onglets) :
             // on peut la faire glisser en entier, et le lecteur s'y referme en se réduisant.
@@ -112,10 +109,6 @@ extension RootView {
                 .modifier(MiniPlayerInset(tab: 1))
                 .tabItem { Label("Bibliothèque", systemImage: "square.stack.fill") }
                 .tag(1)
-            NavigationStack { SearchView() }
-                .modifier(MiniPlayerInset(tab: 2))
-                .tabItem { Label("Recherche", systemImage: "magnifyingglass") }
-                .tag(2)
         }
     }
 }

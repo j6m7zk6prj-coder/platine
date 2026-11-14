@@ -26,6 +26,14 @@ struct HomeView: View {
         return out
     }
 
+    /// Le bandeau « Reprendre l'écoute » remplace le titre quand il est en tête de l'Accueil.
+    private var bannerAlbum: AlbumInfo? {
+        guard !layout.editing, layout.items.first?.kind == .resume else { return nil }
+        if let t = currentTrack, let a = library.album(t.albumKey) { return a }
+        return recentAlbums.first ?? library.recentlyAdded.first
+    }
+    private var showsBanner: Bool { !library.tracks.isEmpty && bannerAlbum != nil }
+
     var body: some View {
         Group {
             if library.tracks.isEmpty {
@@ -34,7 +42,8 @@ struct HomeView: View {
                 content
             }
         }
-        .navigationTitle("Accueil")
+        .navigationTitle(showsBanner ? "" : "Accueil")
+        .navigationBarTitleDisplayMode(showsBanner ? .inline : .large)
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
                 Button {
@@ -71,11 +80,10 @@ struct HomeView: View {
         let items = layout.items
         return ScrollView {
             VStack(alignment: .leading, spacing: 34) {
-                Text(Date.now.formatted(Date.FormatStyle(locale: Locale(identifier: "fr_FR")).weekday(.wide).day().month(.wide)).capitalized)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 20)
-                    .padding(.top, -18)
+                if let album = bannerAlbum {
+                    ResumeBanner(album: album)
+                        .padding(.bottom, -14)
+                }
 
                 if layout.editing {
                     // Comme l'écran d'accueil : ajouter, tout ranger, terminer.
@@ -100,7 +108,7 @@ struct HomeView: View {
 
                 ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                     // Hors modification, une rubrique sans rien à montrer ne prend pas de place.
-                    if layout.editing || hasContent(item) {
+                    if (layout.editing || hasContent(item)) && !(bannerAlbum != nil && item.kind == .resume && index == 0) {
                         EditableSection(item: item, isFirst: index == 0, isLast: index == items.count - 1) {
                             section(item)
                         }
@@ -115,21 +123,13 @@ struct HomeView: View {
                         .padding(.horizontal, 20)
                 }
 
-                if !layout.editing {
-                    Button {
-                        withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) { layout.editing = true }
-                    } label: {
-                        Label("Modifier l’Accueil", systemImage: "square.grid.2x2")
-                    }
-                    .buttonStyle(OutlineButtonStyle(compact: true))
-                    .frame(maxWidth: .infinity)
-                }
             }
-            .padding(.top, 8)
+            .padding(.top, showsBanner ? 0 : 8)
             .padding(.bottom, 30)
             .animation(.spring(response: 0.4, dampingFraction: 0.85), value: items)
         }
         .scrollIndicators(.hidden)
+        .ignoresSafeArea(edges: showsBanner ? .top : [])
         .sheet(isPresented: $showGallery) { HomeGallery() }
         .sheet(isPresented: $showOrganizer) { HomeOrganizer() }
     }
@@ -628,5 +628,80 @@ private struct PinnedPlaylistSection: View {
             }
             .padding(.horizontal, 20)
         }
+    }
+}
+
+
+// MARK: - Le bandeau « Reprendre l'écoute »
+
+/// En haut de l'Accueil : la pochette (animée si elle l'est) sur toute la largeur,
+/// qui se fond dans le fond de l'app, avec le titre de l'Accueil et le bouton pour reprendre.
+struct ResumeBanner: View {
+    let album: AlbumInfo
+    @Environment(Library.self) private var library
+    @Environment(Player.self) private var player
+    @Environment(AppSettings.self) private var settings
+
+    private var playingHere: Bool {
+        player.currentID.flatMap { library.track($0) }?.albumKey == album.id
+    }
+
+    var body: some View {
+        let width = UIScreen.main.bounds.width
+        let height = width * 1.12
+        ZStack(alignment: .bottomLeading) {
+            ArtworkView(track: album.cover, animated: settings.animatedArtwork, cornerRadius: 0, bordered: false)
+                .frame(width: width, height: height)
+                .clipped()
+                .mask {
+                    LinearGradient(stops: [.init(color: .black, location: 0),
+                                           .init(color: .black, location: 0.5),
+                                           .init(color: .black.opacity(0.45), location: 0.78),
+                                           .init(color: .clear, location: 1)],
+                                   startPoint: .top, endPoint: .bottom)
+                }
+                .overlay(alignment: .top) {
+                    // Les boutons du haut restent lisibles sur la pochette.
+                    LinearGradient(colors: [.black.opacity(0.35), .clear], startPoint: .top, endPoint: .bottom)
+                        .frame(height: 140)
+                }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Accueil")
+                    .font(.largeTitle.bold())
+                    .padding(.bottom, 10)
+                Text(playingHere && player.isPlaying ? "EN LECTURE" : "REPRENDRE L’ÉCOUTE")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                NavigationLink { AlbumDetailView(albumID: album.id) } label: {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(album.title).font(.title2.bold()).lineLimit(2)
+                        Text(album.artist).font(.body).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                    .multilineTextAlignment(.leading)
+                }
+                .buttonStyle(.plain)
+                Button(action: resume) {
+                    Label(playingHere && player.isPlaying ? "Pause" : "Reprendre",
+                          systemImage: playingHere && player.isPlaying ? "pause.fill" : "play.fill")
+                        .font(.body.weight(.semibold))
+                        .contentTransition(.symbolEffect(.replace))
+                }
+                .buttonStyle(FilledButtonStyle())
+                .padding(.top, 10)
+                .sensoryFeedback(.impact(weight: .light), trigger: player.isPlaying)
+            }
+            .padding(.horizontal, 20)
+        }
+        .frame(width: width, height: height, alignment: .bottomLeading)
+    }
+
+    private func resume() {
+        if playingHere {
+            player.togglePlay()
+            return
+        }
+        let last = library.recentlyPlayed.first { $0.albumKey == album.id } ?? album.first
+        player.play(ids: album.tracks.map(\.id), startAt: last.id)
     }
 }

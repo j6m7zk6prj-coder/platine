@@ -31,7 +31,7 @@ enum AccentChoice: String, CaseIterable, Identifiable {
     var label: String {
         switch self {
         case .white: return "Blanc"
-        case .pink: return "Rose"
+        case .pink: return "Rose Platine"
         case .orange: return "Orange"
         case .green: return "Vert"
         case .blue: return "Bleu"
@@ -172,11 +172,17 @@ final class AppSettings {
         dynamicBackground = d.object(forKey: "dynamicBackground") as? Bool ?? true
         haptics = d.object(forKey: "haptics") as? Bool ?? true
         autoImport = d.object(forKey: "autoImport") as? Bool ?? true
+        // La refonte remet le rose Platine une fois ; ensuite le choix est libre.
+        if d.integer(forKey: "designVersion") < 11 {
+            d.set("pink", forKey: "accent")
+            d.set(11, forKey: "designVersion")
+        }
         accent = AccentChoice(rawValue: d.string(forKey: "accent") ?? "") ?? .pink
         songSort = SongSort(rawValue: d.string(forKey: "songSort") ?? "") ?? .title
         shelfFormat = AlbumFormat(rawValue: d.string(forKey: "shelfFormat") ?? "") ?? .cd
-        theme = AppTheme(rawValue: d.string(forKey: "theme") ?? "") ?? .dynamic
-        appearance = AppearanceMode(rawValue: d.string(forKey: "appearance") ?? "") ?? .theme
+        theme = .dynamic
+        let savedMode = AppearanceMode(rawValue: d.string(forKey: "appearance") ?? "") ?? .auto
+        appearance = savedMode == .theme ? .auto : savedMode
         lyricsSize = LyricsSize(rawValue: d.string(forKey: "lyricsSize") ?? "") ?? .medium
         artworkStyle = ArtworkStyle(rawValue: d.string(forKey: "artworkStyle") ?? "") ?? .rounded
         backgroundMotion = d.object(forKey: "backgroundMotion") as? Bool ?? true

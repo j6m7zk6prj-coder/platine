@@ -8,85 +8,110 @@ struct LibraryHomeView: View {
     @Environment(Player.self) private var player
     @Environment(UIState.self) private var ui
     @State private var showWifi = false
+    @State private var showSearch = false
+    @State private var route: Route?
+    enum Route: Hashable, Identifiable { case artists, playlists, songs, favorites; var id: Self { self } }
+    /// Taille de la grille : 2 grandes pochettes ou 3 plus petites par ligne.
+    @AppStorage("libraryColumns") private var columns = 2
+    @AppStorage("librarySort") private var sort = "recent"
 
     private var currentTrack: Track? { player.currentID.flatMap { library.track($0) } }
+
+    private var albums: [AlbumInfo] {
+        switch sort {
+        case "title": return library.albums.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+        case "artist": return library.albums.sorted { ($0.artist, $0.title) < ($1.artist, $1.title) }
+        default: return library.albums.sorted { $0.latestAdd > $1.latestAdd }
+        }
+    }
 
     var body: some View {
         Group {
             if library.tracks.isEmpty {
                 EmptyLibraryView()
             } else {
-                content
+                grid
             }
         }
         .navigationTitle("Bibliothèque")
         .navigationDestination(isPresented: $showWifi) { WifiTransferView() }
+        .navigationDestination(isPresented: $showSearch) { SearchView() }
+        .navigationDestination(item: $route) { r in
+            switch r {
+            case .artists: ArtistsView()
+            case .playlists: PlaylistsView()
+            case .songs: SongsView()
+            case .favorites: SongsView(favoritesOnly: true)
+            }
+        }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
+                Button { showSearch = true } label: { Image(systemName: "magnifyingglass") }
+                    .accessibilityLabel("Rechercher")
+            }
+            ToolbarItem(placement: .topBarTrailing) {
                 Menu {
-                    Button("Depuis Fichiers", systemImage: "folder") { ui.importing = true }
-                    Button("Par Wi‑Fi depuis le PC", systemImage: "wifi") { showWifi = true }
-                } label: { Image(systemName: "plus") }
-                    .accessibilityLabel("Importer de la musique")
+                    Section {
+                        Button("Artistes", systemImage: "music.mic") { route = .artists }
+                        Button("Playlists", systemImage: "music.note.list") { route = .playlists }
+                        Button("Morceaux", systemImage: "music.note") { route = .songs }
+                        Button("Favoris", systemImage: "heart") { route = .favorites }
+                    }
+                    Section("Affichage") {
+                        Picker("Taille", selection: $columns) {
+                            Label("2 colonnes", systemImage: "square.grid.2x2").tag(2)
+                            Label("3 colonnes", systemImage: "square.grid.3x3").tag(3)
+                        }
+                        Picker("Trier", selection: $sort) {
+                            Text("Ajouts récents").tag("recent")
+                            Text("Titre").tag("title")
+                            Text("Artiste").tag("artist")
+                        }
+                    }
+                    Section("Importer") {
+                        Button("Depuis Fichiers", systemImage: "folder") { ui.importing = true }
+                        Button("Par Wi‑Fi depuis le PC", systemImage: "wifi") { showWifi = true }
+                    }
+                } label: { Image(systemName: "ellipsis") }
+                    .accessibilityLabel("Plus")
             }
         }
         .background { AmbientBackground(track: currentTrack, dim: 0.55) }
     }
 
-    private var content: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 30) {
-                // Comme Musique : la liste des rubriques, simple et aérée.
-                VStack(spacing: 0) {
-                    LibraryLink(title: "Playlists", icon: "music.note.list") { PlaylistsView() }
-                    rowDivider
-                    LibraryLink(title: "Artistes", icon: "music.mic") { ArtistsView() }
-                    rowDivider
-                    LibraryLink(title: "Albums", icon: "square.stack") { AlbumsView() }
-                    rowDivider
-                    LibraryLink(title: "Morceaux", icon: "music.note") { SongsView() }
-                    rowDivider
-                    LibraryLink(title: "Favoris", icon: "star") { SongsView(favoritesOnly: true) }
-                    rowDivider
-                    LibraryLink(title: "Pochettes", icon: "photo.on.rectangle.angled") { ArtworkGalleryView() }
-                    rowDivider
-                    LibraryLink(title: "Clips vidéo", icon: "film") { ClipsView() }
-                    rowDivider
-                }
-
-                if settings.showRecent && !library.recentlyAdded.isEmpty {
-                    VStack(alignment: .leading, spacing: 14) {
-                        NavigationLink { AlbumsView() } label: {
-                            HStack(spacing: 4) {
-                                Text("Ajouts récents")
-                                Image(systemName: "chevron.right")
-                                    .font(.title3.weight(.bold))
-                                    .foregroundStyle(.secondary)
-                            }
-                            .font(.title2.bold())
-                        }
-                        .buttonStyle(.plain)
-                        LazyVGrid(columns: [GridItem(.flexible(), spacing: 16), GridItem(.flexible(), spacing: 16)], spacing: 22) {
-                            ForEach(library.recentlyAdded) { album in
-                                NavigationLink { AlbumDetailView(albumID: album.id) } label: { AlbumCard(album: album) }
-                                    .buttonStyle(PressStyle(circle: false))
-                            }
-                        }
+    /// Toutes les pochettes, en grille, comme un bac à disques.
+    private var grid: some View {
+        let cols = Array(repeating: GridItem(.flexible(), spacing: columns == 2 ? 16 : 12), count: columns)
+        return ScrollView {
+            LazyVGrid(columns: cols, spacing: columns == 2 ? 22 : 16) {
+                ForEach(albums) { album in
+                    NavigationLink { AlbumDetailView(albumID: album.id) } label: {
+                        AlbumCard(album: album, compact: columns == 3)
                     }
+                    .buttonStyle(PressStyle(circle: false))
+                    .contextMenu { AlbumMenuItems(album: album) }
                 }
             }
             .padding(.horizontal, 20)
             .padding(.top, 4)
             .padding(.bottom, 24)
+            .animation(.spring(response: 0.4, dampingFraction: 0.86), value: columns)
+            .animation(.spring(response: 0.4, dampingFraction: 0.86), value: sort)
         }
         .scrollIndicators(.hidden)
     }
+}
 
-    private var rowDivider: some View {
-        Rectangle()
-            .fill(Color.primary.opacity(0.12))
-            .frame(height: 0.5)
-            .padding(.leading, 44)
+/// L'appui long sur une pochette : lire, mélanger, ajouter à la file.
+struct AlbumMenuItems: View {
+    let album: AlbumInfo
+    @Environment(Player.self) private var player
+
+    var body: some View {
+        Button("Lire", systemImage: "play") { player.play(ids: album.tracks.map(\.id), shuffled: false) }
+        Button("Aléatoire", systemImage: "shuffle") { player.play(ids: album.tracks.map(\.id), shuffled: true) }
+        Button("Lire ensuite", systemImage: "text.line.first.and.arrowtriangle.forward") { player.playNext(album.tracks.map(\.id)) }
+        Button("Ajouter à la file", systemImage: "text.line.last.and.arrowtriangle.forward") { player.playLater(album.tracks.map(\.id)) }
     }
 }
 
@@ -154,16 +179,17 @@ struct RowPressStyle: ButtonStyle {
 
 struct AlbumCard: View {
     let album: AlbumInfo
+    var compact = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            ArtworkView(track: album.cover, animated: true, cornerRadius: 10)
+        VStack(alignment: .leading, spacing: compact ? 4 : 6) {
+            ArtworkView(track: album.cover, animated: true, cornerRadius: compact ? 8 : 10)
                 .aspectRatio(1, contentMode: .fit)
                 .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(.primary.opacity(0.08), lineWidth: 0.5))
                 .shadow(color: .black.opacity(0.22), radius: 12, y: 7)
                 .padding(.bottom, 2)
-            Text(album.title).font(.subheadline.weight(.medium)).lineLimit(1)
-            Text(album.artist).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+            Text(album.title).font(compact ? .caption.weight(.medium) : .subheadline.weight(.medium)).lineLimit(1)
+            Text(album.artist).font(compact ? .caption : .subheadline).foregroundStyle(.secondary).lineLimit(1)
         }
         .contentShape(Rectangle())
     }
@@ -368,6 +394,9 @@ struct MiniPlayer: View {
     @Environment(Library.self) private var library
     @Environment(AppSettings.self) private var settings
     @State private var dragY: CGFloat = 0
+    /// Glisser la pilule à gauche ou à droite : morceau suivant ou précédent.
+    @State private var dragX: CGFloat = 0
+    @State private var skipped = 0
 
     var body: some View {
         let t = player.currentID.flatMap { library.track($0) }
@@ -397,6 +426,8 @@ struct MiniPlayer: View {
             .id(t?.id)
             .transition(.opacity)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .offset(x: dragX)
+            .opacity(1 - Double(min(abs(dragX), 80)) / 160)
 
             Button { player.togglePlay() } label: {
                 Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
@@ -429,6 +460,8 @@ struct MiniPlayer: View {
                 Button(player.isPlaying ? "Pause" : "Lecture", systemImage: player.isPlaying ? "pause.fill" : "play.fill") {
                     player.togglePlay()
                 }
+                Button("Suivant", systemImage: "forward.fill") { player.next() }
+                Button("Précédent", systemImage: "backward.fill") { player.previous() }
                 Button("Arrêter la lecture", systemImage: "stop.fill") { player.quit() }
             }
         }
@@ -439,12 +472,24 @@ struct MiniPlayer: View {
         .simultaneousGesture(
             DragGesture(minimumDistance: 8)
                 .onChanged { g in
-                    guard t != nil, g.translation.height > 0, abs(g.translation.height) > abs(g.translation.width) else { return }
+                    guard t != nil else { return }
+                    if abs(g.translation.width) > abs(g.translation.height) {
+                        dragX = g.translation.width * 0.45
+                        return
+                    }
+                    guard g.translation.height > 0 else { return }
                     // Un peu de résistance, comme un élastique.
                     dragY = g.translation.height * (1 - min(g.translation.height, 200) / 600)
                 }
                 .onEnded { g in
                     guard t != nil else { return }
+                    if dragX != 0 {
+                        let w = g.translation.width, fling = g.predictedEndTranslation.width
+                        if w < -60 || fling < -180 { player.next(); skipped += 1 }
+                        else if w > 60 || fling > 180 { player.previous(); skipped += 1 }
+                        withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) { dragX = 0 }
+                        return
+                    }
                     if g.translation.height > 60 || g.predictedEndTranslation.height > 160 {
                         withAnimation(.smooth(duration: 0.28)) { dragY = 140 }
                         Task { @MainActor in
@@ -459,6 +504,7 @@ struct MiniPlayer: View {
                     }
                 }
         )
+        .sensoryFeedback(trigger: skipped) { _, _ in settings.haptics ? .selection : nil }
         .sensoryFeedback(trigger: player.currentID == nil) { _, stopped in
             stopped && settings.haptics ? .impact(weight: .medium) : nil
         }
